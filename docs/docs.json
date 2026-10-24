@@ -1,0 +1,542 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "bisibility",
+  "description": "Self-hostable, open-source SEO research and search visibility application. Bring your own SERP and analytics providers, track rankings, research keywords and backlinks, and automate through REST, CLI, and MCP.",
+  "favicon": "/favicon.svg",
+  "theme": "mint",
+  "fonts": {
+    "family": "Geist"
+  },
+  "colors": {
+    "primary": "#CE4215",
+    "light": "#F36A3F",
+    "dark": "#D94818"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Start",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "index",
+              "hosted-quickstart",
+              "quickstart",
+              "deployment-options",
+              "api/quickstart"
+            ]
+          },
+          {
+            "group": "Reference and support",
+            "pages": ["versioning"]
+          },
+          {
+            "group": "Contribute",
+            "pages": ["style-guide", "project-support"]
+          }
+        ]
+      },
+      {
+        "tab": "Use Bisibility",
+        "groups": [
+          {
+            "group": "Set up your project",
+            "pages": [
+              "integrations",
+              "guides/manage-markets",
+              "markets",
+              "guides/choose-first-keywords"
+            ]
+          },
+          {
+            "group": "Track rankings",
+            "pages": [
+              "guides/rank-measurements",
+              "guides/runs",
+              "guides/schedules",
+              "guides/competitors",
+              "serp-observations",
+              "local-monitor-recurring",
+              "local-search-provider",
+              "local-monitor-retry"
+            ]
+          },
+          {
+            "group": "Research",
+            "pages": [
+              "guides/keyword-research",
+              "guides/saved-keywords",
+              "guides/backlinks",
+              "guides/domain-overview",
+              "guides/ai-tracking",
+              "guides/site-audit",
+              "guides/research-workflows"
+            ]
+          },
+          {
+            "group": "Analytics and monitoring",
+            "pages": [
+              "guides/search-console",
+              "guides/analytics",
+              "guides/alerts",
+              "guides/sitemap-monitoring"
+            ]
+          },
+          {
+            "group": "Organize and collaborate",
+            "pages": [
+              "guides/project-context",
+              "guides/agent-reports",
+              "guides/saved-views",
+              "guides/business-locations",
+              "guides/teams",
+              "audit-log"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Build and automate",
+        "groups": [
+          {
+            "group": "API basics",
+            "pages": ["api/overview", "authentication", "api/discovery", "api/errors"]
+          },
+          {
+            "group": "Projects and access",
+            "expanded": false,
+            "pages": [
+              "api/projects",
+              "api/api-keys",
+              "api/personal-access-tokens",
+              "api/providers",
+              "api/team"
+            ]
+          },
+          {
+            "group": "Rank tracking",
+            "expanded": false,
+            "pages": [
+              "api/keywords",
+              "api/locations",
+              "api/checks",
+              "api/rank-history",
+              "api/competitors",
+              "api/saved-views"
+            ]
+          },
+          {
+            "group": "Research",
+            "expanded": false,
+            "pages": [
+              "api/keyword-research",
+              "api/keyword-metrics",
+              "api/ranked-keyword-suggestions",
+              "api/saved-keywords",
+              "api/backlinks",
+              "api/domain-overview",
+              "api/research-workspace",
+              "api/ai-tracking"
+            ]
+          },
+          {
+            "group": "Analytics and monitoring",
+            "expanded": false,
+            "pages": ["api/analytics", "api/signals", "api/sitemap-monitors"]
+          },
+          {
+            "group": "Alerts and webhooks",
+            "expanded": false,
+            "pages": [
+              "api/alert-rules",
+              "api/notification-preferences",
+              "api/webhooks",
+              "api/deploy-webhooks"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "expanded": false,
+            "pages": ["api/rank-check-runs", "api/cloud-import"]
+          },
+          {
+            "group": "SDKs",
+            "pages": [
+              "sdks/overview",
+              "sdks/behavior",
+              "sdks/methods",
+              "compatibility",
+              "sdks/python",
+              "sdks/typescript",
+              "sdks/go"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": ["cli", "cli/reference"]
+          },
+          {
+            "group": "MCP and agents",
+            "pages": ["sdks/mcp", "agents", "agents/permissions", "agents/paid-tools"]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "openapi": "openapi.snapshot.json",
+        "groups": [
+          {
+            "group": "AI Tracking",
+            "pages": [
+              "GET /projects/{project_id}/ai-tracking/export",
+              "GET /projects/{project_id}/ai-tracking/history",
+              "GET /projects/{project_id}/ai-tracking/prompts",
+              "POST /projects/{project_id}/ai-tracking/prompts",
+              "DELETE /projects/{project_id}/ai-tracking/prompts/{prompt_id}",
+              "PATCH /projects/{project_id}/ai-tracking/prompts/{prompt_id}",
+              "GET /projects/{project_id}/ai-tracking/runs",
+              "POST /projects/{project_id}/ai-tracking/runs",
+              "GET /projects/{project_id}/ai-tracking/runs/{run_id}",
+              "POST /projects/{project_id}/ai-tracking/runs/{run_id}/cancel",
+              "POST /projects/{project_id}/ai-tracking/runs/{run_id}/retry",
+              "GET /projects/{project_id}/ai-tracking/runs/{run_id}/samples",
+              "POST /projects/{project_id}/ai-tracking/runs/preview",
+              "GET /projects/{project_id}/ai-tracking/schedules",
+              "POST /projects/{project_id}/ai-tracking/schedules",
+              "DELETE /projects/{project_id}/ai-tracking/schedules/{schedule_id}",
+              "PATCH /projects/{project_id}/ai-tracking/schedules/{schedule_id}",
+              "POST /projects/{project_id}/ai-tracking/suggestions",
+              "POST /projects/{project_id}/ai-tracking/suggestions/accept",
+              "POST /projects/{project_id}/ai-tracking/suggestions/generate",
+              "POST /projects/{project_id}/ai-tracking/suggestions/preview",
+              "GET /projects/{project_id}/ai-tracking/topics",
+              "POST /projects/{project_id}/ai-tracking/topics",
+              "DELETE /projects/{project_id}/ai-tracking/topics/{topic_id}",
+              "PATCH /projects/{project_id}/ai-tracking/topics/{topic_id}",
+              "GET /projects/{project_id}/ai-tracking/trends"
+            ]
+          },
+          {
+            "group": "Discovery",
+            "pages": [
+              "GET /capabilities",
+              "GET /cost-estimate",
+              "GET /health",
+              "GET /liveness",
+              "GET /llms.txt",
+              "GET /openapi.json",
+              "GET /provider-rates",
+              "GET /readiness"
+            ]
+          },
+          {
+            "group": "Account & Access",
+            "pages": [
+              "GET /me",
+              "PATCH /me",
+              "DELETE /me",
+              "GET /me/analytics-consent",
+              "PUT /me/analytics-consent",
+              "GET /me/tokens",
+              "POST /me/tokens",
+              "DELETE /me/tokens/{token_id}",
+              "GET /me/push-tokens",
+              "POST /me/push-tokens",
+              "DELETE /me/push-tokens/{push_token_id}"
+            ]
+          },
+          {
+            "group": "Projects",
+            "pages": [
+              "GET /projects",
+              "POST /projects",
+              "GET /projects/{project_id}",
+              "PATCH /projects/{project_id}",
+              "DELETE /projects/{project_id}",
+              "GET /projects/{project_id}/defaults",
+              "PATCH /projects/{project_id}/defaults"
+            ]
+          },
+          {
+            "group": "API Keys",
+            "pages": [
+              "GET /api-keys",
+              "POST /api-keys",
+              "DELETE /api-keys/{key_id}",
+              "GET /projects/{project_id}/api-keys",
+              "POST /projects/{project_id}/api-keys"
+            ]
+          },
+          {
+            "group": "Keywords",
+            "pages": [
+              "GET /projects/{project_id}/keywords",
+              "POST /projects/{project_id}/keywords",
+              "GET /keywords/{keyword_id}",
+              "PATCH /keywords/{keyword_id}",
+              "DELETE /keywords/{keyword_id}",
+              "POST /keywords/bulk",
+              "POST /projects/{project_id}/keyword-matches"
+            ]
+          },
+          {
+            "group": "Rank Checks",
+            "pages": [
+              "POST /keywords/{keyword_id}/checks",
+              "GET /keywords/{keyword_id}/rank-checks",
+              "GET /rank-checks/{check_id}",
+              "GET /projects/{project_id}/exports/rank-history",
+              "GET /projects/{project_id}/local-monitors/{monitor_id}/runs",
+              "GET /projects/{project_id}/local-monitors/{monitor_id}/runs/{run_id}/export",
+              "GET /projects/{project_id}/local-monitors/{monitor_id}/runs/{run_id}/points/{target_id}/history",
+              "GET /projects/{project_id}/local-monitors/{monitor_id}/runs/{run_id}/points/{target_id}/listings",
+              "GET /projects/{project_id}/local-monitors/{monitor_id}/runs/{run_id}/results",
+              "GET /projects/{project_id}/rank-check-runs",
+              "GET /projects/{project_id}/rank-check-runs/{run_id}"
+            ]
+          },
+          {
+            "group": "Keyword Research",
+            "pages": [
+              "GET /locations/search",
+              "POST /projects/{project_id}/keyword-metrics",
+              "GET /projects/{project_id}/keyword-research",
+              "GET /projects/{project_id}/ranked-keyword-suggestions"
+            ]
+          },
+          {
+            "group": "Backlinks",
+            "pages": [
+              "GET /projects/{project_id}/backlinks",
+              "POST /projects/{project_id}/backlinks/rows"
+            ]
+          },
+          {
+            "group": "Domain Overview",
+            "pages": [
+              "POST /projects/{project_id}/domain-overview/analyze",
+              "POST /projects/{project_id}/domain-overview/history",
+              "POST /projects/{project_id}/domain-overview/keywords",
+              "POST /projects/{project_id}/domain-overview/pages"
+            ]
+          },
+          {
+            "group": "Research Reports",
+            "pages": [
+              "GET /projects/{project_id}/ai-catalog",
+              "GET /projects/{project_id}/context",
+              "PATCH /projects/{project_id}/context",
+              "GET /projects/{project_id}/agent-reports",
+              "POST /projects/{project_id}/agent-reports",
+              "GET /projects/{project_id}/agent-reports/{report_id}",
+              "POST /projects/{project_id}/ai-visibility",
+              "POST /projects/{project_id}/prompt-explorer",
+              "GET /projects/{project_id}/site-audits",
+              "POST /projects/{project_id}/site-audits",
+              "GET /projects/{project_id}/site-audits/{report_id}",
+              "GET /projects/{project_id}/research/reports",
+              "GET /projects/{project_id}/research/reports/{kind}"
+            ]
+          },
+          {
+            "group": "Analytics",
+            "pages": [
+              "GET /projects/{project_id}/overview",
+              "GET /projects/{project_id}/analytics/query-stats",
+              "POST /projects/{project_id}/analytics/sync",
+              "GET /projects/{project_id}/analytics/traffic-snapshots"
+            ]
+          },
+          {
+            "group": "Alerts",
+            "pages": [
+              "GET /projects/{project_id}/alert-rules",
+              "POST /projects/{project_id}/alert-rules",
+              "PATCH /alert-rules/{rule_id}",
+              "DELETE /alert-rules/{rule_id}",
+              "GET /projects/{project_id}/triggered-alerts",
+              "POST /projects/{project_id}/triggered-alerts/{alert_id}/mute",
+              "POST /projects/{project_id}/triggered-alerts/mark-read",
+              "GET /projects/{project_id}/notification-preferences",
+              "PATCH /projects/{project_id}/notification-preferences"
+            ]
+          },
+          {
+            "group": "Competitors",
+            "pages": [
+              "GET /projects/{project_id}/competitors",
+              "POST /projects/{project_id}/competitors",
+              "DELETE /projects/{project_id}/competitors/{competitor_id}",
+              "DELETE /competitors/{competitor_id}"
+            ]
+          },
+          {
+            "group": "Sitemap Monitoring",
+            "pages": [
+              "GET /projects/{project_id}/sitemap-monitors",
+              "PATCH /projects/{project_id}/sitemap-monitors/{monitor_id}"
+            ]
+          },
+          {
+            "group": "Saved Keywords",
+            "pages": [
+              "GET /projects/{project_id}/saved-keywords",
+              "POST /projects/{project_id}/saved-keywords",
+              "DELETE /projects/{project_id}/saved-keywords/{saved_keyword_id}"
+            ]
+          },
+          {
+            "group": "Saved Views",
+            "pages": [
+              "GET /projects/{project_id}/saved-views",
+              "POST /projects/{project_id}/saved-views",
+              "DELETE /projects/{project_id}/saved-views/{view_id}",
+              "DELETE /saved-views/{view_id}"
+            ]
+          },
+          {
+            "group": "Signals",
+            "pages": ["GET /projects/{project_id}/signals", "POST /signals"]
+          },
+          {
+            "group": "Providers",
+            "pages": [
+              "GET /projects/{project_id}/providers",
+              "GET /projects/{project_id}/provider-budgets",
+              "POST /projects/{project_id}/providers/{provider_id}/connect",
+              "POST /projects/{project_id}/providers/{provider_id}/test",
+              "PATCH /projects/{project_id}/providers/{provider_id}",
+              "PATCH /projects/{project_id}/providers/{provider_id}/budgets",
+              "DELETE /projects/{project_id}/providers/{provider_id}"
+            ]
+          },
+          {
+            "group": "Webhooks",
+            "pages": [
+              "GET /projects/{project_id}/webhooks",
+              "POST /projects/{project_id}/webhooks",
+              "PATCH /projects/{project_id}/webhooks/{webhook_id}",
+              "DELETE /projects/{project_id}/webhooks/{webhook_id}"
+            ]
+          },
+          {
+            "group": "Team",
+            "pages": [
+              "GET /projects/{project_id}/team/members",
+              "PATCH /projects/{project_id}/team/members/{member_id}",
+              "DELETE /projects/{project_id}/team/members/{member_id}",
+              "GET /projects/{project_id}/team/invites",
+              "POST /projects/{project_id}/team/invites",
+              "POST /projects/{project_id}/team/invites/{invite_id}/resend",
+              "DELETE /projects/{project_id}/team/invites/{invite_id}",
+              "DELETE /team/invites/{invite_id}"
+            ]
+          },
+          {
+            "group": "Migration",
+            "pages": [
+              "GET /projects/{project_id}/migration-tokens",
+              "POST /projects/{project_id}/migration-tokens",
+              "DELETE /projects/{project_id}/migration-tokens/{token_id}",
+              "DELETE /migration-tokens/{token_id}",
+              "POST /cloud/import",
+              "GET /cloud/import/compatibility",
+              "POST /cloud/import/sessions",
+              "PUT /cloud/import/sessions/{sessionId}/chunks/{index}",
+              "POST /cloud/import/sessions/{sessionId}/finalize"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Self-hosting",
+        "groups": [
+          {
+            "group": "Install",
+            "pages": ["self-hosting", "self-hosting/docker", "self-hosting/railway"]
+          },
+          {
+            "group": "Configure",
+            "pages": [
+              "self-hosting/configuration",
+              "self-hosting/email",
+              "self-hosting/google-oauth",
+              "self-hosting/analytics"
+            ]
+          },
+          {
+            "group": "Operate",
+            "pages": [
+              "self-hosting/temporal",
+              "self-hosting/scheduler-upgrade",
+              "self-hosting/operations",
+              "self-hosting/historical-accounting",
+              "self-hosting/upgrades",
+              "self-hosting/store-0-32",
+              "self-hosting/backup-restore",
+              "guides/operations",
+              "guides/migration",
+              "self-hosting/evidence-replay"
+            ]
+          },
+          {
+            "group": "Reference and troubleshooting",
+            "pages": ["architecture", "self-hosting/security", "self-hosting/troubleshooting"]
+          },
+          {
+            "group": "Legacy",
+            "pages": ["self-hosting/legacy-upgrades", "self-hosting/legacy-upgrades/v0-1-to-v0-2"]
+          }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Releases",
+        "href": "https://github.com/CorgiCorner/bisibility/releases"
+      },
+      {
+        "label": "GitHub",
+        "href": "https://github.com/CorgiCorner/bisibility",
+        "icon": "github",
+        "iconType": "brands"
+      },
+      {
+        "label": "YouTube",
+        "href": "https://www.youtube.com/@bisibility",
+        "icon": "youtube",
+        "iconType": "brands"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Open bisibility",
+      "href": "https://bisibility.com/login"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/CorgiCorner/bisibility",
+      "youtube": "https://www.youtube.com/@bisibility"
+    }
+  },
+  "redirects": [
+    {
+      "source": "/api/resources",
+      "destination": "/api/overview"
+    },
+    {
+      "source": "/guides/email",
+      "destination": "/self-hosting/email"
+    }
+  ],
+  "seo": {
+    "indexing": "navigable"
+  },
+  "metadata": {
+    "timestamp": true
+  }
+}

@@ -1,0 +1,224 @@
+"use client";
+
+import type { KeywordHit } from "@/components/shell/keyword-search";
+import { applyTheme, readTheme } from "@/components/shell/set-theme";
+import { trackKeywordAction, trackModuleNavigation } from "@/lib/analytics/product-interactions";
+import { authClient } from "@/lib/auth/client";
+import { notifyAuthenticatedSessionEnd } from "@/lib/auth/session-end";
+import { rankTrackerActionHref } from "@/lib/keywords/rank-tracker-command";
+import { hasMarketRoute, sectionPathOf } from "@/lib/markets/market-route-sections";
+import { docsNavItem, type NavContext, navItems } from "@/lib/nav/nav-items";
+import { appPath, appSectionPath, type MarketRef, marketPath } from "@/lib/routing/app-path";
+import type { ExperimentalModuleKey } from "@/lib/settings/experimental-modules";
+import { DownloadSimpleIcon as DownloadSimple } from "@phosphor-icons/react/dist/csr/DownloadSimple";
+import { MagnifyingGlassIcon as MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+import { PaletteIcon as Palette } from "@phosphor-icons/react/dist/csr/Palette";
+import { PlusIcon as Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { SignOutIcon as SignOut } from "@phosphor-icons/react/dist/csr/SignOut";
+import { UploadSimpleIcon as UploadSimple } from "@phosphor-icons/react/dist/csr/UploadSimple";
+import type { Icon } from "@phosphor-icons/react/lib";
+
+export type CommandItem = {
+  icon?: Icon;
+  id?: string;
+  label: string;
+  hint: string;
+  run: () => void | Promise<void>;
+};
+
+export type CommandGroup = {
+  title: string;
+  items: CommandItem[];
+};
+
+/** Display copy arrives from the shell catalog; paths and command callbacks remain model data. */
+export type CommandPaletteCopy = {
+  actionItems: {
+    addKeyword: string;
+    exportKeywords: string;
+    importCsv: string;
+    signOut: string;
+    toggleTheme: string;
+  };
+  groups: { actions: string; keywords: string; markets: string; navigate: string };
+  hints: {
+    account: string;
+    downloadFile: string;
+    goTo: string;
+    keyword: string;
+    market: string;
+    newKeyword: string;
+    theme: string;
+    uploadFile: string;
+  };
+  marketNavigation: (section: string, market: string) => string;
+  navigation: Record<string, string>;
+};
+
+/**
+ * A market the palette may offer, already carrying the name the reader sees elsewhere. The
+ * palette composes the sentence and holds no opinion about how a market is labelled, so a
+ * later change to that naming cannot leave a second copy of the rule here.
+ */
+export type PaletteMarket = { label: string; ref: MarketRef };
+
+export function commandGroups(
+  projectRef: string,
+  push: (href: string) => void,
+  setMode: (mode: "dark" | "light") => void,
+  copy: CommandPaletteCopy,
+  keywordHits: KeywordHit[],
+  markets: readonly PaletteMarket[] = [],
+  context?: NavContext,
+  enabledExperimentalModules: readonly ExperimentalModuleKey[] = [],
+): CommandGroup[] {
+  const navigate = [...navItems(projectRef, context, enabledExperimentalModules), docsNavItem].map(
+    (item) => ({
+      icon: item.icon,
+      label: navigationLabel(copy, item.label),
+      hint: copy.hints.goTo,
+      run: item.external
+        ? () => {
+            window.open(item.href, "_blank", "noopener,noreferrer");
+          }
+        : () => {
+            trackModuleNavigation(item.href, "command_palette");
+            push(item.href);
+          },
+    }),
+  );
+
+  const keywords = keywordHits.map((hit) => ({
+    icon: MagnifyingGlass,
+    label: hit.label,
+    hint: copy.hints.keyword,
+    run: () => push(appPath(projectRef, "rank-tracker", hit.id)),
+  }));
+
+  const marketRows = marketItems(projectRef, markets, push, copy);
+
+  return [
+    // Above Navigate: a market row answers the same question more precisely, and a reader who
+    // has markets at all is usually after one of them. With no markets there is no group, so
+    // a project that tracks none sees exactly the palette it saw before.
+    ...(marketRows.length > 0 ? [{ title: copy.groups.markets, items: marketRows }] : []),
+    { title: copy.groups.navigate, items: navigate },
+    { title: copy.groups.keywords, items: keywords },
+    { title: copy.groups.actions, items: actionItems(projectRef, push, setMode, copy) },
+  ];
+}
+
+export function filterGroups(groups: CommandGroup[], query: string): CommandGroup[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) {
+    return groups;
+  }
+
+  return groups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => item.label.toLowerCase().includes(normalized)),
+    }))
+    .filter((group) => group.items.length > 0);
+}
+
+/** The section segments of a nav href: `/app/prj_1/rank-tracker` becomes `["rank-tracker"]`. */
+function sectionSegments(href: string): string[] {
+  return appSectionPath(href).split("/").filter(Boolean);
+}
+
+/**
+ * One row per market per section that actually renders under `m/{market}`. The gate is
+ * `hasMarketRoute`, the same list every other market URL in this app is built from, so a
+ * section the market layer does not serve can never be offered here and 404 the reader.
+ *
+ * Rows carry an explicit id because the palette otherwise keys an item by its group title and
+ * label, and two markets are free to read the same to a human.
+ */
+function marketItems(
+  projectRef: string,
+  markets: readonly PaletteMarket[],
+  push: (href: string) => void,
+  copy: CommandPaletteCopy,
+): CommandItem[] {
+  const routed = navItems(projectRef)
+    .map((item) => ({ ...item, segments: sectionSegments(item.href) }))
+    .filter((item) => hasMarketRoute(sectionPathOf(item.segments)));
+
+  return markets.flatMap((market) =>
+    routed.map((item) => ({
+      icon: item.icon,
+      id: `market:${market.ref}:${item.segments.join("/")}`,
+      label: copy.marketNavigation(navigationLabel(copy, item.label), market.label),
+      hint: copy.hints.market,
+      run: () => {
+        const href = marketPath(projectRef, market.ref, ...item.segments);
+        trackModuleNavigation(href, "command_palette");
+        push(href);
+      },
+    })),
+  );
+}
+
+function actionItems(
+  projectRef: string,
+  push: (href: string) => void,
+  setMode: (mode: "dark" | "light") => void,
+  copy: CommandPaletteCopy,
+): CommandItem[] {
+  return [
+    {
+      icon: Plus,
+      label: copy.actionItems.addKeyword,
+      hint: copy.hints.newKeyword,
+      run: () => {
+        trackKeywordAction("add");
+        push(rankTrackerActionHref(projectRef, "add"));
+      },
+    },
+    {
+      icon: UploadSimple,
+      label: copy.actionItems.importCsv,
+      hint: copy.hints.uploadFile,
+      run: () => {
+        trackKeywordAction("import");
+        push(rankTrackerActionHref(projectRef, "import"));
+      },
+    },
+    {
+      icon: DownloadSimple,
+      label: copy.actionItems.exportKeywords,
+      hint: copy.hints.downloadFile,
+      run: () => {
+        trackKeywordAction("export");
+        push(rankTrackerActionHref(projectRef, "export"));
+      },
+    },
+    {
+      icon: Palette,
+      label: copy.actionItems.toggleTheme,
+      hint: copy.hints.theme,
+      run: () => {
+        const next = readTheme() === "dark" ? "light" : "dark";
+        applyTheme(next);
+        setMode(next);
+      },
+    },
+    {
+      icon: SignOut,
+      label: copy.actionItems.signOut,
+      hint: copy.hints.account,
+      run: async () => {
+        await authClient.signOut();
+        notifyAuthenticatedSessionEnd();
+        window.location.href = "/login";
+      },
+    },
+  ];
+}
+
+function navigationLabel(copy: CommandPaletteCopy, label: string) {
+  const localized = copy.navigation[label];
+  if (!localized) throw new Error(`Missing command-palette navigation copy for ${label}`);
+  return localized;
+}

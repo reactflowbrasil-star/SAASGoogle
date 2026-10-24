@@ -1,0 +1,83 @@
+import { AuditActorAvatar } from "@/components/audit/AuditActorAvatar";
+import { useDateDisplay } from "@/components/dates/DateFormatProvider";
+import { AdvancedCardFrame } from "@/components/settings/advanced/AdvancedCardFrame";
+import { advancedCardGeometryClassNames } from "@/components/settings/advanced/advanced-settings-layout";
+import { presentRecentAuditEntry } from "@/components/settings/advanced/recent-audit-presentation";
+import { Button } from "@/components/ui/Button";
+import type { AuditEntry } from "@/lib/queries/audit";
+import { appPath } from "@/lib/routing/app-path";
+import { cn } from "@/lib/ui/cn";
+import { ArrowRightIcon as ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
+import { useTranslations } from "next-intl";
+
+type RecentAuditCardProps = {
+  entries: readonly AuditEntry[];
+  projectId: string;
+};
+
+export function RecentAuditCard({ entries, projectId }: Readonly<RecentAuditCardProps>) {
+  const dateDisplay = useDateDisplay();
+  const t = useTranslations("projectSettingsAdvanced.audit");
+  return (
+    <AdvancedCardFrame
+      className={advancedCardGeometryClassNames.audit}
+      description={t("description")}
+      footer={
+        <Button
+          endIcon={<ArrowRight aria-hidden size={13} weight="regular" />}
+          href={appPath(projectId, "settings", "audit")}
+          size="sm"
+          variant="secondary"
+        >
+          {t("open")}
+        </Button>
+      }
+      id="audit"
+      title={t("title")}
+    >
+      {entries.length ? (
+        <div className="divide-y divide-border overflow-hidden rounded-control border border-border">
+          {entries.slice(0, 5).map((entry) => {
+            const presentation = presentRecentAuditEntry(entry, dateDisplay, t);
+            return (
+              <div
+                className="grid grid-cols-[34px_minmax(0,1fr)] gap-x-3 gap-y-1 px-3 py-2.5 sm:grid-cols-[34px_minmax(0,1fr)_auto] sm:items-center"
+                key={entry.id}
+              >
+                <AuditActorAvatar
+                  actor={entry.actor}
+                  className="row-span-2 h-8.5 w-[34px] rounded-control border border-border bg-bg-sunken font-sans tabular-nums text-[10px] font-semibold text-fg-muted sm:row-span-1"
+                  systemLabel={presentation.actorName}
+                />
+                <div className="min-w-0">
+                  <div className="truncate text-[12.5px] font-semibold text-fg">
+                    {presentation.actorName}
+                  </div>
+                  <div
+                    className={cn(
+                      "truncate text-[11.5px] text-fg-muted",
+                      entry.status === "failed" && "text-red-text",
+                    )}
+                  >
+                    {presentation.eventName}
+                    {entry.statusReason ? ` - ${entry.statusReason}` : ""}
+                  </div>
+                </div>
+                <time
+                  className="col-start-2 font-sans tabular-nums text-[10px] text-fg-muted sm:col-start-3"
+                  dateTime={entry.timestamp}
+                >
+                  {presentation.timestampLabel}
+                </time>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="m-0 rounded-control border border-border bg-bg-sunken px-3 py-4 text-[12.5px] text-fg-muted">
+          {t("empty")}
+        </p>
+      )}
+    </AdvancedCardFrame>
+  );
+}

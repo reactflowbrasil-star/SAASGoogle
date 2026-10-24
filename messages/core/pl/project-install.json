@@ -1,0 +1,152 @@
+{
+  "projectInstall": {
+    "agents": {
+      "heading": "Agenci AI",
+      "description": "Wybierz narzędzie, skopiuj jedno polecenie i wklej je w terminalu. To cała konfiguracja.",
+      "copyCommand": "Kopiuj polecenie – {agent}",
+      "claude-code": {
+        "label": "Claude Code",
+        "hint": "CLI",
+        "note": "Następnie uruchom /mcp w Claude Code, aby się zalogować."
+      },
+      "codex": {
+        "label": "Codex",
+        "hint": "CLI",
+        "note": "Codex korzysta z tego samego logowania OAuth."
+      },
+      "cursor": {
+        "label": "Cursor",
+        "hint": "edytor",
+        "note": "Ustawienia, MCP, a następnie wklej do mcp.json."
+      },
+      "chatgpt": {
+        "label": "ChatGPT",
+        "hint": "aplikacja",
+        "note": "Otwórz Plugins w ChatGPT, wybierz +, a następnie Add custom MCP server. Podaj URL MCP i wybierz OAuth.",
+        "caveat": "Dostęp zależy od zasad przestrzeni roboczej. To połączenie bisibility prosi o dostęp tylko do odczytu."
+      },
+      "grok-bot": {
+        "label": "Grok Bot",
+        "hint": "asystent",
+        "note": "Wklej to do czatu Grok Bot, potwierdź dodanie własnego serwera MCP, a następnie zaloguj się z karty połączenia. Ekran zgody bisibility może nazwać klienta Cursor i podać, że został zarejestrowany automatycznie; tak ma być w przypadku Grok Bot.",
+        "caveat": "Płatne operacje, takie jak sprawdzanie pozycji i analiza linków zwrotnych, są narzędziami zapisu i obciążają źródło płatności projektu. Poproś bota o potwierdzenie kosztu przed ich uruchomieniem."
+      },
+      "claude-desktop": {
+        "label": "Claude (web i pulpit)",
+        "hint": "łącznik",
+        "note": "Dostosuj, Łączniki, Dodaj własny łącznik, wklej adres URL, a następnie zatwierdź logowanie.",
+        "caveat": "Claude udostępnia wszystkie narzędzia. Za pierwszym razem pyta przed każdym narzędziem zapisu; opcję Zawsze zezwalaj używaj tylko dla narzędzi, którym ufasz na tyle, by działały bez nadzoru. Research uruchamia narzędzia bez pytania, więc wyłącz tam narzędzia zapisu."
+      },
+      "other": {
+        "label": "Dowolny klient MCP",
+        "hint": "ręcznie",
+        "note": "Streamable HTTP z logowaniem OAuth. Bez klucza w adresie URL."
+      }
+    },
+    "endpoint": {
+      "heading": "Punkt końcowy MCP",
+      "description": "Używasz narzędzia spoza listy? Wklej w nim ten adres i zaloguj się kontem bisibility.",
+      "copy": "Kopiuj URL MCP",
+      "selfHosted": "self-hosting? użyj zamiast tego własnego adresu: '<your-instance>'/api/mcp",
+      "toolScope": "{readOnly} z {total} narzędzi jest oznaczonych jako tylko do odczytu. Klient i zatwierdzone zakresy dostępu mogą ograniczać dostępność narzędzi. Płatne operacje, takie jak sprawdzanie pozycji i analiza linków zwrotnych, są narzędziami zapisu. Zapisane raporty i szacunki kosztów są tylko do odczytu."
+    },
+    "apiKey": {
+      "heading": "Klucz API",
+      "scope": "zakres: {scope}",
+      "scopeRead": "Tylko odczyt",
+      "scopeWrite": "Odczyt i zapis",
+      "scopeAdmin": "Pełny dostęp",
+      "description": "Użyj go, gdy coś ma działać bez Ciebie – na przykład nocny skrypt.{created, select, none {} other { {created}.}}",
+      "created": "Utworzono {date}",
+      "manage": "Zarządzaj w sekcji Ustawienia, Deweloperzy",
+      "none": "Nie ma jeszcze klucza API. Administratorzy projektu mogą go utworzyć w sekcji Ustawienia → Deweloperzy.",
+      "copyCurl": "Kopiuj przykład curl"
+    },
+    "skills": {
+      "heading": "Umiejętności",
+      "planned": "planowane",
+      "description": "Pobierz archiwa umiejętności lub użyj umiejętności we wtyczce Claude Code. Planowane zadania są oznaczone poniżej.",
+      "footer": "Pobierz archiwum i zainstaluj skill zgodnie z instrukcją swojego klienta agenta.",
+      "keyword-import": "Import i usuwanie duplikatów",
+      "provider-setup": "Podłączanie i weryfikacja kluczy",
+      "weekly-report": "Podsumowanie zmian pozycji",
+      "keyword-clustering": "Grupowanie według intencji",
+      "seo-audit": "Priorytety poprawek SEO",
+      "availableCount": "{count, plural, one {# dostępna} few {# dostępne} many {# dostępnych} other {# dostępnych}}",
+      "available": "dostępne",
+      "domain-onboarding": "Konfiguracja pierwszej domeny",
+      "bisibility": "Wybór odpowiedniej umiejętności",
+      "ai-visibility-audit": "Sprawdzenie widoczności w AI",
+      "keyword-opportunity-research": "Szukanie szans słów kluczowych",
+      "rank-tracking-report": "Przegląd zmian pozycji",
+      "alert-triage": "Analiza alertów pozycji",
+      "backlink-profile-analysis": "Ocena jakości linków",
+      "team-api-governance": "Zarządzanie dostępem zespołu do API",
+      "self-host-health": "Sprawdzenie stanu instancji",
+      "competitor-analysis": "Porównanie wyników konkurencji",
+      "competitive-landscape": "Analiza otoczenia konkurencyjnego",
+      "ai-prompt-research": "Badanie promptów AI",
+      "local-seo": "Poprawa widoczności lokalnej",
+      "link-prospecting": "Szukanie możliwości pozyskania linków",
+      "sitemap-change-watch": "Śledzenie zmian mapy witryny",
+      "inPlugin": "we wtyczce Claude Code",
+      "project-setup": "Zapisz kontekst projektu i skonfiguruj śledzenie",
+      "seo-coach": "Wybierz kolejną umiejętność SEO"
+    },
+    "chatgptIcon": {
+      "copyUrl": "Kopiuj URL ikony",
+      "description": "Użyj tej ikony, dodając bisibility jako własną aplikację MCP.",
+      "download": "Pobierz PNG",
+      "heading": "Ikona aplikacji MCP",
+      "imageAlt": "ikona aplikacji bisibility",
+      "meta": "PNG · {width, number} × {height, number} px · {kilobytes} KB ({bytes, number} bajtów) · poniżej 10 KB"
+    },
+    "gettingStarted": {
+      "addApp": {
+        "copyMcpUrl": "Kopiuj URL MCP dla ChatGPT",
+        "description": "Utwórz plugin z poniższym URL MCP, wybierz OAuth i zaloguj się do bisibility. Zainstaluj utworzony plugin.",
+        "title": "2. Dodaj bisibility"
+      },
+      "description": "Połącz bisibility z ChatGPT.",
+      "developerMode": {
+        "description": "Otwórz Plugins w ChatGPT. Przestrzeń robocza musi zezwalać na własne serwery MCP.",
+        "title": "1. Otwórz Plugins"
+      },
+      "dismiss": "Ukryj pierwsze kroki",
+      "firstChat": {
+        "description": "W nowym czacie wpisz @ i wybierz bisibility. Spróbuj: \"{prompt}\"",
+        "prompt": {
+          "withChecks": "Które słowa kluczowe straciły pozycje w tym tygodniu?",
+          "withoutChecks": "Jakie projekty i słowa kluczowe mogę wyświetlić?"
+        },
+        "title": "3. Rozpocznij rozmowę"
+      },
+      "guideLink": "Przewodnik konfiguracji ChatGPT",
+      "heading": "Pierwsze kroki",
+      "note": "Administrator przestrzeni roboczej może musieć zezwolić na własne serwery MCP.",
+      "show": "Pokaż pierwsze kroki",
+      "clientSwitcher": "Asystent AI",
+      "accessTitle": "Dostęp tylko do odczytu",
+      "accessDescription": "To połączenie z ChatGPT pozwala odczytywać dane projektów i pozycji. Nie pozwala zmieniać ani usuwać projektów, zarządzać członkami ani tworzyć kluczy API.",
+      "claude": {
+        "description": "Połącz bisibility z Claude.",
+        "accessTitle": "Dostęp do odczytu i zapisu",
+        "accessDescription": "Claude może odczytywać dane i korzystać z dostępnych narzędzi zapisu w ramach zatwierdzonych zakresów i Twoich uprawnień w projektach.",
+        "developerMode": {
+          "title": "1. Otwórz konektory",
+          "description": "W Claude otwórz Settings → Connectors i wybierz Add custom connector."
+        },
+        "addApp": {
+          "title": "2. Dodaj bisibility",
+          "description": "Wpisz nazwę bisibility i wklej poniższy adres MCP. Dodaj konektor, wybierz Connect i zaloguj się do bisibility, aby sprawdzić uprawnienia.",
+          "copyMcpUrl": "Kopiuj adres MCP dla Claude"
+        },
+        "firstChat": {
+          "description": "W nowej rozmowie otwórz menu +, wybierz Connectors i włącz bisibility. Spróbuj: „{prompt}”"
+        },
+        "note": "Administrator przestrzeni roboczej może musieć dodać lub włączyć własne konektory.",
+        "guideLink": "Instrukcja konfiguracji Claude"
+      }
+    }
+  }
+}

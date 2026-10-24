@@ -1,0 +1,196 @@
+import { ProjectLimitExceededError } from "@/lib/api/resource-limits";
+import { computeNextCheckAt, type RankCheckFrequency } from "@/lib/rank-check/schedule";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createOnboardingProject, deriveOnboardingWebsite, saveOnboardingMarkets } from "./actions";
+
+const mocks = vi.hoisted(() => ({
+  authorize: vi.fn(),
+  createProject: vi.fn(),
+  getActionActor: vi.fn(),
+  hashApiKey: vi.fn(() => "hashed_key"),
+  parseActionInput: vi.fn((schema: { parse: (input: unknown) => unknown }, input: unknown) =>
+    schema.parse(input),
+  ),
+  prisma: {
+    apiKey: { create: vi.fn() },
+  },
+  revalidatePath: vi.fn(),
+  revalidateSettingsViews: vi.fn(),
+  requireProjectScope: vi.fn(),
+  reconcileProjectMarkets: vi.fn(),
+  readConsentFromCookies: vi.fn(),
+  trackServerEvent: vi.fn(),
+  writeAudit: vi.fn(),
+}));
+
+vi.mock("@/lib/analytics/server", () => ({
+  readConsentFromCookies: mocks.readConsentFromCookies,
+  trackServerEvent: mocks.trackServerEvent,
+}));
+
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("@/lib/actions/_shared", () => ({
+  getActionActor: mocks.getActionActor,
+  parseActionInput: mocks.parseActionInput,
+  requireProjectScope: mocks.requireProjectScope,
+  revalidateSettingsViews: mocks.revalidateSettingsViews,
+}));
+vi.mock("@/lib/actions/project", () => ({ createProject: mocks.createProject }));
+vi.mock("@/lib/auth/audit", () => ({ writeAudit: mocks.writeAudit }));
+vi.mock("@/lib/auth/authorize", () => ({ authorize: mocks.authorize }));
+vi.mock("@/lib/actions/project-markets", () => ({
+  reconcileProjectMarkets: mocks.reconcileProjectMarkets,
+}));
+vi.mock("@/lib/db/prisma", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/providers/crypto", () => ({ hashApiKey: mocks.hashApiKey }));
+vi.mock("server-only", () => ({}));
+
+describe("onboarding actions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getActionActor.mockResolvedValue({ id: "user_1" });
+    mocks.createProject.mockResolvedValue({
+      domain: "example.com",
+      id: "project_internal_1",
+      name: "Example",
+      publicId: "prj_public_1",
+      trackingScope: "city",
+    });
+    mocks.prisma.apiKey.create.mockResolvedValue({
+      id: "key_1",
+      name: "Development",
+      prefix: "bsb_key_test_prefix",
+    });
+    mocks.writeAudit.mockResolvedValue({ id: "audit_1" });
+    mocks.requireProjectScope.mockResolvedValue({ id: "project_internal_1", publicId: "prj_1" });
+    mocks.reconcileProjectMarkets.mockResolvedValue({ marketIds: [], removedMarketIds: [] });
+    mocks.readConsentFromCookies.mockResolvedValue({
+      analytics: true,
+      decidedAt: 1,
+      replay: false,
+      status: "decided",
+    });
+  });
+
+  it("derives a normalized domain and project name before creation", async () => {
+    const input = { website: "https://www.example.co.uk/products?source=onboarding" };
+
+    await expect(createOnboardingProject(input)).resolves.toMatchObject({
+      ok: true,
+      project: { publicId: "prj_public_1", timezone: "UTC" },
+    });
+
+    expect(mocks.createProject).toHaveBeenCalledWith({
+      domain: "example.co.uk",
+      name: "example",
+      defaults: { frequency: "manual", timezone: "UTC" },
+    });
+    expect(mocks.prisma.apiKey.create).not.toHaveBeenCalled();
+    expect(mocks.trackServerEvent).toHaveBeenCalledWith("onboarding_project_created", {
+      consent: { analytics: true, decidedAt: 1, replay: false, status: "decided" },
+      userId: "user_1",
+      properties: { frequency: "manual" },
+    });
+  });
+
+  it("returns project capacity rejection as data without tracking a created project", async () => {
+    mocks.createProject.mockRejectedValueOnce(new ProjectLimitExceededError(2));
+
+    await expect(createOnboardingProject({ website: "example.com" })).resolves.toEqual({
+      ok: false,
+      error: { code: "PROJECT_LIMIT_REACHED", limit: 2 },
+    });
+    expect(mocks.trackServerEvent).not.toHaveBeenCalled();
+  });
+
+  it("preserves unexpected creation failures", async () => {
+    const failure = new Error("Database unavailable");
+    mocks.createProject.mockRejectedValueOnce(failure);
+
+    await expect(createOnboardingProject({ website: "example.com" })).rejects.toBe(failure);
+    expect(mocks.trackServerEvent).not.toHaveBeenCalled();
+  });
+
+  it("preserves the browser timezone in manual defaults", async () => {
+    const input = {
+      website: "https://www.example.com",
+      timezone: "Europe/Madrid",
+    };
+
+    await expect(createOnboardingProject(input)).resolves.toMatchObject({
+      ok: true,
+      project: { timezone: "Europe/Madrid" },
+    });
+
+    expect(mocks.createProject).toHaveBeenCalledWith({
+      domain: "example.com",
+      name: "example",
+      defaults: { frequency: "manual", timezone: "Europe/Madrid" },
+    });
+  });
+
+  it("normalizes garbage and absent timezone input to UTC", async () => {
+    await createOnboardingProject({ website: "https://www.example.com", timezone: "warsaw" });
+    expect(mocks.createProject).toHaveBeenLastCalledWith({
+      domain: "example.com",
+      name: "example",
+      defaults: { frequency: "manual", timezone: "UTC" },
+    });
+
+    await createOnboardingProject({ website: "https://www.example.com", timezone: 42 });
+    expect(mocks.createProject).toHaveBeenLastCalledWith({
+      domain: "example.com",
+      name: "example",
+      defaults: { frequency: "manual", timezone: "UTC" },
+    });
+  });
+
+  it("creates defaults with no automatic next check", async () => {
+    await createOnboardingProject({
+      website: "https://www.example.com",
+      timezone: "Europe/Madrid",
+    });
+    const call = mocks.createProject.mock.calls.at(-1)?.[0] as {
+      defaults: { frequency: RankCheckFrequency; timezone: string };
+    };
+    expect(call.defaults).toEqual({ frequency: "manual", timezone: "Europe/Madrid" });
+    expect(computeNextCheckAt(call.defaults, new Date("2026-03-28T10:00:00.000Z"))).toBeNull();
+  });
+
+  it("authorizes preview derivation without creating a project", async () => {
+    await expect(deriveOnboardingWebsite({ website: "www.example.com/about" })).resolves.toEqual({
+      domain: "example.com",
+      name: "example",
+    });
+
+    expect(mocks.getActionActor).toHaveBeenCalledTimes(1);
+    expect(mocks.authorize).toHaveBeenCalledWith({ id: "user_1" }, "create", {
+      ownerId: "user_1",
+      requiredRole: "member",
+      type: "project",
+    });
+    expect(mocks.createProject).not.toHaveBeenCalled();
+  });
+
+  it("persists selected market pairs and rejects more than the onboarding maximum", async () => {
+    await expect(
+      saveOnboardingMarkets({ marketKeys: ["ES", "ES@en"], projectId: "prj_1" }),
+    ).resolves.toEqual({ marketKeys: ["ES", "ES@en"] });
+
+    expect(mocks.reconcileProjectMarkets).toHaveBeenCalledWith({
+      choices: [
+        expect.objectContaining({ canonicalKey: "ES", kind: "country", languageCode: "es" }),
+        expect.objectContaining({ canonicalKey: "ES@en", languageCode: "en" }),
+      ],
+      projectId: "prj_1",
+    });
+
+    await expect(
+      saveOnboardingMarkets({
+        marketKeys: ["US", "ES", "DE", "FR", "IT", "PL"],
+        projectId: "prj_1",
+      }),
+    ).rejects.toThrow();
+    expect(mocks.reconcileProjectMarkets).toHaveBeenCalledTimes(1);
+  });
+});

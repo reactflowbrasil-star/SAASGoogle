@@ -1,0 +1,71 @@
+---
+title: "Keyword research"
+description: "Research related keywords, suggestions, and ideas from one seed through DataForSEO Labs."
+---
+
+## Research keywords
+
+```http
+GET /api/v1/projects/{project_id}/keyword-research?seed=rank%20tracker&mode=auto&result_limit=100
+Authorization: Bearer <api_key>
+```
+
+This paid BYO-key lookup uses one eligible DataForSEO connection owned by the
+project. Send one seed per request. `mode=auto` cascades through related
+keywords, suggestions, and ideas until it reaches the requested unique result
+count. Results are deduplicated case-insensitively and the seed itself is
+excluded. There is no offset pagination. Choose `result_limit` as `100`, `300`,
+or `500` before the lookup.
+
+Research uses the project's default market at country scope. A city or region
+is translated to its country while retaining the market language. This differs
+from rank checks, which continue to use the exact tracked location. See
+[Markets and languages](/markets#research-capability).
+
+The current per-source estimate comes from bisibility's maintained provider
+rates table. `include_clickstream=true` requests clickstream-refined volumes and
+doubles the provider price. Results, including empty results, are cached for 12
+hours and shared with MCP and the UI. `fresh=true` skips the cache read.
+Endpoints that can spend provider budget require write scope.
+
+MCP callers use `research_keywords`. See [Paid MCP tools](/agents/paid-tools).
+
+Use `estimate_only=true` for a free, cache-aware dry run. It returns a cost-only
+`KeywordResearchEstimate` (`estimate: true`, aggregate `cost_cents`, `cached`,
+and one `{source, cost_cents, cached}` entry per planned source) without calling
+the provider, consuming budget, or writing the cost ledger. A dry run never
+carries `rows`, `fetched_at`, or source statuses, so it cannot be mistaken for
+an empty result. `max_cost_cents` (0 = cached result only; any required cache miss returns
+`cost_limit_exceeded` with `estimated_cost_cents` before provider calls, holds or attempts)
+sets a best-effort request guard. For positive caps, auto mode stops before a source whose estimate
+would exceed the remaining guard and returns partial results with that source
+marked `skipped` and reason `cost_limit`. Estimates come from the maintained
+rates table, and actual provider cost can differ slightly. The monthly provider
+budget remains the hard stop.
+
+Each row includes nullable volume, 12-month trend, CPC in cents, competition,
+difficulty, and intent. `source` identifies the algorithm that returned the
+keyword. `already_tracked` is true when the project already tracks its exact
+case-insensitive normalized text. The envelope includes source-level returned
+counts and provider-reported costs, the selected provider label, eligible
+connections, aggregate cost, cache status, and fetch time. Each source has an
+`ok`, `failed`, or `skipped` status and an optional machine-readable reason.
+Successful sources are cached independently, so retrying a partial response
+does not pay again for completed source calls.
+
+DataForSEO Labs supports fewer country-language pairs than position tracking.
+For keyword metrics, bisibility treats the provider's `keyword_overview`
+package as one capability. If the pair is unsupported, the entire metrics bundle
+of volume, trend, CPC, competition, difficulty, and intent is unavailable.
+Bisibility does not substitute another country's data. The API returns the
+standard `unsupported_location` problem response; the app shows those metrics as
+`n/a` while position tracking remains available.
+
+Unsupported locations, exhausted budgets, provider throttling,
+reauthorization, and missing eligible sources use the standard problem response.
+
+## Related operations
+
+- [`GET /projects/{project_id}/keyword-research`](/api-reference/keyword-research/research-keywords) (`researchKeywords`)
+
+Exact request and response schemas live in the generated API Reference.

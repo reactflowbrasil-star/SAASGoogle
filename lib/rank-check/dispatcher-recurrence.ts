@@ -1,0 +1,119 @@
+import "server-only";
+
+import { stableIntervalPhaseMs } from "@/lib/rank-check/interval-phase";
+import type { RankCheckScheduleInput } from "@/lib/rank-check/schedule";
+import { sha256Bytes } from "@/lib/rank-check/sha256";
+import { nextZonedCron, stableZonedIntervalCron } from "@/lib/rank-check/zoned-recurrence";
+import { CronExpressionParser } from "cron-parser";
+
+export type NextThreeCronRunsInput = Readonly<{
+  cronExpression: string;
+  from: Date;
+  timezone: string;
+}>;
+
+type NextThreeCronRuns = readonly [Date, Date, Date];
+
+export function intervalPhaseSeconds(keywordId: string, intervalSeconds: number) {
+  return stableIntervalPhaseMs(keywordId, intervalSeconds * 1_000) / 1_000;
+}
+
+function hashModulo(value: string, modulo: number) {
+  const digest = sha256Bytes(value);
+  let hash = 0n;
+  for (const byte of digest.subarray(0, 8)) {
+    hash = (hash << 8n) | BigInt(byte);
+  }
+  return Number(hash % BigInt(modulo));
+}
+
+export function deterministicJitterSeconds(keywordId: string, jitterMinutes?: number | null) {
+  const windowSeconds = Math.max(0, Math.floor(jitterMinutes ?? 60)) * 60;
+  if (windowSeconds === 0) return 0;
+
+  return hashModulo(`${keywordId}:dispatcher-jitter`, windowSeconds + 1);
+}
+
+function zonedAnchorCron(schedule: RankCheckScheduleInput) {
+  const anchor = schedule.nextCheckAt ? new Date(schedule.nextCheckAt) : null;
+  if (!anchor || Number.isNaN(anchor.getTime())) {
+    throw new Error("Monthly schedules require nextCheckAt.");
+  }
+  // SCHEDULE MATH (not display): preserve the configured wall-clock recurrence anchor.
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: schedule.timezone ?? "UTC",
+    hourCycle: "h23",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+  }).formatToParts(anchor);
+  const value = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+
+  return `${value("minute")} ${value("hour")} ${Math.min(value("day"), 28)} * *`;
+}
+
+function parseCronExpression({ cronExpression, from, timezone }: NextThreeCronRunsInput) {
+  return CronExpressionParser.parse(cronExpression, { currentDate: from, tz: timezone });
+}
+
+/** Keeps cron validation and previews aligned with the dispatcher's timezone and DST semantics. */
+export function nextThreeCronRuns(input: NextThreeCronRunsInput): NextThreeCronRuns {
+  const interval = parseCronExpression(input);
+
+  return [
+    new Date(interval.next().getTime()),
+    new Date(interval.next().getTime()),
+    new Date(interval.next().getTime()),
+  ];
+}
+
+export function computeDispatcherNextCheckAt(
+  schedule: RankCheckScheduleInput,
+  keywordId: string,
+  from = new Date(),
+) {
+  const jitterSeconds = deterministicJitterSeconds(keywordId, schedule.jitterMinutes);
+  const timezone = schedule.timezone ?? "UTC";
+
+  if (schedule.frequency === "daily" || schedule.frequency === "weekly") {
+    const { cronExpression, secondOffset } = stableZonedIntervalCron(keywordId, schedule.frequency);
+    return nextZonedCron(cronExpression, timezone, from, secondOffset + jitterSeconds);
+  }
+
+  if (schedule.frequency === "monthly") {
+    return nextZonedCron(zonedAnchorCron(schedule), timezone, from, jitterSeconds);
+  }
+  if (schedule.frequency === "custom_cron" && schedule.cronExpression) {
+    return nextZonedCron(schedule.cronExpression, timezone, from, jitterSeconds);
+  }
+
+  throw new Error("Only automatic rank-check schedules can be dispatched.");
+}
+
+export function dispatcherNextCheckAtMatchesRecurrence(
+  schedule: RankCheckScheduleInput,
+  keywordId: string,
+  nextCheckAt: Date,
+  referenceAt = new Date(),
+) {
+  if (!Number.isFinite(nextCheckAt.getTime()) || !Number.isFinite(referenceAt.getTime())) {
+    return false;
+  }
+  try {
+    if (nextCheckAt > referenceAt) {
+      return (
+        computeDispatcherNextCheckAt(schedule, keywordId, referenceAt).getTime() ===
+        nextCheckAt.getTime()
+      );
+    }
+    return (
+      computeDispatcherNextCheckAt(
+        schedule,
+        keywordId,
+        new Date(nextCheckAt.getTime() - 1),
+      ).getTime() === nextCheckAt.getTime()
+    );
+  } catch {
+    return false;
+  }
+}

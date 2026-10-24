@@ -1,0 +1,46 @@
+"use client";
+
+import { AddCompetitorDrawer } from "@/components/competitors/AddCompetitorDrawer";
+import { Button } from "@/components/ui/Button";
+import type { SuggestedCompetitor } from "@/lib/competitors/types";
+import { PlusIcon as Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { useTranslations } from "next-intl";
+import { useState } from "react";
+
+type AddCompetitorActionProps = {
+  canCreate: boolean;
+  projectId: string;
+  suggestions?: SuggestedCompetitor[];
+};
+
+export function AddCompetitorAction({
+  canCreate,
+  projectId,
+  suggestions = [],
+}: Readonly<AddCompetitorActionProps>) {
+  const t = useTranslations("projectCompetitors.ui");
+  const [open, setOpen] = useState(false);
+
+  if (!canCreate) return null;
+
+  return (
+    <>
+      <Button
+        className="shrink-0"
+        onClick={() => setOpen(true)}
+        size="sm"
+        startIcon={<Plus aria-hidden size={14} weight="regular" />}
+        type="button"
+      >
+        {t("addCompetitor")}
+      </Button>
+      <AddCompetitorDrawer
+        canCreate={canCreate}
+        onClose={() => setOpen(false)}
+        open={open}
+        projectId={projectId}
+        suggestions={suggestions}
+      />
+    </>
+  );
+}

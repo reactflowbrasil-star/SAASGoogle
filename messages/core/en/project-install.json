@@ -1,0 +1,152 @@
+{
+  "projectInstall": {
+    "agents": {
+      "heading": "AI agents",
+      "description": "Pick your tool, copy one command, paste it in your terminal. That is the whole setup.",
+      "copyCommand": "Copy {agent} command",
+      "claude-code": {
+        "label": "Claude Code",
+        "hint": "CLI",
+        "note": "Then run /mcp inside Claude Code to sign in."
+      },
+      "codex": {
+        "label": "Codex",
+        "hint": "CLI",
+        "note": "Codex signs in through the same OAuth flow."
+      },
+      "cursor": {
+        "label": "Cursor",
+        "hint": "editor",
+        "note": "Settings, MCP, then paste into mcp.json."
+      },
+      "chatgpt": {
+        "label": "ChatGPT",
+        "hint": "App",
+        "note": "Open ChatGPT Plugins, select +, then Add custom MCP server. Use the MCP URL and OAuth.",
+        "caveat": "Access depends on your workspace policy. This bisibility connection requests read-only access."
+      },
+      "grok-bot": {
+        "label": "Grok Bot",
+        "hint": "Assistant",
+        "note": "Paste this into a Grok Bot chat, confirm adding the custom MCP server, then sign in from the connect card. The bisibility consent screen may name the client Cursor and say it was registered automatically; that is expected for Grok Bot.",
+        "caveat": "Paid operations such as rank checks and backlink analysis are write tools and charge your project's payment source. Ask the bot to confirm the cost before running them."
+      },
+      "claude-desktop": {
+        "label": "Claude (web and desktop)",
+        "hint": "connector",
+        "note": "Customize, Connectors, Add custom connector, paste the URL, then approve the sign-in.",
+        "caveat": "Claude exposes every tool. It asks before each write tool the first time; use Allow always only for tools you trust to run unsupervised. Research runs tools without asking, so disable write tools there."
+      },
+      "other": {
+        "label": "Any MCP client",
+        "hint": "manual",
+        "note": "Streamable HTTP with OAuth sign-in. No key in the URL."
+      }
+    },
+    "endpoint": {
+      "heading": "MCP endpoint",
+      "description": "Using a tool that is not on the list? Paste this address into it and sign in with your bisibility account.",
+      "copy": "Copy MCP URL",
+      "selfHosted": "self-hosting? use your own address instead: '<your-instance>'/api/mcp",
+      "toolScope": "{readOnly} of {total} tools are marked read-only. Clients and approved scopes can restrict tool availability. Paid operations such as rank checks and backlink analysis are write tools. Stored reports and cost estimates are read-only."
+    },
+    "apiKey": {
+      "heading": "API key",
+      "scope": "scope: {scope}",
+      "scopeRead": "Read only",
+      "scopeWrite": "Read and write",
+      "scopeAdmin": "Full access",
+      "description": "Use this when something has to run without you, like a nightly script.{created, select, none {} other { {created}.}}",
+      "created": "Created {date}",
+      "manage": "Manage in Settings, Developers",
+      "none": "No API key yet. Project admins can create one under Settings → Developers.",
+      "copyCurl": "Copy curl example"
+    },
+    "skills": {
+      "heading": "Skills",
+      "planned": "planned",
+      "description": "Download skill archives or use skills in the Claude Code plugin. Planned tasks are marked below.",
+      "footer": "Download an archive and follow your agent client's instructions for installing skills.",
+      "keyword-import": "Bulk add, dedupe",
+      "provider-setup": "Connect, verify keys",
+      "weekly-report": "Digest of movements",
+      "keyword-clustering": "Group by intent",
+      "seo-audit": "Prioritized SEO fixes",
+      "availableCount": "{count, plural, one {# available} other {# available}}",
+      "available": "available",
+      "domain-onboarding": "First domain setup",
+      "bisibility": "Find the right skill",
+      "ai-visibility-audit": "Check AI visibility",
+      "keyword-opportunity-research": "Find keyword opportunities",
+      "rank-tracking-report": "Review ranking changes",
+      "alert-triage": "Investigate ranking alerts",
+      "backlink-profile-analysis": "Assess backlink quality",
+      "team-api-governance": "Manage team API access",
+      "self-host-health": "Check instance health",
+      "competitor-analysis": "Compare competitor performance",
+      "competitive-landscape": "Map the competition",
+      "ai-prompt-research": "Explore AI prompts",
+      "local-seo": "Improve local visibility",
+      "link-prospecting": "Find link opportunities",
+      "sitemap-change-watch": "Watch sitemap changes",
+      "inPlugin": "in the Claude Code plugin",
+      "project-setup": "Save project context and tracking setup",
+      "seo-coach": "Choose the next SEO skill"
+    },
+    "chatgptIcon": {
+      "copyUrl": "Copy icon URL",
+      "description": "Use this icon when adding bisibility as a custom MCP app.",
+      "download": "Download PNG",
+      "heading": "MCP app icon",
+      "imageAlt": "bisibility app icon",
+      "meta": "PNG · {width, number} × {height, number} px · {kilobytes} KB ({bytes, number} bytes) · under 10 KB"
+    },
+    "gettingStarted": {
+      "addApp": {
+        "copyMcpUrl": "Copy ChatGPT MCP URL",
+        "description": "Create the plugin with the MCP URL below, select OAuth and sign in to bisibility. Install the resulting plugin.",
+        "title": "2. Add bisibility"
+      },
+      "description": "Connect bisibility to ChatGPT.",
+      "developerMode": {
+        "description": "Open ChatGPT Plugins. Your workspace must allow custom MCP servers.",
+        "title": "1. Open Plugins"
+      },
+      "dismiss": "Dismiss how to start",
+      "firstChat": {
+        "description": "In a new chat, type @ and select bisibility. Try: \"{prompt}\"",
+        "prompt": {
+          "withChecks": "Which keywords lost positions this week?",
+          "withoutChecks": "Which projects and keywords can I view?"
+        },
+        "title": "3. Start a conversation"
+      },
+      "guideLink": "ChatGPT setup guide",
+      "heading": "How to start",
+      "note": "Your workspace administrator may need to allow custom MCP servers.",
+      "show": "Show how to start",
+      "clientSwitcher": "AI assistant",
+      "accessTitle": "Read-only access",
+      "accessDescription": "This ChatGPT connection can read project and rank data. It cannot change or delete projects, manage members or create API keys.",
+      "claude": {
+        "description": "Connect bisibility to Claude.",
+        "accessTitle": "Read and write access",
+        "accessDescription": "Claude can read data and use available write tools, within the scopes you approve and your existing project permissions.",
+        "developerMode": {
+          "title": "1. Open connectors",
+          "description": "In Claude, open Settings → Connectors and select Add custom connector."
+        },
+        "addApp": {
+          "title": "2. Add bisibility",
+          "description": "Name it bisibility and paste the MCP URL below. Add the connector, then select Connect and sign in to bisibility to review access.",
+          "copyMcpUrl": "Copy Claude MCP URL"
+        },
+        "firstChat": {
+          "description": "In a new chat, open the + menu, choose Connectors and enable bisibility. Try: \"{prompt}\""
+        },
+        "note": "Your workspace administrator may need to add or enable custom connectors.",
+        "guideLink": "Claude setup guide"
+      }
+    }
+  }
+}

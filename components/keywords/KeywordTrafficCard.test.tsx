@@ -1,0 +1,247 @@
+import { renderWithProjectRankTrackerMessages as render } from "@/i18n/test-support/render-with-feature-messages";
+import { screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { KeywordTrafficCard } from "./KeywordTrafficCard";
+
+describe("KeywordTrafficCard", () => {
+  const query = {
+    clicks: 12,
+    ctr: 0.1,
+    date: new Date("2026-08-10T00:00:00.000Z"),
+    impressions: 120,
+    position: 3,
+    provider: "gsc",
+    windowDays: 28,
+  };
+
+  const page = {
+    bounceRate: null,
+    date: query.date,
+    engagementRate: null,
+    keyEvents: null,
+    path: "/headless-cms",
+    provider: "ga4",
+    scrollDepth: null,
+    sessions: 8,
+    visitDurationSeconds: null,
+    visitors: null,
+    windowDays: 28,
+  };
+
+  it("is an explicit client island beneath the actual detail route boundary", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "components/keywords/KeywordTrafficCard.tsx"),
+      "utf8",
+    );
+    const route = readFileSync(
+      resolve(process.cwd(), "app/(regional)/app/(workspace)/[project]/rank-tracker/[id]/page.tsx"),
+      "utf8",
+    );
+
+    expect(source).toMatch(/^"use client";/u);
+    expect(route).toContain("<KeywordTrafficCard");
+    expect(route).toContain("<KeywordManagementMessagesBoundary");
+  });
+
+  it("uses the same connected-state badges in the source list and report headers", () => {
+    const { container } = render(
+      <KeywordTrafficCard
+        projectRef="prj_1"
+        traffic={{
+          connectedProviders: ["gsc"],
+          hasAnalyticsConnection: true,
+          hasSearchConsoleConnection: true,
+          query,
+          pages: [page],
+        }}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("listitem", { name: "Google Search Console, Active connection" })
+        .querySelector("[data-analytics-provider]"),
+    ).not.toHaveClass("grayscale");
+    expect(
+      screen
+        .getByRole("listitem", { name: "Google Analytics 4, No active connection" })
+        .querySelector("[data-analytics-provider]"),
+    ).toHaveClass("grayscale");
+    expect(
+      screen
+        .getByRole("listitem", { name: "Plausible, No active connection" })
+        .querySelector("[data-analytics-provider]"),
+    ).toHaveClass("grayscale");
+    expect(
+      screen
+        .getByRole("listitem", { name: "Google Search Console, Active connection" })
+        .querySelector("[role=img]"),
+    ).toHaveAttribute("aria-label", "Google Search Console");
+    const gsc = container.querySelectorAll('[data-analytics-provider="gsc"]');
+    expect(gsc).toHaveLength(2);
+    for (const badge of gsc) {
+      expect(badge).toHaveAttribute("data-connected", "true");
+      expect(badge).toHaveClass("border-green/40");
+    }
+    const ga4 = container.querySelectorAll('[data-analytics-provider="ga4"]');
+    expect(ga4).toHaveLength(2);
+    for (const badge of ga4) {
+      expect(badge).toHaveAttribute("data-connected", "false");
+      expect(badge).toHaveClass("grayscale", "border-border");
+    }
+  });
+
+  it("keeps Search Console-only data separate from landing page performance", () => {
+    const { rerender } = render(
+      <KeywordTrafficCard
+        projectRef="prj_1"
+        traffic={{
+          hasAnalyticsConnection: true,
+          hasSearchConsoleConnection: true,
+          pages: [],
+          query,
+        }}
+        trafficState="gsc_only"
+      />,
+    );
+
+    expect(screen.getByText("Search performance")).toBeInTheDocument();
+    expect(screen.queryByText("Landing page performance")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "GSC position is an average across real impressions and may differ from the latest rank check.",
+      ),
+    ).toBeInTheDocument();
+
+    rerender(
+      <KeywordTrafficCard
+        projectRef="prj_1"
+        traffic={{
+          hasAnalyticsConnection: true,
+          hasSearchConsoleConnection: true,
+          pages: [page],
+          query,
+        }}
+        trafficState="both"
+      />,
+    );
+
+    expect(screen.getByText("Landing page performance")).toBeInTheDocument();
+  });
+
+  it("shows a Search Console connection action when analytics is not connected", () => {
+    render(
+      <KeywordTrafficCard
+        projectRef="prj_1"
+        traffic={{ hasAnalyticsConnection: false, pages: [], query: null }}
+      />,
+    );
+
+    expect(screen.getByText("Search performance")).toBeInTheDocument();
+    expect(screen.getByText("Trailing 28 days")).toBeInTheDocument();
+    expect(screen.getAllByText("Google Search Console")).toHaveLength(2);
+    expect(
+      screen.getByText(
+        "Connect Search Console to see clicks, impressions and CTR for this keyword.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Connect Search Console" })).toHaveAttribute(
+      "href",
+      "/app/prj_1/integrations",
+    );
+  });
+
+  it("shows the first-sync wait and reporting lag only when Search Console is connected", () => {
+    render(
+      <KeywordTrafficCard
+        projectRef="prj_1"
+        traffic={{
+          hasAnalyticsConnection: true,
+          hasSearchConsoleConnection: true,
+          pages: [],
+          query: null,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("No Search Console data for this keyword yet.")).toBeInTheDocument();
+    expect(screen.getByText("Trailing 28 days")).toBeInTheDocument();
+    expect(screen.getByText(/approximately 3-day reporting lag/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Connect Search Console" })).toBeNull();
+  });
+
+  it("uses an explicit Search Console state instead of the generic analytics connection", () => {
+    render(
+      <KeywordTrafficCard
+        projectRef="prj_1"
+        traffic={{
+          hasAnalyticsConnection: true,
+          hasSearchConsoleConnection: false,
+          pages: [],
+          query: null,
+        }}
+        trafficState="not_connected"
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Connect Search Console" })).toBeInTheDocument();
+    expect(
+      screen.queryByText("No Search Console data for this keyword yet."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows page analytics without Search Console data", () => {
+    render(
+      <KeywordTrafficCard
+        projectRef="prj_1"
+        traffic={{
+          hasAnalyticsConnection: true,
+          hasSearchConsoleConnection: false,
+          pages: [{ ...page, provider: "plausible" }],
+          query: null,
+        }}
+      />,
+    );
+    expect(screen.getByText("Landing page performance")).toBeInTheDocument();
+    expect(screen.getByText("Pageviews")).toBeInTheDocument();
+    expect(screen.getAllByText("Plausible").length).toBeGreaterThan(0);
+  });
+
+  it("shows a connected page source and explains the missing landing URL", () => {
+    const traffic = {
+      connectedProviders: ["plausible"],
+      pagePaths: [] as string[],
+      hasAnalyticsConnection: true,
+      hasSearchConsoleConnection: false,
+      pages: [],
+      query: null,
+    };
+    const { rerender } = render(<KeywordTrafficCard projectRef="prj_1" traffic={traffic} />);
+    expect(screen.getByText(/Set a target URL/)).toBeInTheDocument();
+    rerender(
+      <KeywordTrafficCard projectRef="prj_1" traffic={{ ...traffic, pagePaths: ["/product"] }} />,
+    );
+    expect(screen.getByText(/No stored page data for \/product/)).toBeInTheDocument();
+    expect(screen.queryByText(/Set a target URL/)).toBeNull();
+  });
+
+  it("labels Plausible page traffic as Pageviews and GA4 traffic as Sessions", () => {
+    render(
+      <KeywordTrafficCard
+        projectRef="prj_1"
+        traffic={{
+          hasAnalyticsConnection: true,
+          hasSearchConsoleConnection: true,
+          pages: [page, { ...page, provider: "plausible", sessions: 12 }],
+          query,
+        }}
+        trafficState="both"
+      />,
+    );
+
+    expect(screen.getByText("Sessions")).toBeInTheDocument();
+    expect(screen.getByText("Pageviews")).toBeInTheDocument();
+  });
+});
+
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";

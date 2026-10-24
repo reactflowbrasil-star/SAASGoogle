@@ -1,0 +1,27 @@
+---
+title: "Notification preferences"
+description: "Read and update notification preferences."
+---
+
+Paths are relative to `/api/v1`. All routes use a project-scoped API key -
+`Authorization: Bearer <api_key>` - that must belong to the project in the
+path. See [Authentication](/authentication) for scopes.
+
+| Method | Path | Purpose |
+| - | - | - |
+| `GET` | `/projects/{project_id}/notification-preferences` | Read channel and event preferences. |
+| `PATCH` | `/projects/{project_id}/notification-preferences` | Update notification preferences. |
+
+Preferences affect future notifications; they do not delete existing feed or
+delivery-attempt records.
+
+The generated
+[OpenAPI JSON](https://bisibility.com/api/v1/openapi.json) remains the
+machine-readable source of truth for request and response schemas.
+
+## Related operations
+
+- [`GET /projects/{project_id}/notification-preferences`](/api-reference/alerts/get-notification-preferences) (`getNotificationPreferences`)
+- [`PATCH /projects/{project_id}/notification-preferences`](/api-reference/alerts/update-notification-preferences) (`updateNotificationPreferences`)
+
+Exact request and response schemas live in the generated API Reference.

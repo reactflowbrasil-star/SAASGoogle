@@ -1,0 +1,222 @@
+---
+title: "Instance import"
+description: "Import keywords and rank history with a migration token."
+---
+
+import CloudImportSessions from "./cloud-import-sessions.mdx";
+
+Instance import accepts an export package and restores keywords plus optional rank
+history into the project associated with a migration token. Use the single
+request endpoint for small packages and the session protocol for large packages.
+
+These versioned paths are included in `/api/v1/openapi.json`.
+
+## Endpoints
+
+```http
+POST /api/v1/cloud/import
+GET  /api/v1/cloud/import/compatibility
+POST /api/v1/cloud/import/sessions
+PUT  /api/v1/cloud/import/sessions/{sessionId}/chunks/{index}
+POST /api/v1/cloud/import/sessions/{sessionId}/finalize
+```
+
+## Authentication
+
+Instance import uses a migration token, not a `bsb_key_live_...` API key. Every import
+endpoint requires Bearer authentication:
+
+```text
+Authorization: Bearer mig_...
+```
+
+Invalid, expired, or already-used tokens return `419` with an `unauthorized`
+problem response. Missing or malformed tokens return `401`.
+
+All import request objects reject unknown fields. Public IDs and checksums must
+use their exact lowercase representation without surrounding whitespace.
+Numbers and booleans must use native JSON types rather than strings.
+
+## Migration Tokens
+
+A migration token is bound to one project by design: it authorizes importing
+into exactly the project it was minted for, is single use, and expires after
+`BISIBILITY_MIGRATION_TOKEN_TTL_MINUTES`. This is what lets the exporting side
+push data into a destination project without ever holding that project's API
+key. There is no instance-global token; a broader credential would grant more
+than an import needs.
+
+Tokens are minted and managed through the ordinary project-scoped REST API
+using an `Authorization: Bearer <api_key>` key for the destination project:
+
+| Method | Path | Purpose |
+| - | - | - |
+| `GET` | `/api/v1/projects/{project_id}/migration-tokens` | List migration tokens without exposing raw secrets. |
+| `POST` | `/api/v1/projects/{project_id}/migration-tokens` | Mint a `full` or `keywords` migration token. |
+| `DELETE` | `/api/v1/projects/{project_id}/migration-tokens/{token_id}` | Revoke through the project-scoped route. |
+| `DELETE` | `/api/v1/migration-tokens/{token_id}` | Revoke through the short route. |
+
+The raw `mig_...` value is returned only when minted. Tokens can also be minted
+from the in-app wizard. Migration-token identifiers are strict `ferry_` v3
+public IDs; import jobs and session identifiers are strict `imp_` v3 public IDs.
+
+## Compatibility Preflight
+
+Call the public compatibility endpoint before generating an export:
+
+```http
+GET /api/v1/cloud/import/compatibility
+```
+
+Response:
+
+```json
+{
+  "schema_versions_supported": [7, 6],
+  "app_version": "0.2.0",
+  "latest_migration": "20260730204200_rank_check_normalization_version"
+}
+```
+
+The endpoint is anonymous and rate limited. `latest_migration` is `null` when
+the migration table cannot be read.
+
+## Single Request Import
+
+Post the export package directly to `/api/v1/cloud/import`:
+
+```json
+{
+  "exported_at": "2026-06-28T10:00:00.000Z",
+  "version": 7,
+  "project_id": "prj_abcdefghijklmnopqrstuvwx",
+  "scope": "history",
+  "keywords": [
+    {
+      "id": "kw_abcdefghijklmnopqrstuvwx",
+      "keyword": "rank tracker api",
+      "location": "United States",
+      "location_key": "US",
+      "device": "desktop",
+      "target_url": "https://example.com/rank-tracker",
+      "tags": ["api"],
+      "rankingHistory": [
+        {
+          "checkedAt": "2026-06-20T10:00:00.000Z",
+          "normalizationVersion": "v1",
+          "position": 3,
+          "previousPosition": 4,
+          "provider": "dataforseo",
+          "rankingUrl": "https://example.com/rank-tracker",
+          "requestedDepth": 100
+        }
+      ]
+    }
+  ],
+  "alert_rules": [],
+  "competitors": [],
+  "notification_preferences": [],
+  "saved_views": []
+}
+```
+
+The endpoint accepts strict v7 packages and compatible v6 packages. Version 7
+exports identify every keyword location with `location_key`; the human-readable
+`location` label can name a country, region, or city. Version 6 continues to use
+the legacy country label. All versions accept only snake-case package fields,
+exact lowercase public IDs, and native JSON number and boolean types. They reject
+wrapper objects, body tokens, and unknown fields. A version 5 package is accepted
+only when every `rankingHistory` array is empty; update and re-export any version
+5 package that carries ranking history.
+
+Top-level fields:
+
+| Field | Description |
+| - | - |
+| `keywords` | Required. Up to 500 keyword records. |
+| `exported_at` | Optional ISO-8601 timestamp. |
+| `project_id` | Required strict `prj_` v3 source project ID. |
+| `scope` | Optional. `current` or `history`. |
+| `alert_rules` | Required alert-rule records. |
+| `competitors` | Required competitor records. |
+| `notification_preferences` | Required notification preference records. |
+| `saved_views` | Required saved-view records. |
+
+Keyword fields:
+
+| Field | Description |
+| - | - |
+| `id` | Required strict `kw_` v3 source keyword ID. |
+| `keyword` | Required keyword text. |
+| `device` | Required: `desktop` or `mobile`. |
+| `location` | Required human-readable source location label. |
+| `location_key` | Required in version 7. Canonical country, region, or city key, optionally qualified with `@language`. It takes precedence over `location`. |
+| `target_url` | Absolute URL, path, `null`, or omitted. |
+| `tags` | Up to 12 tags. Defaults to `[]`. |
+| `rankingHistory` | Optional. Up to 5000 historical checks per keyword. |
+
+Each competitor record requires its source `cmp_` public ID and canonical
+domain. The destination still matches and upserts competitors by domain.
+
+History fields:
+
+| Field | Description |
+| - | - |
+| `checkedAt` | Required ISO-8601 timestamp. |
+| `normalizationVersion` | Required normalization contract version, currently `v1`. |
+| `position` | Required integer position or `null`. |
+| `previousPosition` | Required integer previous position or `null`. |
+| `provider` | Required provider identifier captured by the source check. |
+| `rankingUrl` | Required absolute URL, path, or `null`. |
+| `requestedDepth` | Required requested SERP depth (`10`, `20`, `50`, `100`, or `null`). `null` rows are imported and shown in ranking history. Visibility requires a known requested depth of at least 20. Checks with unknown depth do not update Visibility. Affected keywords still count toward its coverage total. |
+
+Only successfully completed source checks are exported as ranking history.
+Failed, running, and deferred attempts are not ranking observations and are not
+included. Imported rows preserve their provider, depth, and normalization
+version. Visibility measures volume-weighted ranking strength in Google's Top
+20. 100 means every measured keyword ranks #1. Rankings below #20 do not add
+Visibility. Shallow or failed checks are not treated as lost rankings. Top 10
+checks do not update Visibility. Affected keywords still count toward its
+coverage total.
+
+<Warning>
+  Export `requestedDepth` whenever the source instance has it. A `null` value
+  remains valid when the source did not store a depth, and the completed import
+  reports those rows as `history_unknown_depth`.
+</Warning>
+
+<Warning>
+  Version 5 history does not distinguish failed attempts from successful
+  no-match observations. bisibility rejects it rather than importing ambiguous
+  ranking data. Update the source instance and create a version 7 export.
+</Warning>
+
+Success returns `201`.
+
+```json
+{
+  "counts": {
+    "keywords": 1,
+    "keywords_created": 1,
+    "keywords_skipped": 0,
+    "history": 1,
+    "history_received": 1
+  },
+  "job_id": "imp_abcdefghijklmnopqrstuvwx",
+  "state": "done"
+}
+```
+
+Every v7 package includes every section, including empty arrays:
+
+| Count | Meaning |
+| - | - |
+| `history_unknown_depth` | When present, received history rows with `requestedDepth: null`. |
+| `alert_rules`, `alert_rules_skipped` | Imported and skipped alert rules. |
+| `competitors` | Imported competitors. |
+| `notification_preferences` | Imported notification preferences. |
+| `saved_views` | Imported saved views. |
+
+## Chunked session import
+
+<CloudImportSessions />

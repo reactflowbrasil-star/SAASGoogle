@@ -1,0 +1,215 @@
+model MeteringOperation {
+  operation_pk           String            @id
+  namespace              String
+  principal              String
+  operation_id           String
+  state                  String
+  version                Int
+  semantic_hash          String
+  budget_epochs          Json
+  reservation_expires_at DateTime          @db.Timestamptz
+  lease_id               String?
+  lease_holder           String?
+  lease_expires_at       DateTime?         @db.Timestamptz
+  lease_kind             String?
+  created_at             DateTime          @db.Timestamptz
+  updated_at             DateTime          @db.Timestamptz
+  input                  Json
+  warnings               Json
+  alerts                 Json              @default("[]")
+  receipts               MeteringReceipt[]
+  commands               MeteringCommand[]
+  events                 MeteringEvent[]
+  paidAttemptContext     MeteringPaidAttemptContext?
+  historyImports         MeteringHistoryImport[] @ignore
+  historyReferences      MeteringHistoryReference[] @ignore
+  historyCloseout        MeteringHistoryCloseout? @ignore
+
+  @@unique([namespace, operation_id])
+  @@index([namespace, state, reservation_expires_at], map: "metering_operation_expiry_idx")
+  @@map("metering_operation")
+
+  measurement_native_dispatch_proofs   MeasurementNativeDispatchProof[]
+  measurement_snapshot_dispatch_proofs MeasurementSnapshotDispatchProof[]
+}
+
+model MeteringReceipt {
+  receipt_pk     String                @id
+  operation_pk   String
+  receipt_id     String
+  supersedes     String?
+  body           Json
+  occurred_at    DateTime              @db.Timestamptz
+  recorded_at    DateTime              @db.Timestamptz
+  cost_units     BigInt?
+  cost_certainty String
+  sequence       Int
+  operation      MeteringOperation     @relation(fields: [operation_pk], references: [operation_pk], onDelete: NoAction, onUpdate: NoAction)
+  measurements   MeteringMeasurement[]
+  events         MeteringEvent[]
+
+  @@unique([operation_pk, receipt_id])
+  @@unique([operation_pk, sequence])
+  @@map("metering_receipt")
+}
+
+model MeteringMeasurement {
+  receipt_pk String
+  unit       String
+  value      Decimal?        @db.Decimal(38, 0)
+  scale      Int?
+  certainty  String
+  receipt    MeteringReceipt @relation(fields: [receipt_pk], references: [receipt_pk], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([receipt_pk, unit])
+  @@map("metering_measurement")
+}
+
+model MeteringCommand {
+  operation_pk String
+  command_id   String
+  kind         String
+  input_hash   String
+  input        Json
+  result       Json
+  operation    MeteringOperation @relation(fields: [operation_pk], references: [operation_pk], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([operation_pk, command_id])
+  @@map("metering_command")
+}
+
+model MeteringBudget {
+  sequence BigInt @default(autoincrement())
+  namespace   String
+  budget_id   String
+  version     Int
+  scope_kind  String
+  scope_key   String
+  surface     String
+  unit        String
+  limit_value Decimal? @db.Decimal(38, 0)
+  limit_scale Int?
+  window      Json
+  on_exceed   String
+  body        Json
+
+  @@id([namespace, budget_id, version])
+  @@index([namespace, scope_key, surface], map: "metering_budget_scope_idx")
+  @@map("metering_budget")
+}
+
+model MeteringBudgetUsage {
+  namespace         String
+  budget_id         String
+  epoch             String
+  settled_value     Decimal @db.Decimal(38, 0)
+  outstanding_value Decimal @db.Decimal(38, 0)
+  scale             Int
+
+  @@id([namespace, budget_id, epoch])
+  @@map("metering_budget_usage")
+}
+
+model MeteringEvent {
+  event_id     BigInt            @id @default(autoincrement())
+  operation_pk String
+  namespace    String
+  state        String
+  receipt_pk   String?
+  occurred_at  DateTime?         @db.Timestamptz
+  operation    MeteringOperation @relation(fields: [operation_pk], references: [operation_pk], onDelete: NoAction, onUpdate: NoAction)
+  receipt      MeteringReceipt?  @relation(fields: [receipt_pk], references: [receipt_pk], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([namespace, occurred_at, event_id], map: "metering_event_time_idx")
+  @@index([operation_pk, event_id(sort: Desc)], map: "metering_event_operation_idx")
+  @@map("metering_event")
+}
+
+model MeteringMetadata {
+  key   String @id
+  value String
+
+  @@map("metering_metadata")
+}
+
+model MeteringAlert {
+  alert_key String @id
+  namespace String
+  budget_id String
+  epoch String
+  threshold String
+
+  @@unique([namespace, budget_id, epoch, threshold])
+  @@index([namespace, budget_id, epoch], map: "metering_alert_budget_idx")
+  @@map("metering_alert")
+}
+
+model MeteringRequestCommand {
+  namespace String
+  command_id String
+  identity_hash String
+
+  @@id([namespace, command_id])
+  @@map("metering_request_command")
+}
+
+model MeteringRequestCount {
+  bucket_key String @id
+  namespace String
+  day DateTime @db.Date
+  body Json
+  count Decimal @db.Decimal(38,0)
+
+  @@index([namespace, day], map: "metering_request_count_window_idx")
+  @@map("metering_request_count")
+}
+
+// Minimal BYOK accounting identity survives a business project's cascading deletion.
+model MeteringUsageEvidence {
+  id                String   @id
+  namespace         String?
+  principal         String
+  projectId         String
+  connectionId      String
+  provider          String
+  feature           String
+  source            String
+  credentialKind    String?
+  credentialId      String?
+  correlationId     String
+  unit              String
+  estimate          Json
+  createdAt         DateTime
+  updatedAt         DateTime @default(now()) @updatedAt
+  receipt           Json?
+  proofVersion      Int      @default(0)
+  receiptId         String?
+  providerRequestId String?
+  canonicalId       String?
+  discarded         Boolean  @default(false)
+  measurementStatus String   @default("unknown")
+
+  @@index([projectId, principal, createdAt], map: "metering_usage_evidence_project_principal_idx")
+  @@index([connectionId, correlationId, measurementStatus], map: "metering_usage_evidence_pending_idx")
+  @@map("metering_usage_evidence")
+
+  local_original_submit_proofs LocalOriginalSubmitProof[]
+}
+
+// Immutable attribution and send fence survive project/connection deletion; amounts live in Store.
+model MeteringPaidAttemptContext {
+  namespace         String
+  operation_id      String
+  principal         String
+  context           Json
+  dispatch_lease_id String?
+  fenced_at         DateTime? @db.Timestamptz
+  fenced_at_iso     String?
+  debit_id          String?
+  operation         MeteringOperation @relation(fields: [namespace, operation_id], references: [namespace, operation_id], onDelete: NoAction, onUpdate: NoAction, map: "metering_paid_attempt_operation_fk")
+
+  @@id([namespace, operation_id])
+  @@map("metering_paid_attempt_context")
+
+  local_original_submit_proofs LocalOriginalSubmitProof[]
+}

@@ -1,0 +1,79 @@
+"use client";
+
+import { SettingsSearch } from "@/components/settings/shell/SettingsSearch";
+import {
+  type SettingsSectionId,
+  settingsSectionGroups,
+  settingsSectionHref,
+  settingsSectionLabel,
+  settingsSections,
+} from "@/components/settings/shell/settings-sections";
+import type { ProjectRef } from "@/lib/routing/app-path";
+import Link from "next/link";
+import { useTranslations } from "next-intl";
+
+type SettingsSubnavProps = {
+  activeSection: SettingsSectionId;
+  projectRef: ProjectRef;
+};
+
+export function SettingsSubnav({ activeSection, projectRef }: Readonly<SettingsSubnavProps>) {
+  const t = useTranslations("projectSettingsShell");
+
+  return (
+    <nav
+      aria-label={t("navigationLabel")}
+      className="sticky top-6 hidden w-[200px] self-start flex-col gap-0.5 pl-3.5 lg:flex"
+      data-settings-subnav=""
+    >
+      <SettingsSearch projectRef={projectRef}>
+        <div className="space-y-3">
+          {settingsSectionGroups.map((group) => (
+            <section key={group.id} aria-label={t(`groups.${group.id}`)}>
+              <h2 className="m-0 px-[11px] pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-fg-muted">
+                {t(`groups.${group.id}`)}
+              </h2>
+              <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+                {settingsSections
+                  .filter((section) => group.sections.some((id) => id === section.id))
+                  .map((section) => {
+                    const current = section.id === activeSection;
+                    const Icon = section.icon;
+                    return (
+                      <li key={section.id}>
+                        <Link
+                          aria-current={current ? "page" : undefined}
+                          className={`relative flex h-10 items-center gap-2.5 rounded-control px-[11px] text-[13.5px] no-underline outline-none transition-colors duration-150 hover:bg-bg-sunken hover:text-fg focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-solid ${
+                            current ? "font-semibold text-fg" : "font-medium text-fg-muted"
+                          }`}
+                          data-settings-subnav-link={section.id}
+                          href={settingsSectionHref(projectRef, section.id)}
+                        >
+                          {current ? (
+                            <span
+                              aria-hidden
+                              className="absolute -left-2.5 h-1.5 w-1.5 rounded-full bg-accent-solid"
+                              data-settings-subnav-current-dot=""
+                            />
+                          ) : null}
+                          <span
+                            aria-hidden
+                            className="grid h-[30px] w-[30px] shrink-0 place-items-center"
+                            data-settings-subnav-icon={section.id}
+                            data-settings-subnav-icon-weight="regular"
+                          >
+                            <Icon aria-hidden className="text-current" size={16} weight="regular" />
+                          </span>
+                          <span>{settingsSectionLabel(t, section.id)}</span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+              </ul>
+            </section>
+          ))}
+        </div>
+      </SettingsSearch>
+    </nav>
+  );
+}

@@ -1,0 +1,149 @@
+import {
+  CsvParseError,
+  type CsvParseErrorCode,
+  detectedKeywordImportColumnMapping,
+  parseKeywordImportCsvRows,
+  parseKeywordImportCsvTable,
+} from "@/lib/keywords/import-csv-parser";
+import { addKeywordSchema } from "@/lib/schemas/keyword";
+import { z } from "zod";
+
+export type AddKeywordEntryTab = "api" | "csv" | "manual";
+export type AddKeywordTab = AddKeywordEntryTab | "suggestions";
+
+export const ADD_KEYWORD_TABS: { id: AddKeywordTab; label: string }[] = [
+  { id: "manual", label: "Manual" },
+  { id: "suggestions", label: "Suggestions" },
+  { id: "api", label: "API" },
+];
+
+export const addKeywordDrawerSchema = addKeywordSchema.omit({ keyword: true }).extend({
+  isPaused: z.coerce.boolean().default(false),
+  keywords: z.string().trim().min(1, "Add at least one keyword."),
+});
+
+export type AddKeywordDrawerForm = z.infer<typeof addKeywordDrawerSchema>;
+
+export const fieldClass =
+  "min-h-10 w-full rounded-control border border-border-control bg-transparent px-3 text-[13px] font-medium text-fg outline-none placeholder:text-[12px] placeholder:leading-4 placeholder:text-fg-muted focus:border-accent";
+
+export const fieldLabelClass = "text-[12.5px] font-semibold text-fg";
+export const fieldMetaClass = "font-sans text-[10px] uppercase tracking-[0.4px] text-fg-muted";
+
+export function parseKeywordLines(value: string): string[] {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+export function appendKeywordSuggestions(current: string, suggestions: readonly string[]): string {
+  const existing = new Set(
+    parseKeywordTargetLines(current).map(({ keyword }) => keyword.toLowerCase()),
+  );
+  const additions = suggestions
+    .map((query) => query.trim())
+    .filter((query) => {
+      if (!query || existing.has(query.toLowerCase())) return false;
+      existing.add(query.toLowerCase());
+      return true;
+    });
+  return [current.trimEnd(), ...additions].filter(Boolean).join("\n");
+}
+
+export type KeywordTargetLineError =
+  | { code: "invalid_target_url"; target: string }
+  | { code: "missing_keyword" };
+
+export type ParsedKeywordTarget = {
+  error: KeywordTargetLineError | null;
+  keyword: string;
+  targetUrl: string | null;
+};
+
+function isValidTargetUrl(value: string): boolean {
+  return value.startsWith("/") ? !value.startsWith("//") : URL.canParse(value);
+}
+
+/**
+ * Per-line target URLs override the batch pin; invalid URLs remain attached to their entry.
+ */
+export function parseKeywordTargetLines(value: string): ParsedKeywordTarget[] {
+  const entries: ParsedKeywordTarget[] = [];
+  for (const rawLine of value.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    const pipe = line.indexOf("|");
+    if (pipe === -1) {
+      entries.push({ error: null, keyword: line, targetUrl: null });
+      continue;
+    }
+    const keyword = line.slice(0, pipe).trim();
+    const url = line.slice(pipe + 1).trim();
+    if (!keyword) {
+      entries.push({
+        error: { code: "missing_keyword" },
+        keyword: "",
+        targetUrl: null,
+      });
+      continue;
+    }
+    if (!url) {
+      entries.push({ error: null, keyword, targetUrl: null });
+      continue;
+    }
+    if (!isValidTargetUrl(url)) {
+      entries.push({
+        error: { code: "invalid_target_url", target: url },
+        keyword,
+        targetUrl: null,
+      });
+      continue;
+    }
+    entries.push({ error: null, keyword, targetUrl: url });
+  }
+  return entries;
+}
+
+export function keywordTargetLineError(
+  entries: readonly ParsedKeywordTarget[],
+): KeywordTargetLineError | null {
+  return entries.find((entry) => entry.error)?.error ?? null;
+}
+
+export function hasPerLineTarget(entries: readonly ParsedKeywordTarget[]): boolean {
+  return entries.some((entry) => entry.targetUrl !== null);
+}
+
+export function parseCsvKeywords(value: string) {
+  const result = parseCsvKeywordsResult(value);
+  return result.error ? [result.error] : result.keywords;
+}
+
+export function parseCsvKeywordsResult(value: string) {
+  try {
+    const table = parseKeywordImportCsvTable(value);
+    const rows = parseKeywordImportCsvRows(value);
+    return {
+      columnMapping: detectedKeywordImportColumnMapping(table),
+      error: null,
+      hasHeader: table.hasHeader,
+      keywords: rows.map((row) => row.keyword).filter(Boolean),
+      rows,
+      sourceColumns: table.sourceColumns,
+    };
+  } catch (error) {
+    if (error instanceof CsvParseError)
+      return {
+        columnMapping: {},
+        error: error.code as CsvParseErrorCode,
+        hasHeader: false,
+        keywords: [],
+        rows: [],
+        sourceColumns: [],
+      };
+    throw error;
+  }
+}

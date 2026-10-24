@@ -1,0 +1,62 @@
+import type { SaveOnboardingMarketsAction } from "@/components/onboarding/steps/onboarding-market-actions";
+import type { StepAddKeywords } from "@/components/onboarding/steps/StepAddKeywords";
+import type { StepConnectGscCard } from "@/components/onboarding/steps/StepConnectGscCard";
+import type { StepConnectProvider } from "@/components/onboarding/steps/StepConnectProvider";
+import type { StepCreateProject } from "@/components/onboarding/steps/StepCreateProject";
+import type { StepFirstCheck } from "@/components/onboarding/steps/StepFirstCheck";
+import type { SyncProjectTrafficInput } from "@/lib/actions/traffic-sync";
+import type { ProjectDefaultsInput } from "@/lib/schemas/project";
+
+export type OnboardingWizardActions = {
+  addKeywordsAction: NonNullable<Parameters<typeof StepAddKeywords>[0]["addKeywordsAction"]>;
+  connectProviderAction: NonNullable<
+    Parameters<typeof StepConnectProvider>[0]["connectProviderAction"]
+  >;
+  completeGooglePropertySelectionAction: NonNullable<
+    Parameters<typeof StepConnectGscCard>[0]["completePropertySelection"]
+  >;
+  completeOnboardingAction: NonNullable<
+    Parameters<typeof StepFirstCheck>[0]["completeOnboardingAction"]
+  >;
+  createMarketAction: NonNullable<Parameters<typeof StepAddKeywords>[0]["createMarketAction"]>;
+  createProjectAction: NonNullable<Parameters<typeof StepCreateProject>[0]["createProjectAction"]>;
+  deriveWebsiteAction: NonNullable<Parameters<typeof StepCreateProject>[0]["deriveWebsiteAction"]>;
+  updateProjectAction?: Parameters<typeof StepCreateProject>[0]["updateProjectAction"];
+  // Sample-data loader mounted in the wizard footer (step 1), not on a step component.
+  installSampleDataAction?: () => Promise<{ destination: string }>;
+  loadStoredGooglePropertiesAction: NonNullable<
+    Parameters<typeof StepConnectGscCard>[0]["loadStoredProperties"]
+  >;
+  importTopQueriesAction: NonNullable<
+    Parameters<typeof StepAddKeywords>[0]["importTopQueriesAction"]
+  >;
+  fetchRankedKeywordSuggestionsAction: NonNullable<
+    Parameters<typeof StepAddKeywords>[0]["fetchRankedKeywordSuggestionsAction"]
+  >;
+  getObservedPositionsAction: NonNullable<
+    Parameters<typeof StepFirstCheck>[0]["getObservedPositionsAction"]
+  >;
+  listFirstCheckCandidatesAction: NonNullable<
+    Parameters<typeof StepFirstCheck>[0]["listFirstCheckCandidatesAction"]
+  >;
+  runFirstCheckPreviewAction: NonNullable<
+    Parameters<typeof StepFirstCheck>[0]["runFirstCheckPreviewAction"]
+  >;
+  saveMarketsAction: SaveOnboardingMarketsAction;
+  saveStoredGooglePropertyAction: NonNullable<
+    Parameters<typeof StepConnectGscCard>[0]["saveStoredProperty"]
+  >;
+  // Restore ownership matching with issue #863:
+  // saveMatchingScopeAction: NonNullable<
+  //   Parameters<typeof StepCreateProject>[0]["saveMatchingScopeAction"]
+  // >;
+  syncProjectTrafficAction: (input: SyncProjectTrafficInput) => Promise<unknown>;
+  testProviderConnectionAction: NonNullable<
+    Parameters<typeof StepConnectProvider>[0]["testProviderConnectionAction"]
+  >;
+  previewProjectDefaultsAction?: import("@/components/settings/tracking/use-reviewed-defaults").PreviewDefaults;
+  updateProjectDefaultsAction: (
+    input: ProjectDefaultsInput,
+    review?: import("@/lib/settings/reviewed-defaults-contract").DefaultsReview,
+  ) => Promise<{ nextCheckAt?: string | null }>;
+};

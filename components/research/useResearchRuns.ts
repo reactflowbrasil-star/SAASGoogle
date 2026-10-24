@@ -1,0 +1,228 @@
+"use client";
+
+import type { AcceptedActionPayment } from "@/lib/action-payment/contract";
+import type {
+  ResearchKeywordsAction,
+  ResearchKeywordsActionInput,
+} from "@/lib/actions/keyword-research";
+import { isKeywordResearchEstimate, type KeywordResearchMode } from "@/lib/keyword-research/types";
+import {
+  type ResearchScope,
+  researchScopeForLocationKey,
+  researchScopeKey,
+} from "@/lib/research/scope";
+import { useState } from "react";
+import { loadDeeperEstimate, loadResearchEstimate } from "./research-payment-estimates";
+import {
+  mergeResearchTabs,
+  researchTabIdentity,
+  uniqueResearchSeeds,
+} from "./research-tab-identity";
+import {
+  actualResearchCostCents,
+  mapWithConcurrency,
+  markTabsSaved,
+  markTabsTracked,
+  RESEARCH_SEED_CONCURRENCY,
+  type ResearchTab,
+  researchScopeLocationKey,
+  type UiResearchOutcome,
+} from "./research-workspace-model";
+import type { useRecentSearches } from "./useRecentSearches";
+
+type UseResearchRunsInput = {
+  addSpend: (costCents: number) => void;
+  connectionId: string;
+  includeClickstream: boolean;
+  initialBudgetBlocked: boolean;
+  scope: ResearchScope;
+  mode: KeywordResearchMode;
+  projectId: string;
+  recent: Pick<ReturnType<typeof useRecentSearches>, "add">;
+  researchAction: ResearchKeywordsAction;
+  resultLimit: 100 | 300 | 500;
+};
+
+export function useResearchRuns({
+  addSpend,
+  connectionId,
+  includeClickstream,
+  initialBudgetBlocked,
+  scope,
+  mode,
+  projectId,
+  recent,
+  researchAction,
+  resultLimit,
+}: UseResearchRunsInput) {
+  const [researching, setResearching] = useState(false);
+  const [tabs, setTabs] = useState<ResearchTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [budgetBlocked, setBudgetBlocked] = useState(initialBudgetBlocked);
+  const [walletBudgetBlocked, setWalletBudgetBlocked] = useState(false);
+  const [budgetMissing, setBudgetMissing] = useState(false);
+  const [usageUnresolved, setUsageUnresolved] = useState(false);
+
+  function requestInput(
+    seed: string,
+    overrides: Partial<ResearchKeywordsActionInput> = {},
+  ): ResearchKeywordsActionInput {
+    const requestedConnectionId = overrides.connectionId ?? connectionId;
+    return {
+      ...(requestedConnectionId ? { connectionId: requestedConnectionId } : {}),
+      includeClickstream: overrides.includeClickstream ?? includeClickstream,
+      locationKey: overrides.locationKey ?? researchScopeLocationKey(scope),
+      mode: overrides.mode ?? mode,
+      projectId,
+      resultLimit: overrides.resultLimit ?? resultLimit,
+      seed,
+      ...overrides,
+    };
+  }
+
+  async function runResearch(
+    nextSeeds: string[],
+    overrides: Partial<ResearchKeywordsActionInput> = {},
+    runScope: ResearchScope = scope,
+    approvals?: Record<
+      string,
+      ResearchKeywordsActionInput & {
+        paymentOptionId: string;
+        acceptedPayment: AcceptedActionPayment;
+      }
+    >,
+  ) {
+    setResearching(true);
+    try {
+      const withLocation = { ...overrides, locationKey: researchScopeLocationKey(runScope) };
+      const perSeed = await mapWithConcurrency(
+        uniqueResearchSeeds(nextSeeds),
+        RESEARCH_SEED_CONCURRENCY,
+        async (seed) => {
+          const runInput = requestInput(seed, {
+            ...withLocation,
+            ...approvals?.[seed],
+            estimateOnly: false,
+          });
+          const requestedLimit = runInput.resultLimit ?? resultLimit;
+          let outcome: UiResearchOutcome;
+          try {
+            const result = await researchAction(runInput);
+            // A paid run never yields a dry run; guard the union for the type system.
+            outcome =
+              result.ok && isKeywordResearchEstimate(result)
+                ? { charged: null, ok: false, reason: "lookup_failed" }
+                : result;
+          } catch {
+            outcome = { charged: null, ok: false, reason: "lookup_failed" };
+          }
+          const followupInput = { ...runInput, acceptedPayment: undefined };
+          const [deeperEstimate, retryEstimate] = await Promise.all([
+            outcome.ok
+              ? loadDeeperEstimate(researchAction, followupInput, requestedLimit)
+              : undefined,
+            outcome.ok ? undefined : loadResearchEstimate(researchAction, followupInput),
+          ]);
+          return { deeperEstimate, outcome, retryEstimate, seed, runInput };
+        },
+      );
+      const nextTabs: ResearchTab[] = [];
+      for (const { deeperEstimate, outcome, retryEstimate, seed, runInput } of perSeed) {
+        const requestedLimit = runInput.resultLimit ?? resultLimit;
+        const runConnectionId = runInput.connectionId || undefined;
+        const runClickstream = runInput.includeClickstream ?? false;
+        const runMode = runInput.mode ?? mode;
+        if (!outcome.ok && outcome.reason === "wallet_budget_exhausted") {
+          setBudgetBlocked(true);
+          setWalletBudgetBlocked(true);
+        }
+        if (!outcome.ok && outcome.reason === "budget_exhausted") {
+          setWalletBudgetBlocked(false);
+          setBudgetBlocked(true);
+          setBudgetMissing(outcome.budgetReason === "budget_missing");
+          setUsageUnresolved(outcome.budgetReason === "usage_reconciliation_required");
+        }
+        if (outcome.ok) {
+          addSpend(actualResearchCostCents(outcome));
+          recent.add({
+            cachedUntil: outcome.cachedUntil,
+            payment: outcome.payment,
+            connectionId: runConnectionId,
+            includeClickstream: runClickstream,
+            locationKey: researchScopeLocationKey(runScope),
+            scopeLabel: `${runScope.countryName} / ${runScope.languageLabel}`,
+            mode: runMode,
+            resultLimit: requestedLimit,
+            seed,
+          });
+        }
+        nextTabs.push({
+          connectionId: runConnectionId,
+          paymentOptionId: runInput.paymentOptionId,
+          deeperEstimate,
+          id: researchTabIdentity({
+            connectionId: runConnectionId,
+            includeClickstream: runClickstream,
+            scope: runScope,
+            mode: runMode,
+            requestedLimit,
+            seed,
+          }),
+          includeClickstream: runClickstream,
+          scope: runScope,
+          mode: runMode,
+          outcome,
+          requestedLimit,
+          retryEstimate,
+          seed,
+        });
+      }
+      setTabs((current) => mergeResearchTabs(current, nextTabs));
+      setActiveTabId(nextTabs[0]?.id ?? null);
+    } finally {
+      setResearching(false);
+    }
+  }
+
+  function closeTab(id: string) {
+    setTabs((current) => current.filter((tab) => tab.id !== id));
+    setActiveTabId((current) => (current === id ? null : current));
+  }
+
+  function markAdded(keywords: string[], locationKeys: readonly string[]) {
+    const selected = new Set(
+      locationKeys.map((locationKey) => researchScopeKey(researchScopeForLocationKey(locationKey))),
+    );
+    setTabs((current) =>
+      current.map((tab) =>
+        selected.has(researchScopeKey(tab.scope)) ? markTabsTracked([tab], keywords)[0] : tab,
+      ),
+    );
+  }
+
+  function markSaved(keywords: string[], alreadySaved: boolean) {
+    setTabs((current) => markTabsSaved(current, keywords, alreadySaved));
+  }
+
+  return {
+    activeTab: tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? null,
+    budgetBlocked,
+    budgetMissing,
+    budgetState: walletBudgetBlocked
+      ? ("wallet_budget_exhausted" as const)
+      : usageUnresolved
+        ? ("usage_reconciliation_required" as const)
+        : budgetMissing
+          ? ("budget_missing" as const)
+          : budgetBlocked
+            ? ("budget_exhausted" as const)
+            : null,
+    closeTab,
+    markAdded,
+    markSaved,
+    researching,
+    runResearch,
+    setActiveTabId,
+    tabs,
+  };
+}

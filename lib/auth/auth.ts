@@ -1,0 +1,325 @@
+import "server-only";
+
+// Must run before the process.env reads in this module - fills runtime env on
+// platforms that omit it at request time (no-op where the platform injects env).
+import "@/lib/deployment/runtime-env.generated";
+import { appleNativeSignInPlugin } from "@/lib/auth/apple-native-sign-in";
+import { authDatabase } from "@/lib/auth/auth-database";
+import { AUTH_IP_ADDRESS_OPTIONS } from "@/lib/auth/client-ip";
+import { demoEmailOtpRateLimit } from "@/lib/auth/demo-email-otp";
+import { revokeOtherSessionsBeforeEmailChange } from "@/lib/auth/email-change-session-revocation";
+import {
+  emailOtpTwoFactorPlugin,
+  socialOAuthTwoFactorPlugin,
+} from "@/lib/auth/email-otp-two-factor";
+import { firstRunCreationState } from "@/lib/auth/first-run-context";
+import { loginCodeGuardPlugin, withOtpEmailRequest } from "@/lib/auth/login-code-guard";
+import { oauthConsentGuard } from "@/lib/auth/oauth-consent-guard";
+import {
+  FIRST_PARTY_API_OAUTH_SCOPES,
+  IOS_OAUTH_CLIENT_ID,
+  OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+  OAUTH_API_ACCESS_TOKEN_TTL_SECONDS,
+  OAUTH_AUTHORIZATION_TTL_SECONDS,
+  OAUTH_REFRESH_TOKEN_TTL_SECONDS,
+} from "@/lib/auth/oauth-policy";
+import { oidcScopes } from "@/lib/auth/oidc-scopes";
+import { sendOtpEmail } from "@/lib/auth/otp-email";
+import {
+  DEMO_FIXED_OTP_ACKNOWLEDGED,
+  DEMO_FIXED_OTP_ENABLED,
+  FIXED_OTP_ENABLED,
+} from "@/lib/auth/runtime-config";
+import { resolveAuthSecret, resolveAuthSecrets } from "@/lib/auth/secret";
+import { prepareSessionCreation } from "@/lib/auth/session-creation";
+import { authCookiePrefix } from "@/lib/auth/session-hint";
+import { recordSignInAudit } from "@/lib/auth/sign-in-audit";
+import { enforceGoogleSignupCapacity } from "@/lib/auth/signin-capacity";
+import { reviewLoginPlugin } from "@/lib/auth/test-auth-extension";
+import { twoFactorRouteGuard } from "@/lib/auth/two-factor-route-guard";
+import { prepareUserCreation } from "@/lib/auth/user-creation";
+import { handleCreatedUser } from "@/lib/auth/welcome-signup";
+import { readOnlyDemoPlugin } from "@/lib/demo/auth-plugin";
+import { readDemoConfig, readOnlyDemoConfig } from "@/lib/demo/config";
+import {
+  normalizeAuthorizationServerOrigin,
+  resolveMcpResourceUrl,
+} from "@/lib/deployment/mcp-origin-contract";
+import { oauthProvider } from "@better-auth/oauth-provider";
+import { type BetterAuthOptions, type BetterAuthPlugin, betterAuth } from "better-auth";
+import { prismaAdapter } from "better-auth/adapters/prisma";
+import { createAuthMiddleware } from "better-auth/api";
+import { nextCookies } from "better-auth/next-js";
+import { emailOTP, jwt, twoFactor } from "better-auth/plugins";
+
+const SESSION_TTL_SECONDS = 60 * 60 * (readOnlyDemoConfig() ? 2 : 24 * 30);
+
+const AUTH_SECRET = resolveAuthSecret();
+const AUTH_SECRETS = resolveAuthSecrets();
+export const AUTH_URL_CONFIGURED = Boolean(process.env.BETTER_AUTH_URL?.trim());
+export const AUTH_URL = normalizeAuthorizationServerOrigin(
+  process.env.BETTER_AUTH_URL ?? `http://localhost:${process.env.PORT ?? "3000"}`,
+);
+export const MCP_RESOURCE_URL = resolveMcpResourceUrl(AUTH_URL);
+const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
+const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+
+const socialProviders: NonNullable<BetterAuthOptions["socialProviders"]> = {};
+
+if (GITHUB_CLIENT_ID && GITHUB_CLIENT_SECRET) {
+  socialProviders.github = {
+    clientId: GITHUB_CLIENT_ID,
+    clientSecret: GITHUB_CLIENT_SECRET,
+    // Prevent a client-supplied ID token to POST /sign-in/social from minting a
+    // session without reaching the /callback/:id two-factor hook.
+    disableIdTokenSignIn: true,
+  };
+}
+
+if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
+  socialProviders.google = {
+    clientId: GOOGLE_CLIENT_ID,
+    clientSecret: GOOGLE_CLIENT_SECRET,
+    // Prevent a client-supplied ID token to POST /sign-in/social from minting a
+    // session without reaching the /callback/:id two-factor hook.
+    disableIdTokenSignIn: true,
+  };
+}
+
+export { preventDeactivatedSessionCreation } from "@/lib/auth/session-creation";
+
+type SignInPayload = {
+  user?: {
+    id?: unknown;
+  };
+};
+
+async function getReturnedPayload(returned: unknown) {
+  if (returned instanceof Response) {
+    if (!returned.ok) {
+      return null;
+    }
+
+    return returned
+      .clone()
+      .json()
+      .catch(() => null);
+  }
+
+  return returned;
+}
+
+function getSignedInUserId(payload: unknown) {
+  const maybePayload = payload as SignInPayload | null;
+  const userId = maybePayload?.user?.id;
+
+  return typeof userId === "string" ? userId : null;
+}
+
+function attemptedEmail(body: unknown) {
+  const email = (body as { email?: unknown } | null)?.email;
+  return typeof email === "string" && email.trim() ? email.trim().toLowerCase() : "unknown";
+}
+
+const authAuditPlugin = {
+  id: "auth-audit",
+  hooks: {
+    after: [
+      {
+        matcher(context) {
+          return context.path === "/sign-in/email-otp";
+        },
+        handler: createAuthMiddleware(async (ctx) => {
+          // First-run setup writes its completion audit when it promotes the signed-in user.
+          if (firstRunCreationState()) {
+            return;
+          }
+
+          const payload = await getReturnedPayload(ctx.context.returned);
+          const userId = getSignedInUserId(payload);
+          const email = attemptedEmail(ctx.body);
+
+          if (!userId) {
+            await recordSignInAudit({
+              email,
+              status: "failed",
+              statusReason: "invalid_or_expired_code",
+            });
+            return;
+          }
+
+          await recordSignInAudit({ email, status: "success", userId });
+        }),
+      },
+    ],
+  },
+} satisfies BetterAuthPlugin;
+
+export const auth = betterAuth({
+  advanced: {
+    cookiePrefix: authCookiePrefix(),
+    ipAddress: AUTH_IP_ADDRESS_OPTIONS,
+  },
+  appName: "bisibility",
+  baseURL: AUTH_URL,
+  secret: AUTH_SECRET,
+  secrets: AUTH_SECRETS,
+  database: prismaAdapter(authDatabase, {
+    provider: "postgresql",
+    transaction: true,
+  }),
+  databaseHooks: {
+    account: {
+      create: { before: enforceGoogleSignupCapacity },
+    },
+    session: {
+      create: { before: prepareSessionCreation },
+    },
+    user: {
+      create: {
+        after: handleCreatedUser,
+        before: prepareUserCreation,
+      },
+      // Runs after the change-email code is consumed and before the address is written.
+      update: { before: revokeOtherSessionsBeforeEmailChange },
+    },
+  },
+  emailAndPassword: {
+    enabled: false,
+  },
+  socialProviders,
+  session: {
+    additionalFields: {
+      publicId: {
+        input: false,
+        required: false,
+        returned: false,
+        type: "string",
+      },
+    },
+    expiresIn: SESSION_TTL_SECONDS,
+    updateAge: 60 * 60 * 24,
+    ...(readDemoConfig().kind === "editable" ? { disableSessionRefresh: true } : {}),
+    // Cache sessions in a signed cookie for 60s to reduce RSC database reads while
+    // keeping revocation latency low.
+    cookieCache: {
+      enabled: true,
+      maxAge: 60,
+    },
+  },
+  user: {
+    additionalFields: {
+      isInstanceAdmin: {
+        defaultValue: false,
+        input: false,
+        required: false,
+        returned: false,
+        type: "boolean",
+      },
+      publicId: {
+        input: false,
+        required: false,
+        returned: false,
+        type: "string",
+      },
+      uiLocale: {
+        input: false,
+        required: false,
+        returned: true,
+        type: "string",
+      },
+      uiLocaleSelectedAt: {
+        input: false,
+        required: false,
+        returned: false,
+        type: "date",
+      },
+      welcomeFollowupRequestedAt: {
+        input: false,
+        required: false,
+        returned: false,
+        type: "date",
+      },
+    },
+  },
+  plugins: [
+    readOnlyDemoPlugin(),
+    emailOTP({
+      changeEmail: { enabled: true, verifyCurrentEmail: true },
+      disableSignUp: readDemoConfig().kind !== "disabled",
+      otpLength: 6,
+      expiresIn: 5 * 60,
+      storeOTP: "hashed",
+      rateLimit: demoEmailOtpRateLimit(DEMO_FIXED_OTP_ENABLED, DEMO_FIXED_OTP_ACKNOWLEDGED),
+      // Opt-in fixed code; otherwise better-auth uses random codes.
+      ...(FIXED_OTP_ENABLED ? { generateOTP: () => "000000" } : {}),
+      async sendVerificationOTP(data, context) {
+        await withOtpEmailRequest(context?.context, () => sendOtpEmail(data));
+      },
+    }),
+    twoFactorRouteGuard(),
+    twoFactor({
+      allowPasswordless: true,
+      issuer: "bisibility",
+    }),
+    jwt({
+      jwt: {
+        issuer: AUTH_URL,
+        audience: AUTH_URL,
+      },
+    }),
+    oauthProvider({
+      loginPage: "/login",
+      consentPage: "/oauth/consent",
+      accessTokenExpiresIn: OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+      codeExpiresIn: OAUTH_AUTHORIZATION_TTL_SECONDS,
+      refreshTokenExpiresIn: OAUTH_REFRESH_TOKEN_TTL_SECONDS,
+      allowDynamicClientRegistration: true,
+      allowUnauthenticatedClientRegistration: true,
+      silenceWarnings: {
+        oauthAuthServerConfig: true,
+        openidConfig: true,
+      },
+      // Registered clients keep exactly the public scope list; `api:*` exists only for the
+      // first-party app client, whose opaque tokens `/api/v1` accepts (ADR-021).
+      clientRegistrationDefaultScopes: [...oidcScopes],
+      scopes: [...oidcScopes, ...FIRST_PARTY_API_OAUTH_SCOPES],
+      // A number here is an absolute expiry timestamp for the provider; pass a duration string.
+      scopeExpirations: Object.fromEntries(
+        FIRST_PARTY_API_OAUTH_SCOPES.map((scope) => [
+          scope,
+          `${OAUTH_API_ACCESS_TOKEN_TTL_SECONDS}s`,
+        ]),
+      ),
+      advertisedMetadata: { scopes_supported: [...oidcScopes] },
+      // GHSA-p2fr-6hmx-4528: on this provider line a grant or refresh token bound to one
+      // allowed audience can be exchanged for a token addressed to another allowed audience.
+      // Listing exactly one resource removes the second audience to switch to. Keep this list
+      // at one entry until the provider gains per-client resource binding. `/api/v1` accepts
+      // only opaque tokens, which are issued when the request names no resource.
+      validAudiences: [MCP_RESOURCE_URL],
+    }),
+    oauthConsentGuard(),
+    // ADR-021 native Sign in with Apple: issues only the iOS app token pair, never a session.
+    appleNativeSignInPlugin({ refreshGrant: redeemIosAppGrant }),
+    authAuditPlugin,
+    emailOtpTwoFactorPlugin,
+    loginCodeGuardPlugin({ fixedOtpEnabled: FIXED_OTP_ENABLED }),
+    reviewLoginPlugin(),
+    socialOAuthTwoFactorPlugin,
+    nextCookies(),
+  ],
+});
+
+/** The provider's own refresh-token grant for the iOS app client (used by native Apple sign-in). */
+function redeemIosAppGrant(refreshToken: string): Promise<unknown> {
+  return auth.api.oauth2Token({
+    body: {
+      client_id: IOS_OAUTH_CLIENT_ID,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    },
+  });
+}

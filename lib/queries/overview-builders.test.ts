@@ -1,0 +1,468 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  buildHighlights,
+  buildKpis,
+  buildTrend,
+  type Check,
+  type Keyword,
+  pos,
+  snapshotFor,
+} from "./overview-builders";
+
+const now = new Date("2026-06-28T12:00:00.000Z");
+beforeEach(() => vi.setSystemTime(now));
+
+function check(position: number | null, overrides: Partial<Check> = {}): Check {
+  const at = overrides.checkedAt ?? new Date("2026-06-28T10:00:00.000Z");
+  return {
+    observationRun: {
+      projectId: "overview-project",
+      createdAt: at,
+      completeness: "complete",
+      provider: "synthetic",
+      engine: "google",
+      surface: "web_serp",
+      configuredScope: { location: "United States", language: "en", device: "desktop" },
+      effectiveScope: { location: "United States", language: "en", device: "desktop" },
+      requestPolicy: {
+        evidence: {
+          version: 1,
+          targetRevision: "fixture-target-v1",
+          policyRevision: "fixture-policy-v1",
+          observedAt: at.toISOString(),
+          completeThrough: {
+            organic_result: overrides.requestedDepth === undefined ? 100 : overrides.requestedDepth,
+          },
+        },
+      },
+    },
+    checkedAt: new Date("2026-06-28T10:00:00.000Z"),
+    normalizationVersion: "v2",
+    position,
+    previousPosition: null,
+    rankingUrl: position ? `/position-${position}` : null,
+    requestedDepth: 100,
+    status: "completed",
+    ...overrides,
+  };
+}
+
+function keyword(id: string, rankChecks: Check[] = [], overrides: Partial<Keyword> = {}): Keyword {
+  return {
+    _count: { rankChecks: rankChecks.length },
+    createdAt: new Date("2026-06-01T00:00:00.000Z"),
+    device: "desktop",
+    id,
+    locationRef: { displayName: "United States", languageLabel: "English" },
+    publicId: id,
+    rankChecks,
+    schedule: null,
+    text: id,
+    ...overrides,
+  };
+}
+
+function highlights(keywords: Keyword[]) {
+  return buildHighlights(
+    keywords.map((keyword) => snapshotFor(keyword)),
+    now,
+  );
+}
+
+function visibilityKpi(snapshots: ReturnType<typeof snapshotFor>[]) {
+  return buildKpis(snapshots, snapshots.length, 0).find((item) => item.id === "visibility");
+}
+
+describe("overview builders", () => {
+  it("keeps only valid ranked positions in the trend", () => {
+    const outside = keyword("outside", [check(101, { observationRun: null })]);
+
+    expect(pos(100)).toBe(100);
+    expect(pos(101)).toBeNull();
+    expect(snapshotFor(outside).position).toBeNull();
+    expect(buildTrend([outside])).toEqual([
+      expect.objectContaining({ value: null, comparisonKey: null }),
+    ]);
+  });
+
+  it("uses only genuine earlier in-window positions for movement", () => {
+    const firstInWindow = snapshotFor(
+      keyword("first", [check(3, { previousPosition: 75 })], {
+        _count: { rankChecks: 4 },
+      }),
+    );
+    const twoInWindow = snapshotFor(
+      keyword("two", [check(3), check(8, { checkedAt: new Date("2026-06-21T10:00:00.000Z") })]),
+    );
+
+    expect(firstInWindow).toMatchObject({ movement: null, position: 3, previous: null });
+    expect(twoInWindow).toMatchObject({ movement: 5, position: 3, previous: 8 });
+  });
+
+  it("does not calculate movement across a normalization boundary", () => {
+    const snapshot = snapshotFor(
+      keyword("boundary", [
+        check(3),
+        check(8, {
+          checkedAt: new Date("2026-06-21T10:00:00.000Z"),
+          normalizationVersion: "v1",
+        }),
+      ]),
+    );
+
+    expect(snapshot).toMatchObject({ movement: null, position: 3, previous: null });
+  });
+
+  it("retains a qualified rank after failure without claiming a new movement", () => {
+    const snapshot = snapshotFor(
+      keyword("failed-attempt", [
+        check(null, { status: "failed" }),
+        check(3, { checkedAt: new Date("2026-06-27T10:00:00.000Z") }),
+        check(8, { checkedAt: new Date("2026-06-21T10:00:00.000Z") }),
+      ]),
+    );
+
+    expect(snapshot).toMatchObject({ movement: null, position: 3, previous: null });
+  });
+
+  it("returns semantic highlight states instead of display sentences", () => {
+    const rows = buildHighlights(
+      [
+        snapshotFor(
+          keyword("newly-added", [check(4)], {
+            createdAt: new Date("2026-06-28T11:00:00.000Z"),
+          }),
+        ),
+        snapshotFor(keyword("failed", [check(null, { status: "failed" })])),
+      ],
+      now,
+    );
+
+    expect(rows.find((list) => list.kind === "recentlyAdded")?.rows[0]).toMatchObject({
+      note: {
+        age: { kind: "hours", value: 1 },
+        checkState: "rankingUrl",
+        kind: "recentlyAdded",
+        url: "/position-4",
+      },
+      position: 4,
+      positionState: "ranked",
+    });
+    expect(rows.find((list) => list.kind === "attention")?.rows[0]).toMatchObject({
+      note: { kind: "latestCheckFailed" },
+      positionState: "noData",
+      positionTone: "muted",
+    });
+  });
+
+  it("lists keywords added in the last seven days, including checked keywords", () => {
+    const rows = highlights([
+      keyword("checked-recently", [check(4)], {
+        createdAt: new Date("2026-06-28T11:00:00.000Z"),
+      }),
+      keyword("outside-window", [], { createdAt: new Date("2026-06-21T11:59:59.000Z") }),
+      keyword("newest", [], { createdAt: new Date("2026-06-28T10:00:00.000Z") }),
+      keyword("third", [], { createdAt: new Date("2026-06-26T10:00:00.000Z") }),
+      keyword("fourth", [], { createdAt: new Date("2026-06-25T10:00:00.000Z") }),
+      keyword("fifth", [], { createdAt: new Date("2026-06-24T10:00:00.000Z") }),
+    ]).find((list) => list.kind === "recentlyAdded")?.rows;
+
+    expect(rows?.map((row) => row.id)).toEqual(["checked-recently", "newest", "third", "fourth"]);
+    expect(rows?.[0]).toMatchObject({
+      note: {
+        age: { kind: "hours", value: 1 },
+        checkState: "rankingUrl",
+        kind: "recentlyAdded",
+        url: "/position-4",
+      },
+      position: 4,
+      positionState: "ranked",
+    });
+    expect(rows?.[1]).toMatchObject({
+      note: {
+        age: { kind: "hours", value: 2 },
+        checkState: "firstCheckPending",
+        kind: "recentlyAdded",
+        url: null,
+      },
+      positionState: "awaitingFirstCheck",
+    });
+    expect(rows?.some((row) => row.id === "outside-window")).toBe(false);
+  });
+
+  it("requires the newest attempt to succeed before showing a win or drop", () => {
+    const failedWin = keyword("failed-win", [
+      check(null, { status: "failed" }),
+      check(3, { checkedAt: new Date("2026-06-27T10:00:00.000Z") }),
+      check(9, { checkedAt: new Date("2026-06-26T10:00:00.000Z") }),
+    ]);
+    const completedDrop = keyword("completed-drop", [
+      check(20),
+      check(8, { checkedAt: new Date("2026-06-21T10:00:00.000Z") }),
+    ]);
+    const result = highlights([failedWin, completedDrop]);
+
+    expect(result.find((list) => list.kind === "wins")?.rows).toEqual([]);
+    expect(result.find((list) => list.kind === "attention")?.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "failed-win", note: { kind: "latestCheckFailed" } }),
+        expect.objectContaining({
+          id: "completed-drop",
+          note: expect.objectContaining({ direction: "dropped", kind: "movement" }),
+        }),
+      ]),
+    );
+  });
+
+  it("retains the prior qualified rank after failure, but keeps a proven latest absence unranked", () => {
+    const rows = buildHighlights(
+      [
+        snapshotFor(
+          keyword("failed-after-rank", [
+            check(null, { status: "failed" }),
+            check(3, { checkedAt: new Date("2026-06-27T10:00:00.000Z") }),
+            check(8, { checkedAt: new Date("2026-06-21T10:00:00.000Z") }),
+          ]),
+        ),
+        snapshotFor(
+          keyword("unranked-after-rank", [
+            check(null),
+            check(4, { checkedAt: new Date("2026-06-27T10:00:00.000Z") }),
+            check(9, { checkedAt: new Date("2026-06-21T10:00:00.000Z") }),
+          ]),
+        ),
+      ],
+      now,
+    ).find((list) => list.kind === "attention")?.rows;
+
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "failed-after-rank",
+          note: { kind: "latestCheckFailed" },
+          position: 3,
+          positionState: "ranked",
+        }),
+        expect.objectContaining({
+          id: "unranked-after-rank",
+          note: { kind: "latestCheckNotRanked" },
+          position: null,
+          positionState: "notRanked",
+        }),
+      ]),
+    );
+  });
+
+  it("excludes running attempts and removes deltas from failed and unranked attempts", () => {
+    const rows = highlights([
+      keyword("failed", [
+        check(null, { status: "failed" }),
+        check(3, { checkedAt: new Date("2026-06-27T10:00:00.000Z") }),
+        check(8, { checkedAt: new Date("2026-06-21T10:00:00.000Z") }),
+      ]),
+      keyword("outside", [
+        check(null),
+        check(3, { checkedAt: new Date("2026-06-27T10:00:00.000Z") }),
+        check(8, { checkedAt: new Date("2026-06-21T10:00:00.000Z") }),
+      ]),
+      keyword("running", [check(null, { status: "running" })]),
+    ]).find((list) => list.kind === "attention")?.rows;
+
+    expect(rows?.find((row) => row.id === "failed")).toMatchObject({
+      note: { kind: "latestCheckFailed" },
+      position: 3,
+      positionState: "ranked",
+      positionTone: "default",
+    });
+    expect(rows?.find((row) => row.id === "outside")).toMatchObject({
+      note: { kind: "latestCheckNotRanked" },
+      position: null,
+      positionState: "notRanked",
+    });
+    expect(rows?.find((row) => row.id === "failed")).not.toHaveProperty("delta");
+    expect(rows?.find((row) => row.id === "outside")).not.toHaveProperty("delta");
+    expect(rows?.some((row) => row.id === "running")).toBe(false);
+  });
+
+  it("keeps first observations distinct from a proven new top-10 entry", () => {
+    const rows = highlights([
+      keyword("first-ever", [check(3)]),
+      keyword("entered", [
+        check(9),
+        check(14, { checkedAt: new Date("2026-06-21T10:00:00.000Z") }),
+      ]),
+      keyword("stayed", [check(5), check(8, { checkedAt: new Date("2026-06-21T10:00:00.000Z") })]),
+    ]).find((list) => list.kind === "newTop10")?.rows;
+
+    expect(rows?.map((row) => row.id)).toEqual(["entered"]);
+  });
+
+  it("shows neutral new deltas for first observations instead of fabricated gains", () => {
+    const firstCheck = snapshotFor(keyword("first", [check(2, { previousPosition: 81 })]));
+
+    expect(buildKpis([firstCheck], 2500, 73)).toEqual([
+      { delta: { kind: "new" }, deltaTone: "neutral", id: "averagePosition", value: 2 },
+      {
+        delta: { kind: "countThisMonth", value: 73 },
+        deltaTone: "neutral",
+        id: "trackedKeywords",
+        value: 2500,
+      },
+      { delta: { kind: "new" }, deltaTone: "neutral", id: "inTop10", value: 1 },
+      { delta: { kind: "new" }, deltaTone: "neutral", id: "visibility", value: 57 },
+    ]);
+  });
+
+  it("returns semantic numeric KPI deltas", () => {
+    const snapshots = [
+      snapshotFor(keyword("first", [check(2)])),
+      snapshotFor(
+        keyword("moved", [
+          check(3),
+          check(13, { checkedAt: new Date("2026-06-21T10:00:00.000Z") }),
+        ]),
+      ),
+    ];
+
+    expect(buildKpis(snapshots, 2, 0)).toEqual([
+      {
+        delta: { kind: "averageComparison", value: 10 },
+        deltaTone: "positive",
+        id: "averagePosition",
+        value: 2.5,
+      },
+      {
+        delta: { kind: "noNewThisMonth" },
+        deltaTone: "neutral",
+        id: "trackedKeywords",
+        value: 2,
+      },
+      {
+        delta: { kind: "countChange", value: 1 },
+        deltaTone: "positive",
+        id: "inTop10",
+        value: 2,
+      },
+      {
+        delta: { kind: "percentagePointChange", value: 29 },
+        deltaTone: "positive",
+        id: "visibility",
+        value: 47,
+      },
+    ]);
+  });
+
+  it("weights visibility by volume with the specified fallbacks", () => {
+    expect(
+      visibilityKpi([
+        snapshotFor(keyword("one", [check(1)]), 10),
+        snapshotFor(keyword("two", [check(1)]), 100),
+      ])?.value,
+    ).toBe(100);
+    expect(visibilityKpi([snapshotFor(keyword("outside", [check(null)]), 100)])?.value).toBe(0);
+    expect(
+      visibilityKpi([
+        snapshotFor(keyword("head", [check(1)]), 1000),
+        snapshotFor(keyword("tail", [check(20)]), 10),
+      ])?.value,
+    ).toBe(99);
+    expect(
+      visibilityKpi([
+        snapshotFor(keyword("known-low", [check(20)]), 10),
+        snapshotFor(keyword("known-high", [check(20)]), 30),
+        snapshotFor(keyword("unknown", [check(1)])),
+      ])?.value,
+    ).toBe(36);
+    expect(
+      visibilityKpi([
+        snapshotFor(keyword("unweighted-head", [check(1)])),
+        snapshotFor(keyword("unweighted-tail", [check(20)])),
+      ])?.value,
+    ).toBe(52);
+  });
+
+  it("reports visibility deltas in percentage points with directional tone", () => {
+    const gain = visibilityKpi([
+      snapshotFor(
+        keyword("gain", [check(1), check(20, { checkedAt: new Date("2026-06-21T10:00:00.000Z") })]),
+        100,
+      ),
+    ]);
+    const loss = visibilityKpi([
+      snapshotFor(
+        keyword("loss", [check(20), check(1, { checkedAt: new Date("2026-06-21T10:00:00.000Z") })]),
+        100,
+      ),
+    ]);
+
+    expect(gain).toMatchObject({
+      delta: { kind: "percentagePointChange", value: 96.7 },
+      deltaTone: "positive",
+    });
+    expect(loss).toMatchObject({
+      delta: { kind: "percentagePointChange", value: -96.7 },
+      deltaTone: "negative",
+    });
+  });
+
+  it("renders numeric zeroes after a completed not-found check", () => {
+    expect(buildKpis([snapshotFor(keyword("not-found", [check(null)]))], 1, 0)).toEqual([
+      {
+        delta: { kind: "noRankedPositions" },
+        deltaTone: "neutral",
+        id: "averagePosition",
+        value: null,
+      },
+      { delta: { kind: "noNewThisMonth" }, deltaTone: "neutral", id: "trackedKeywords", value: 1 },
+      { delta: { kind: "new" }, deltaTone: "neutral", id: "inTop10", value: 0 },
+      { delta: { kind: "new" }, deltaTone: "neutral", id: "visibility", value: 0 },
+    ]);
+  });
+
+  it("keeps completed not-found data when a newer check failed", () => {
+    const snapshot = snapshotFor(
+      keyword("mixed", [
+        check(null, { status: "failed" }),
+        check(null, { checkedAt: new Date("2026-06-27T10:00:00.000Z") }),
+      ]),
+    );
+
+    expect(buildKpis([snapshot], 1, 0)).toEqual([
+      {
+        delta: { kind: "noRankedPositions" },
+        deltaTone: "neutral",
+        id: "averagePosition",
+        value: null,
+      },
+      { delta: { kind: "noNewThisMonth" }, deltaTone: "neutral", id: "trackedKeywords", value: 1 },
+      { delta: { kind: "new" }, deltaTone: "neutral", id: "inTop10", value: 0 },
+      { delta: { kind: "new" }, deltaTone: "neutral", id: "visibility", value: 0 },
+    ]);
+  });
+
+  it("renders Visibility as awaiting when every completed check is shallower than Top 20", () => {
+    expect(
+      visibilityKpi([snapshotFor(keyword("shallow", [check(null, { requestedDepth: 10 })]))]),
+    ).toEqual({
+      delta: { kind: "awaitingTop20" },
+      deltaTone: "neutral",
+      id: "visibility",
+      value: null,
+    });
+  });
+
+  it("keeps failed first-check KPIs actionable without a display fallback", () => {
+    const kpis = buildKpis(
+      [snapshotFor(keyword("failed", [check(null, { status: "failed" })]))],
+      1,
+      0,
+    );
+
+    expect(kpis.filter((item) => item.delta.kind === "firstCheckFailed")).toHaveLength(3);
+    expect(kpis.filter((item) => item.deltaAction === "check_runs")).toHaveLength(3);
+
+    const pending = buildKpis([snapshotFor(keyword("pending"))], 1, 0);
+    expect(pending.filter((item) => item.delta.kind === "awaitingFirstCheck")).toHaveLength(3);
+    expect(kpis.some((item) => item.delta.kind === "awaitingFirstCheck")).toBe(false);
+  });
+});

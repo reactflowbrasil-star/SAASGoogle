@@ -1,0 +1,230 @@
+"use client";
+
+import { SchedulePlanningNotice } from "@/components/schedules/SchedulePlanningNotice";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { TableCardHeader } from "@/components/ui/TableCardHeader";
+import type { OperationSnapshot } from "@/lib/rank-check/runs/contract";
+import { searchConsolePath } from "@/lib/routing/app-path";
+import { projectRunsPath } from "@/lib/routing/project-runs-path";
+import { projectSchedulesPath } from "@/lib/routing/project-schedules-path";
+import type { ProjectRunsQuery } from "@/lib/runs/filters";
+import type { ProjectRun } from "@/lib/runs/project-run";
+import type { ProjectRunsApiResponse } from "@/lib/runs/project-runs-api";
+import { ListChecksIcon as ListChecks } from "@phosphor-icons/react/dist/csr/ListChecks";
+import { PlayCircleIcon as PlayCircle } from "@phosphor-icons/react/dist/csr/PlayCircle";
+import { useTranslations } from "next-intl";
+import { ProjectRunsFilters } from "./ProjectRunsFilters";
+import { ProjectRunsTable } from "./ProjectRunsTable";
+import { ProjectRunsTabs } from "./ProjectRunsTabs";
+import { ProjectRunsTimelineTabs } from "./ProjectRunsTimelineTabs";
+import { applyOperationSnapshotToRuns } from "./project-runs-presentation";
+
+type ProjectRunAction = (input: { projectRef: string; runId: string }) => Promise<void>;
+
+type ProjectRunsContentProps = {
+  canMutate: boolean;
+  canDelete?: boolean;
+  deleteAction?: ProjectRunAction;
+  operations: readonly OperationSnapshot[];
+  page: ProjectRunsApiResponse;
+  projectRef: string;
+  query: ProjectRunsQuery;
+  runNowAction: ProjectRunAction;
+  skipAction: ProjectRunAction;
+  readAt?: string;
+  schedulePlanningMinutes?: number | null;
+  hasEnabledKeywordSchedule?: boolean;
+};
+
+type ProjectRunsLoadErrorProps = {
+  projectRef: string;
+  query?: ProjectRunsQuery;
+  stale: boolean;
+};
+
+function EmptyRuns({
+  projectRef,
+  query,
+}: Readonly<{
+  projectRef: string;
+  query: ProjectRunsQuery;
+}>) {
+  const t = useTranslations("projectRuns.content");
+  const clearFiltersHref = projectRunsPath(projectRef, { view: query.view });
+  const historyHref = projectRunsPath(projectRef, { source: query.source });
+  const schedulesHref = projectSchedulesPath(projectRef);
+
+  if (query.view === "planned" && query.source === "search_console") {
+    return (
+      <EmptyState
+        description={t("plannedSearchConsoleDescription")}
+        icon={<ListChecks size={22} weight="regular" />}
+        title={t("plannedSearchConsoleTitle")}
+      />
+    );
+  }
+  if (query.view === "planned") {
+    return (
+      <EmptyState
+        action={
+          <Button href={schedulesHref} size="sm" variant="secondary">
+            {t("manageSchedules")}
+          </Button>
+        }
+        description={t("plannedDescription")}
+        icon={<ListChecks size={22} weight="regular" />}
+        title={t("plannedTitle")}
+      />
+    );
+  }
+  if (query.status === "active") {
+    return (
+      <EmptyState
+        action={
+          <Button href={historyHref} size="sm" variant="secondary">
+            {t("viewHistory")}
+          </Button>
+        }
+        description={t("activeDescription")}
+        icon={<ListChecks size={22} weight="regular" />}
+        title={t("activeTitle")}
+      />
+    );
+  }
+  if (query.source === "search_console") {
+    return (
+      <EmptyState
+        action={
+          <Button href={searchConsolePath(projectRef)} size="sm" variant="secondary">
+            {t("openSearchConsole")}
+          </Button>
+        }
+        description={t("searchConsoleDescription")}
+        icon={<ListChecks size={22} weight="regular" />}
+        title={t("searchConsoleTitle")}
+      />
+    );
+  }
+  if (query.source !== "all" || query.status !== "all") {
+    return (
+      <EmptyState
+        action={
+          <Button href={clearFiltersHref} size="sm" variant="secondary">
+            {t("clearFilters")}
+          </Button>
+        }
+        description={t("filteredDescription")}
+        icon={<ListChecks size={22} weight="regular" />}
+        title={t("filteredTitle")}
+      />
+    );
+  }
+  return (
+    <EmptyState
+      description={t("historyDescription")}
+      icon={<PlayCircle size={22} weight="regular" />}
+      title={t("historyTitle")}
+    />
+  );
+}
+
+export function ProjectRunsLoadError({
+  projectRef,
+  query,
+  stale,
+}: Readonly<ProjectRunsLoadErrorProps>) {
+  const t = useTranslations("projectRuns.content");
+  return (
+    <div className="grid gap-4">
+      <ProjectRunsTabs active="runs" projectRef={projectRef} query={query} />
+      <ProjectRunsTimelineTabs projectRef={projectRef} query={query} />
+      <section
+        className="rounded-card border border-border bg-bg-elev px-4 py-10 text-center"
+        role="alert"
+      >
+        <h1 className="m-0 text-[17px] font-semibold text-fg">
+          {stale ? t("staleTitle") : t("loadError")}
+        </h1>
+        <p className="mx-auto mb-4 mt-2 max-w-lg text-[12.5px] text-fg-muted">
+          {stale ? t("staleDescription") : t("tryAgainDescription")}
+        </p>
+        <Button
+          href={projectRunsPath(projectRef, { ...query, cursor: null })}
+          size="sm"
+          variant="secondary"
+        >
+          {t("returnToFirstPage")}
+        </Button>
+      </section>
+    </div>
+  );
+}
+
+export function ProjectRunsContent({
+  canMutate,
+  canDelete = false,
+  deleteAction,
+  operations,
+  page,
+  projectRef,
+  query,
+  runNowAction,
+  skipAction,
+  readAt,
+  schedulePlanningMinutes = null,
+  hasEnabledKeywordSchedule = false,
+}: Readonly<ProjectRunsContentProps>) {
+  const t = useTranslations("projectRuns.content");
+  // The API schema validates this transport shape; R1's presentation type carries its stricter ID brands.
+  const rows = applyOperationSnapshotToRuns(page.runs as unknown as ProjectRun[], operations);
+  const nextHref = page.nextCursor
+    ? projectRunsPath(projectRef, { ...query, cursor: page.nextCursor })
+    : null;
+
+  const showPlanningNotice =
+    hasEnabledKeywordSchedule &&
+    query.source !== "search_console" &&
+    (query.view === "planned" ||
+      (rows.length === 0 &&
+        query.status === "all" &&
+        (query.view === "runs" ||
+          (query.view === "timeline" && ["all", "upcoming"].includes(query.section ?? "all")))));
+
+  return (
+    <section
+      className="grid min-w-0 gap-4"
+      aria-label={query.view === "planned" ? t("upcomingRuns") : t("runs")}
+    >
+      <ProjectRunsTabs active="runs" projectRef={projectRef} query={query} />
+      <ProjectRunsTimelineTabs projectRef={projectRef} query={query} />
+      {showPlanningNotice ? <SchedulePlanningNotice minutes={schedulePlanningMinutes} /> : null}
+      <Card className="min-w-0 overflow-hidden p-0" size="sm">
+        <TableCardHeader
+          titleId="runs-list-title"
+          title={t("runCount", { count: page.counts.total })}
+          actions={<ProjectRunsFilters projectRef={projectRef} query={query} />}
+        />
+        <ProjectRunsTable
+          canMutate={canMutate}
+          onDelete={canDelete ? deleteAction : undefined}
+          emptyState={<EmptyRuns projectRef={projectRef} query={query} />}
+          onRunNow={runNowAction}
+          onSkip={skipAction}
+          projectRef={projectRef}
+          rows={rows}
+          query={query}
+          readAt={readAt}
+        />
+      </Card>
+      {nextHref ? (
+        <div className="flex justify-end">
+          <Button href={nextHref} size="sm" variant="secondary">
+            {t("nextPage")}
+          </Button>
+        </div>
+      ) : null}
+    </section>
+  );
+}

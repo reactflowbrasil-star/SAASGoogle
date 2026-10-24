@@ -1,0 +1,28 @@
+import { describe, expect, it } from "vitest";
+import { API_VERSION_HEADER } from "./api-versions";
+import { getOpenApiDocument } from "./openapi";
+
+describe("rank-check OpenAPI resources", () => {
+  it("documents queued runs, project selectors, and omits jobs", () => {
+    const document = getOpenApiDocument();
+    const runCheck = document.paths["/keywords/{keyword_id}/checks"].post;
+
+    expect(document.paths).not.toHaveProperty("/jobs/{job_id}");
+    expect(runCheck).toMatchObject({
+      parameters: expect.arrayContaining([
+        expect.objectContaining({ name: API_VERSION_HEADER }),
+        { $ref: "#/components/parameters/ProjectHeader" },
+        { $ref: "#/components/parameters/ProjectQuery" },
+      ]),
+      responses: {
+        "202": expect.objectContaining({
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/RankCheckRunQueued" },
+            },
+          },
+        }),
+      },
+    });
+  });
+});

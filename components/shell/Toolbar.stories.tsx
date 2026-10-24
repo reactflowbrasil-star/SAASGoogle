@@ -1,0 +1,44 @@
+import { Toolbar } from "@/components/shell/Toolbar";
+import { Button } from "@/components/ui/Button";
+import { Pill } from "@/components/ui/Pill";
+import { withSharedMessages } from "@/i18n/test-support/shared-messages-story-decorator";
+import { CalendarBlankIcon as CalendarBlank } from "@phosphor-icons/react/dist/csr/CalendarBlank";
+import { MonitorIcon as Monitor } from "@phosphor-icons/react/dist/csr/Monitor";
+import { PlusIcon as Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import type { Meta, StoryObj } from "@storybook/react";
+
+const meta = {
+  title: "Shell/Toolbar",
+  component: Toolbar,
+  decorators: [withSharedMessages],
+  parameters: { layout: "fullscreen" },
+} satisfies Meta<typeof Toolbar>;
+
+export default meta;
+
+type Story = StoryObj<typeof meta>;
+
+export const Filters: Story = {
+  args: {
+    action: (
+      <Button startIcon={<Plus size={15} weight="regular" />} variant="primary">
+        Add keyword
+      </Button>
+    ),
+    children: (
+      <>
+        <Pill>
+          <CalendarBlank size={15} weight="regular" /> Last 28 days
+        </Pill>
+        <Pill>
+          <Monitor size={15} weight="regular" /> Desktop
+        </Pill>
+      </>
+    ),
+  },
+  render: (args) => (
+    <div className="min-h-[140px] bg-bg text-fg">
+      <Toolbar {...args} />
+    </div>
+  ),
+};

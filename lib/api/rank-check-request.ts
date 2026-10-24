@@ -1,0 +1,149 @@
+import "server-only";
+
+import { writeAudit } from "@/lib/auth/audit";
+import { prisma } from "@/lib/db/prisma";
+import { inlineRankCheckExecutionEnabled } from "@/lib/rank-check/inline-execution";
+import { launchSingleRankCheckRun } from "@/lib/rank-check/runs/launch-single";
+import { isLaunchRankCheckRunNothingToRun } from "@/lib/rank-check/runs/launch-types";
+import { previewRankCheckRun } from "@/lib/rank-check/runs/preview";
+import { actionPaymentInputFromWire, paymentResource } from "./action-payment";
+import type { ApiContext } from "./context";
+import { rankCheckResources } from "./rank-check-accounting";
+import { providerOrigin } from "./request-origin";
+import { rankCheckSelect } from "./resources";
+import { errorResponse, resourceResponse } from "./responses";
+
+type ScopedKeyword = {
+  id: string;
+  project: { domain: string | null; isSample: boolean };
+  projectId: string;
+  publicId: string;
+};
+
+type RequestInput = {
+  max_cost_cents?: number;
+  provider_id?: string;
+  estimate_only?: boolean;
+  payment_option_id?: string;
+  accepted_payment?: { quote_token: string };
+  require_payment?: boolean;
+};
+
+export async function requestRankCheck(
+  ctx: ApiContext,
+  data: RequestInput,
+  keyword: ScopedKeyword,
+) {
+  const project = {
+    domain: keyword.project.domain,
+    id: keyword.projectId,
+    isSample: keyword.project.isSample,
+  };
+  if (data.estimate_only) {
+    const preview = await previewRankCheckRun({
+      actorId: ctx.actorId,
+      project,
+      origin: providerOrigin(ctx.origin),
+      providerId: data.provider_id,
+      paymentOptionId: data.payment_option_id,
+      trigger: "api",
+      spec: { kind: "single", keywordId: keyword.publicId as `kw_${string}`, v: 1 },
+    });
+    return resourceResponse(
+      {
+        estimate: true,
+        ...paymentResource(preview),
+        estimated_cost_cents: preview.estimate.costCents,
+      },
+      { headers: ctx.headers },
+    );
+  }
+  const inlineExecution = inlineRankCheckExecutionEnabled();
+  const launched = await launchSingleRankCheckRun({
+    ...actionPaymentInputFromWire(data),
+    idempotencyKey: ctx.req.headers.get("Idempotency-Key") ?? undefined,
+    actorId: ctx.actorId ?? null,
+    keywordId: keyword.publicId as `kw_${string}`,
+    maxCostCents: data.max_cost_cents,
+    origin: providerOrigin(ctx.origin),
+    project: {
+      domain: keyword.project.domain,
+      id: keyword.projectId,
+      isSample: keyword.project.isSample,
+    },
+    providerId: data.provider_id,
+    trigger: "api",
+  });
+  if (isLaunchRankCheckRunNothingToRun(launched)) {
+    // The launch names why nothing ran; the reason travels with the message so a client can tell
+    // a paused market from a check that is genuinely already in flight without parsing prose.
+    return errorResponse("conflict", launched.message, 409, {
+      details: { code: launched.reason },
+      headers: ctx.headers,
+      instance: ctx.instance,
+    });
+  }
+
+  if (!inlineExecution) {
+    await writeAudit({
+      action: "rank_check.requested",
+      actorId: ctx.actorId ?? null,
+      after: {
+        keywordId: keyword.publicId,
+        provider: data.provider_id ?? "primary",
+        runId: launched.publicId,
+        status: "queued",
+      },
+      projectId: keyword.projectId,
+      targetId: launched.publicId,
+      targetType: "rank_check_run",
+    });
+    return resourceResponse(
+      { id: launched.publicId, status: "queued" as const },
+      { headers: ctx.headers, status: 202 },
+    );
+  }
+
+  try {
+    const { runInlineRankCheck } = await import("@/lib/rank-check/runs/inline");
+    const inline = await runInlineRankCheck({
+      keywordId: keyword.id,
+      providerId: data.provider_id,
+      runPublicId: launched.publicId,
+    });
+    const rankCheck = await prisma.rankCheck.findUniqueOrThrow({
+      select: rankCheckSelect,
+      where: { id: inline.rankCheckId },
+    });
+    await writeAudit({
+      action: "rank_check.run_now",
+      actorId: ctx.actorId ?? null,
+      after: {
+        keywordId: keyword.publicId,
+        provider: inline.provider,
+        runId: launched.publicId,
+        status: "completed",
+      },
+      projectId: keyword.projectId,
+      targetId: launched.publicId,
+      targetType: "rank_check_run",
+    });
+    const [resource] = await rankCheckResources(keyword.projectId, [{ ...rankCheck, keyword }]);
+    return resourceResponse(resource, {
+      headers: ctx.headers,
+      status: 201,
+    });
+  } catch (error) {
+    await writeAudit({
+      action: "rank_check.run_now",
+      actorId: ctx.actorId ?? null,
+      after: { keywordId: keyword.publicId, provider: data.provider_id ?? "primary" },
+      projectId: keyword.projectId,
+      status: "failed",
+      statusReason: error instanceof Error ? error.message : "Rank check failed.",
+      targetId: launched.publicId,
+      targetType: "rank_check_run",
+    }).catch(() => undefined);
+    throw error;
+  }
+}

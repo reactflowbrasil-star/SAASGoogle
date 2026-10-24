@@ -1,0 +1,262 @@
+import {
+  renderWithFeatureMessages,
+  sharedControlTestMessages,
+} from "@/i18n/test-support/render-with-feature-messages";
+import { act, fireEvent, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CopyButton } from "./CopyButton";
+
+const mocks = vi.hoisted(() => ({
+  showToast: vi.fn(),
+  writeText: vi.fn(),
+}));
+
+vi.mock("./toast-context", () => ({ useToast: () => ({ showToast: mocks.showToast }) }));
+
+const RESET_DELAY = 1200;
+
+function render(ui: React.ReactElement) {
+  return renderWithFeatureMessages(ui, { messages: sharedControlTestMessages });
+}
+
+describe("CopyButton", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: mocks.writeText },
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("does not show Copied before the clipboard promise resolves, then does after", async () => {
+    let resolveWriteText!: () => void;
+    mocks.writeText.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveWriteText = resolve;
+      }),
+    );
+
+    render(<CopyButton label="Copy ID" text="abc123" />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy ID" }));
+    });
+
+    expect(screen.queryByRole("button", { name: "Copied!" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy ID" })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveWriteText();
+    });
+
+    expect(screen.getByRole("button", { name: "Copied!" })).toBeInTheDocument();
+  });
+
+  it("shows inline Copy and Copied feedback only after a confirmed clipboard write", async () => {
+    let finish!: () => void;
+    mocks.writeText.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    render(<CopyButton label="Copy request" text="Audit example.com" showLabel />);
+    const button = screen.getByRole("button", { name: "Copy request" });
+    expect(button).toHaveTextContent("Copy");
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(button).not.toHaveTextContent("Copied!");
+    await act(async () => {
+      finish();
+    });
+    expect(button).toHaveTextContent("Copied!");
+    expect(mocks.writeText).toHaveBeenCalledWith("Audit example.com");
+  });
+
+  it("shows the error path and never Copied when the clipboard promise rejects", async () => {
+    mocks.writeText.mockRejectedValue(new Error("denied"));
+
+    render(<CopyButton label="Copy ID" text="abc123" />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy ID" }));
+    });
+
+    expect(screen.queryByRole("button", { name: "Copied!" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy failed" })).toBeInTheDocument();
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      "Copy failed",
+      expect.objectContaining({ severity: "error" }),
+    );
+  });
+
+  it("shows the error path and never Copied when the Clipboard API is missing", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+
+    render(<CopyButton label="Copy ID" text="abc123" />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy ID" }));
+    });
+
+    expect(screen.queryByRole("button", { name: "Copied!" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy failed" })).toBeInTheDocument();
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      "Copy failed",
+      expect.objectContaining({ severity: "error" }),
+    );
+  });
+
+  it("clears the copied reset timer on unmount", async () => {
+    mocks.writeText.mockResolvedValue(undefined);
+    const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(global, "clearTimeout");
+
+    const { unmount } = render(<CopyButton label="Copy ID" text="abc123" />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy ID" }));
+    });
+
+    const resetIndex = setTimeoutSpy.mock.calls.findIndex((args) => args[1] === RESET_DELAY);
+    expect(resetIndex).toBeGreaterThanOrEqual(0);
+    const resetTimerId = setTimeoutSpy.mock.results[resetIndex].value;
+
+    expect(clearTimeoutSpy).not.toHaveBeenCalledWith(resetTimerId);
+
+    unmount();
+
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(resetTimerId);
+  });
+
+  it("does not leak multiple reset timers on rapid retry", async () => {
+    mocks.writeText.mockResolvedValue(undefined);
+    const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+    const clearTimeoutSpy = vi.spyOn(global, "clearTimeout");
+
+    render(<CopyButton label="Copy ID" text="abc123" />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy ID" }));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copied!" }));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copied!" }));
+    });
+
+    const resetTimerIds = setTimeoutSpy.mock.calls
+      .map((args, i) => ({ delay: args[1], id: setTimeoutSpy.mock.results[i].value }))
+      .filter((x) => x.delay === RESET_DELAY)
+      .map((x) => x.id);
+
+    expect(resetTimerIds.length).toBe(3);
+
+    const clearedIds = new Set(clearTimeoutSpy.mock.calls.map((call) => call[0]));
+    const pendingCount = resetTimerIds.filter((id) => !clearedIds.has(id)).length;
+
+    expect(pendingCount).toBe(1);
+  });
+
+  it("does not schedule a reset timer, toast, or setState after unmount during a pending clipboard write", async () => {
+    let resolveWriteText!: () => void;
+    mocks.writeText.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveWriteText = resolve;
+      }),
+    );
+
+    const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+    const { unmount } = render(<CopyButton label="Copy ID" text="abc123" />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy ID" }));
+    });
+
+    const scheduledBeforeUnmount = setTimeoutSpy.mock.calls.filter(
+      (args) => args[1] === RESET_DELAY,
+    ).length;
+
+    unmount();
+
+    await act(async () => {
+      resolveWriteText();
+    });
+
+    const scheduledAfterUnmount = setTimeoutSpy.mock.calls
+      .slice(scheduledBeforeUnmount)
+      .filter((args) => args[1] === RESET_DELAY).length;
+
+    expect(scheduledAfterUnmount).toBe(0);
+    expect(mocks.showToast).not.toHaveBeenCalled();
+  });
+
+  it("tracks tooltip content across idle, copied, and error states", async () => {
+    mocks.writeText.mockResolvedValue(undefined);
+    render(<CopyButton label="Copy ID" text="abc123" />);
+
+    const button = screen.getByRole("button", { name: "Copy ID" });
+    fireEvent.pointerMove(button);
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Copy ID");
+
+    await act(async () => {
+      fireEvent.click(button);
+    });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Copied!");
+  });
+
+  it("shows the visible tooltip as Copy failed when the clipboard rejects", async () => {
+    mocks.writeText.mockRejectedValue(new Error("denied"));
+    render(<CopyButton label="Copy ID" text="abc123" />);
+
+    const button = screen.getByRole("button", { name: "Copy ID" });
+    fireEvent.pointerMove(button);
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Copy ID");
+
+    await act(async () => {
+      fireEvent.click(button);
+    });
+
+    expect(screen.getByRole("button", { name: "Copy failed" })).toBeInTheDocument();
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Copy failed");
+    expect(mocks.showToast).toHaveBeenCalledWith(
+      "Copy failed",
+      expect.objectContaining({ severity: "error" }),
+    );
+  });
+
+  it("opens the tooltip from keyboard focus", () => {
+    render(<CopyButton label="Copy ID" text="abc123" />);
+
+    const button = screen.getByRole("button", { name: "Copy ID" });
+    const realMatches = button.matches.bind(button);
+    button.matches = ((selector: string) =>
+      selector === ":focus-visible" ? true : realMatches(selector)) as typeof button.matches;
+    act(() => {
+      button.focus();
+    });
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(screen.getByRole("tooltip")).toBeInTheDocument();
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Copy ID");
+  });
+});

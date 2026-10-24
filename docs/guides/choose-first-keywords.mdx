@@ -1,0 +1,120 @@
+---
+title: "Add your first keywords"
+description: "Add a prepared starter set through onboarding, Search Console, ranked suggestions, manual entry, or CSV."
+---
+
+This guide covers the bisibility workflow for adding and checking a first
+tracking set. If you still need to decide what belongs in that set, read
+[How to choose the first keywords to track](https://bisibility.com/blog/how-to-choose-first-keywords-to-track)
+first.
+
+Start with a reviewed list of 10-20 phrases. For each phrase, know the page that
+should rank, the market and device to check, and why the result matters. You can
+revise the set after the first rank data arrives.
+
+## Before you add keywords
+
+Confirm that the project has:
+
+- the correct site domain and URL matching rules;
+- the country, city, and device defaults you want to check;
+- a connected SERP provider for running rank checks; and
+- enough provider budget for the number of phrases, locations, devices, and
+  scheduled checks.
+
+You can add keywords before connecting a SERP provider, but checks remain paused
+until a provider is available.
+
+## Choose an input path
+
+| Input | Use it when | Where to start |
+| - | - | - |
+| Search Console | An existing site already receives Google impressions. | Connect Google Search Console, then select **Find Search Console queries**. |
+| Ranked suggestions | The project has a connected DataForSEO account and you want phrases the domain already ranks for. | Select the ranked-suggestions action and review the cost estimate. |
+| Manual entry | You have a short prepared list. | Open **Keywords**, select the add action, and paste one phrase per line. |
+| CSV | You already maintain keyword research outside bisibility. | Open **Keywords** and select **Import CSV**. |
+
+Search Console and ranked suggestions open a review picker. Select only the
+queries you want to track. Suggestions already tracked with the same project
+dimensions are marked or skipped.
+
+Ranked suggestions use the project's own DataForSEO credentials. bisibility
+shows the provider estimate before the request and caches results for 12 hours.
+
+## Add keywords during onboarding
+
+The **Add your first keywords** onboarding step accepts one phrase per line. It
+also exposes Search Console and ranked-suggestion imports when their
+integrations are available.
+
+The onboarding step applies the locations, devices, schedule, and SERP depth
+chosen earlier in the flow. Review the matrix summary before continuing: ten
+phrases across two locations and two devices create forty tracked keyword
+combinations.
+
+Select the add action when the summary matches what you intend to monitor.
+bisibility reports how many combinations were created and how many were already
+tracked.
+
+## Add details from the Keywords page
+
+For a short list, open **Keywords**, select the add action, and use manual entry.
+Paste one phrase per line, then set:
+
+- the location and device;
+- the target URL, which is the page that should rank;
+- tags that explain why you track the phrase; and
+- the check schedule when it should differ from the project default.
+
+Useful reason tags include `Improve`, `Protect`, `Launch`, `Investigate`, and
+`Long term`.
+
+## Import CSV or XLSX
+
+Create the project's markets first, then select **Import CSV**. Choose the
+**Market for rows without a location** before uploading a file or pasting CSV.
+When you open import from a market, it is selected for you. With a selected
+market, only `keyword` is required:
+
+```text
+keyword,target_url,tags,device
+open source analytics,/vs/ga,"Comparison",desktop
+self hosted seo tool,/self-host,"Product",mobile
+```
+
+To import into several existing markets, choose **Use markets from the file**
+and provide `country` with the matching `language`, or an exact `location_key`.
+The downloaded template uses the project's existing markets. Location fields
+in a row take precedence over the selected market.
+
+Review shows each row's resolved market and device, plus the row numbers and
+reasons for validation failures. Unknown locations are rejected rather than
+changed to country-level tracking. Imports never create missing markets or
+move existing keywords between them. A paused market accepts keywords, but
+its rank checks wait until the market is resumed.
+
+Duplicate keyword, market, and device combinations are skipped. Fix excluded
+rows or confirm the valid rows shown in Review; markets are checked again at
+confirmation.
+
+## Run and review the first check
+
+For the first run, open **Overview** or **Keywords** and select **Run first
+check**. To rerun one phrase later, open its keyword detail page and select
+**Run check**.
+
+After the check completes, verify:
+
+- the recorded position and ranking URL;
+- whether the ranking URL matches the target URL;
+- whether the selected market and device are correct; and
+- whether the check consumed the expected provider budget.
+
+`Not found in the top 100` is a valid first result, not an integration failure.
+Verify that the intended page is indexed and matches the query, then keep,
+remap, or remove the phrase based on what you learn.
+
+Continue with [Run rank checks](/guides/runs) and
+[Manage schedules](/guides/schedules). Self-hosters who still need the Temporal
+worker should follow [Temporal](/self-hosting/temporal). Use the
+[Keywords API](/api/keywords) to automate larger imports.

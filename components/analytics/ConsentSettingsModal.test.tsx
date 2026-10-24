@@ -1,0 +1,184 @@
+import { ConsentSettingsModal } from "@/components/analytics/ConsentSettingsModal";
+import {
+  renderWithSharedMessages as render,
+  renderWithFeatureMessages,
+} from "@/i18n/test-support/render-with-feature-messages";
+import { pendingConsent } from "@/lib/analytics/consent";
+import sharedMessages from "@/messages/core/en/shared.json";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  applyAnalyticsConsent: vi.fn(),
+  readAppliedAnalyticsConsent: vi.fn(),
+  readAnalyticsConsentScope: vi.fn(() => 0),
+  setAnalyticsReplay: vi.fn(),
+}));
+
+vi.mock("@/lib/analytics/client", () => mocks);
+
+const polishConsentMessages = {
+  shared: {
+    ...sharedMessages.shared,
+    analyticsConsent: {
+      ...sharedMessages.shared.analyticsConsent,
+      actions: {
+        acceptAll: "Zaakceptuj wszystkie",
+        rejectAll: "Odrzuc wszystkie",
+        save: "Zapisz",
+        settings: "Ustawienia",
+      },
+      banner: {
+        ...sharedMessages.shared.analyticsConsent.banner,
+        ariaLabel: "Zgoda na analityke",
+        body: "Liczymy wizyty bez plikow cookie.",
+        saveError: "Nie mozna zapisac wyboru. Wylaczone opcje pozostaja wylaczone.",
+        update: "Nagrania moga obejmowac ekrany aplikacji.",
+      },
+      modal: {
+        ...sharedMessages.shared.analyticsConsent.modal,
+        alwaysOn: "Zawsze wlaczone",
+        essential: { body: "Wymagane dla bezpieczenstwa.", title: "Niezbedne" },
+        footer: "Wybor jest zapisany przez 6 miesiecy.",
+        intro: "Wybierz analityke i nagrania osobno.",
+        privacyPolicy: "Polityka prywatnosci",
+        replay: { body: "Opcjonalne nagrania pomagaja nam ulepszac aplikacje.", title: "Nagrania" },
+        saveError: "Nie mozna zapisac zmian. Wylaczone opcje pozostaja wylaczone.",
+        usage: { body: "Strony i kroki konfiguracji, ktorych uzywasz.", title: "Analityka uzycia" },
+        visitCounts: "Nadal liczymy wizyty bez trwalego profilu.",
+      },
+      title: "Ustawienia prywatnosci",
+    },
+  },
+};
+
+describe("ConsentSettingsModal", () => {
+  beforeEach(() => vi.clearAllMocks());
+  it("prefills both purposes without applying or saving them on open", () => {
+    const saveConsent = vi.fn();
+    render(
+      <ConsentSettingsModal
+        initialConsent={pendingConsent()}
+        onClose={vi.fn()}
+        open
+        saveConsent={saveConsent}
+      />,
+    );
+    expect(screen.getByRole("switch", { name: /Usage analytics/ })).toBeChecked();
+    expect(screen.getByRole("switch", { name: /Redacted replays/ })).toBeChecked();
+    expect(saveConsent).not.toHaveBeenCalled();
+    expect(mocks.applyAnalyticsConsent).not.toHaveBeenCalled();
+    expect(mocks.setAnalyticsReplay).not.toHaveBeenCalled();
+  });
+
+  it("preserves a saved refusal when settings reopen", () => {
+    render(
+      <ConsentSettingsModal
+        initialConsent={{ analytics: false, replay: false, status: "decided", decidedAt: 1 }}
+        onClose={vi.fn()}
+        open
+        saveConsent={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("switch", { name: /Usage analytics/ })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: /Redacted replays/ })).not.toBeChecked();
+  });
+  it("allows replay independently from usage analytics", () => {
+    render(
+      <ConsentSettingsModal
+        initialConsent={pendingConsent()}
+        onClose={vi.fn()}
+        open
+        saveConsent={vi.fn()}
+      />,
+    );
+
+    const replay = screen.getByRole("switch", { name: /Redacted replays/ });
+    expect(replay).toBeEnabled();
+    fireEvent.click(screen.getByRole("switch", { name: /Usage analytics/ }));
+    expect(replay).toBeChecked();
+  });
+
+  it("rejects both optional categories in one click", async () => {
+    const saved = { analytics: false, decidedAt: 1, replay: false, status: "decided" as const };
+    const saveConsent = vi.fn().mockResolvedValue(saved);
+    render(
+      <ConsentSettingsModal
+        initialConsent={{ ...saved, analytics: true, replay: true }}
+        onClose={vi.fn()}
+        open
+        saveConsent={saveConsent}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reject all" }));
+    await waitFor(() =>
+      expect(saveConsent).toHaveBeenCalledWith({ analytics: false, replay: false }),
+    );
+    expect(mocks.setAnalyticsReplay).toHaveBeenCalledWith(false);
+  });
+
+  it("blocks duplicate quick actions and edits while saving", async () => {
+    const saveConsent = vi.fn(() => new Promise<never>(() => undefined));
+    render(
+      <ConsentSettingsModal
+        initialConsent={pendingConsent()}
+        onClose={vi.fn()}
+        open
+        saveConsent={saveConsent}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Accept all" }));
+    for (const name of ["Reject all", "Accept all", "Save", "Close modal"]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+    expect(screen.getByRole("switch", { name: /Usage analytics/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Accept all" }));
+    expect(saveConsent).toHaveBeenCalledOnce();
+  });
+
+  it("saves the selected defaults through the shared action", async () => {
+    const saved = { analytics: true, decidedAt: 1, replay: true, status: "decided" as const };
+    const saveConsent = vi.fn().mockResolvedValue(saved);
+    const onClose = vi.fn();
+    render(
+      <ConsentSettingsModal
+        initialConsent={pendingConsent()}
+        onClose={onClose}
+        open
+        saveConsent={saveConsent}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(saveConsent).toHaveBeenCalledWith({ analytics: true, replay: true }),
+    );
+    expect(mocks.applyAnalyticsConsent).toHaveBeenCalledWith(saved);
+    expect(mocks.setAnalyticsReplay).toHaveBeenCalledWith(true);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("renders every consent control from the supplied shared message scope", () => {
+    renderWithFeatureMessages(
+      <ConsentSettingsModal
+        initialConsent={pendingConsent()}
+        onClose={vi.fn()}
+        open
+        saveConsent={vi.fn()}
+      />,
+      { locale: "pl", messages: polishConsentMessages },
+    );
+
+    expect(screen.getByRole("dialog", { name: "Ustawienia prywatnosci" })).toBeVisible();
+    expect(screen.getByText("Zawsze wlaczone")).toBeVisible();
+    expect(screen.getByRole("switch", { name: /Analityka uzycia/ })).toBeVisible();
+    expect(screen.getByRole("switch", { name: /Nagrania/ })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Polityka prywatnosci" })).toHaveAttribute(
+      "href",
+      "/privacy",
+    );
+    expect(screen.getByRole("button", { name: "Zapisz" })).toBeVisible();
+    expect(screen.queryByText("Always on")).not.toBeInTheDocument();
+  });
+});

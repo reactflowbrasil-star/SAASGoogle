@@ -1,0 +1,147 @@
+"use client";
+
+import { Menu } from "@/components/ui/Menu";
+import { menuSelectPaperStyle } from "@/components/ui/MenuSelect";
+import { useMenuExitLifecycle } from "@/components/ui/menu-exit-lifecycle";
+import { toolbarControlClassName } from "@/components/ui/toolbar-control-styles";
+import type { StoredResultsIndexEntry } from "@/lib/checks/contract";
+import { cn } from "@/lib/ui/cn";
+import { CaretDownIcon as CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
+import { useTranslations } from "next-intl";
+import type { ReactNode } from "react";
+import { useState } from "react";
+import { RetrievedResultsPickerMenu } from "./RetrievedResultsPickerMenu";
+import {
+  closestComparable,
+  fromPresets,
+  type PickerRole,
+  pickerRows,
+  retainedState,
+} from "./retrieved-results-picker-model";
+
+export type RetrievedResultsPickerProps = {
+  ariaLabel: string;
+  entries: readonly StoredResultsIndexEntry[];
+  formatDate: (iso: string) => string;
+  formatDateTime: (iso: string) => string;
+  leadingIcon?: ReactNode;
+  onChange: (checkId: string) => void;
+  pickerRole?: PickerRole;
+  selectedFrom?: string;
+  selectedTo?: string;
+  value: string;
+};
+export function storedCheckLabel(
+  entry: StoredResultsIndexEntry,
+  formatDateTime: (iso: string) => string,
+  retained = "",
+) {
+  return `${formatDateTime(entry.checkedAt)} · ${retained}`;
+}
+export function RetrievedResultsPicker({
+  ariaLabel,
+  entries,
+  formatDate,
+  formatDateTime,
+  leadingIcon,
+  onChange,
+  pickerRole = "one",
+  selectedFrom,
+  selectedTo,
+  value,
+}: Readonly<RetrievedResultsPickerProps>) {
+  const t = useTranslations("projectRankTracker.keywordDetail.results");
+  const [jumpDate, setJumpDate] = useState("");
+  const { anchorEl, closeMenu, handleExited, open, openMenu } = useMenuExitLifecycle(() =>
+    setJumpDate(""),
+  );
+  const selected = entries.find((entry) => entry.checkId === value);
+  const localizedRetainedLabel = (entry: StoredResultsIndexEntry) => {
+    const state = retainedState(entry);
+    return state.kind === "notKept" ? t("notKept") : t("retained", { count: state.count });
+  };
+  const to = entries.find((entry) => entry.checkId === selectedTo);
+  const choose = (entry: StoredResultsIndexEntry) => {
+    onChange(entry.checkId);
+    closeMenu();
+  };
+  const rows = pickerRows(entries, pickerRole, selectedFrom, selectedTo);
+  const presets = pickerRole === "from" && selectedTo ? fromPresets(entries, selectedTo) : [];
+  return (
+    <>
+      <button
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={ariaLabel}
+        className={cn(
+          toolbarControlClassName,
+          "inline-flex min-h-[34px] max-w-full items-center gap-2 px-3 font-sans tabular-nums text-[12px]",
+        )}
+        onClick={(event) => openMenu(event.currentTarget)}
+        type="button"
+      >
+        {leadingIcon}
+        <span className="truncate">
+          {selected
+            ? storedCheckLabel(selected, formatDateTime, localizedRetainedLabel(selected))
+            : ariaLabel}
+        </span>
+        <CaretDown aria-hidden size={11} weight="regular" />
+      </button>
+      <Menu
+        anchorEl={anchorEl}
+        align="start"
+        side="bottom"
+        onClose={closeMenu}
+        open={open}
+        listProps={{ "aria-label": ariaLabel, style: { padding: 0 } }}
+        contentProps={{
+          style: {
+            ...menuSelectPaperStyle,
+            maxHeight: "min(714px, calc(100dvh - 32px))",
+            maxWidth: "calc(100vw - 32px)",
+            minWidth: "min(560px, calc(100vw - 32px))",
+            overflowY: "auto",
+            width: "min(560px, calc(100vw - 32px))",
+          },
+        }}
+        onExited={handleExited}
+      >
+        <RetrievedResultsPickerMenu
+          formatDate={formatDate}
+          formatDateTime={formatDateTime}
+          onSelect={choose}
+          presets={presets}
+          retainedLabel={localizedRetainedLabel}
+          rows={rows}
+          selectedTo={pickerRole === "from" ? to : undefined}
+          value={value}
+        />
+        <div className="mx-2 mt-2 border-t border-border px-3 pb-3 pt-3">
+          <label
+            className="block font-sans tabular-nums text-[10px] uppercase tracking-[0.08em] text-fg-muted"
+            htmlFor={`${ariaLabel}-jump-date`}
+          >
+            {t("jumpToDate")}
+          </label>
+          <input
+            aria-label={t("jumpToDate")}
+            className="mt-2 min-h-[42px] w-full rounded-control border border-border-control bg-transparent px-3 font-sans tabular-nums text-[12px] text-fg"
+            id={`${ariaLabel}-jump-date`}
+            onChange={(event) => {
+              const date = event.target.value;
+              setJumpDate(date);
+              const match = closestComparable(entries, date, pickerRole, selectedFrom, selectedTo);
+              if (match) choose(match);
+            }}
+            type="date"
+            value={jumpDate}
+          />
+          <p className="m-0 mt-2 font-sans tabular-nums text-[10.5px] leading-4 text-fg-muted">
+            {t("pickerClosest")}
+          </p>
+        </div>
+      </Menu>
+    </>
+  );
+}

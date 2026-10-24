@@ -1,0 +1,238 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({ findMany: vi.fn() }));
+
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/db/prisma", () => ({
+  prisma: { domainOverviewSnapshot: { findMany: mocks.findMany } },
+}));
+
+import { recentDomainOverviewTargets } from "./recent";
+
+describe("recent domain overview targets", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv("READ_ONLY_DEMO", "0");
+    vi.stubEnv("DEMO_MODE", "");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each(["snapshot", "editable"])(
+    "keeps %s demo targets visible for 30 days with the report expiry",
+    async (mode) => {
+      vi.stubEnv("READ_ONLY_DEMO", mode === "snapshot" ? "1" : "0");
+      vi.stubEnv("DEMO_MODE", mode === "editable" ? "editable" : "");
+      mocks.findMany.mockResolvedValue([
+        {
+          cachedUntil: new Date("2026-08-12T00:00:00.000Z"),
+          fetchedAt: new Date("2026-08-11T12:00:00.000Z"),
+          languageCode: "en",
+          locationCode: 2840,
+          scope: "root",
+          target: "example.com",
+        },
+      ]);
+      await expect(
+        recentDomainOverviewTargets("project_1", 8, new Date("2026-09-08T12:00:00.000Z")),
+      ).resolves.toEqual([
+        expect.objectContaining({ cachedUntil: "2026-09-10T12:00:00.000Z", target: "example.com" }),
+      ]);
+      expect(mocks.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            OR: expect.any(Array),
+            cachedUntil: { gt: new Date(0) },
+            fetchedAt: { gt: new Date("2026-08-09T12:00:00.000Z") },
+            projectId: "project_1",
+          },
+        }),
+      );
+    },
+  );
+
+  it.each([
+    {
+      expected: [
+        {
+          cachedUntil: "2026-08-12T00:00:00.000Z",
+          fetchedAt: "2026-08-11T12:00:00.000Z",
+          languageCode: "es",
+          locationCode: 2724,
+          scope: "root",
+          target: "example.com",
+        },
+      ],
+      name: "keeps a live Spain and Spanish scope",
+      rows: [
+        {
+          cachedUntil: new Date("2026-08-12T00:00:00.000Z"),
+          fetchedAt: new Date("2026-08-11T12:00:00.000Z"),
+          languageCode: "es",
+          locationCode: 2724,
+          scope: "root",
+          target: "example.com",
+        },
+      ],
+    },
+    {
+      expected: [
+        {
+          cachedUntil: "2026-08-12T00:00:00.000Z",
+          fetchedAt: "2026-08-11T12:00:00.000Z",
+          languageCode: "en",
+          locationCode: 2840,
+          scope: "subdomain",
+          target: "shop.example.com",
+        },
+      ],
+      name: "keeps the first row when a target has multiple stored scopes",
+      rows: [
+        {
+          cachedUntil: new Date("2026-08-12T00:00:00.000Z"),
+          fetchedAt: new Date("2026-08-11T12:00:00.000Z"),
+          languageCode: "en",
+          locationCode: 2840,
+          scope: "subdomain",
+          target: "shop.example.com",
+        },
+        {
+          cachedUntil: new Date("2026-08-11T23:00:00.000Z"),
+          fetchedAt: new Date("2026-08-11T11:00:00.000Z"),
+          languageCode: "es",
+          locationCode: 2724,
+          scope: "root",
+          target: "shop.example.com",
+        },
+      ],
+    },
+    { expected: [], name: "returns no rows provided after expiry filtering", rows: [] },
+  ])("$name", async ({ expected, rows }) => {
+    mocks.findMany.mockResolvedValue(rows);
+
+    const recent = await recentDomainOverviewTargets(
+      "project_1",
+      2,
+      new Date("2026-08-11T20:00:00.000Z"),
+    );
+
+    expect(JSON.stringify(recent)).toBe(JSON.stringify(expected));
+  });
+
+  it("keeps the newest country-language row per target and respects the limit", async () => {
+    const now = new Date("2026-08-11T20:00:00.000Z");
+    mocks.findMany.mockResolvedValue([
+      {
+        cachedUntil: new Date("2026-08-12T00:00:00.000Z"),
+        fetchedAt: new Date("2026-08-11T12:00:00.000Z"),
+        languageCode: "en",
+        locationCode: 2840,
+        scope: "subdomain",
+        target: "shop.example.com",
+      },
+      {
+        cachedUntil: new Date("2026-08-11T23:00:00.000Z"),
+        fetchedAt: new Date("2026-08-11T11:00:00.000Z"),
+        languageCode: "de",
+        locationCode: 2276,
+        scope: "subdomain",
+        target: "shop.example.com",
+      },
+      {
+        cachedUntil: new Date("2026-08-11T22:00:00.000Z"),
+        fetchedAt: new Date("2026-08-11T10:00:00.000Z"),
+        languageCode: "en",
+        locationCode: 2826,
+        scope: "root",
+        target: "example.co.uk",
+      },
+      {
+        cachedUntil: new Date("2026-08-11T21:00:00.000Z"),
+        fetchedAt: new Date("2026-08-11T09:00:00.000Z"),
+        languageCode: "en",
+        locationCode: 2840,
+        scope: "root",
+        target: "third.example",
+      },
+    ]);
+
+    await expect(recentDomainOverviewTargets("project_1", 2, now)).resolves.toEqual([
+      {
+        cachedUntil: "2026-08-12T00:00:00.000Z",
+        fetchedAt: "2026-08-11T12:00:00.000Z",
+        languageCode: "en",
+        locationCode: 2840,
+        scope: "subdomain",
+        target: "shop.example.com",
+      },
+      {
+        cachedUntil: "2026-08-11T22:00:00.000Z",
+        fetchedAt: "2026-08-11T10:00:00.000Z",
+        languageCode: "en",
+        locationCode: 2826,
+        scope: "root",
+        target: "example.co.uk",
+      },
+    ]);
+    expect(mocks.findMany).toHaveBeenCalledWith({
+      orderBy: { fetchedAt: "desc" },
+      select: {
+        cachedUntil: true,
+        fetchedAt: true,
+        languageCode: true,
+        locationCode: true,
+        overview: true,
+        scope: true,
+        target: true,
+      },
+      take: 16,
+      where: { OR: expect.any(Array), cachedUntil: { gt: now }, projectId: "project_1" },
+    });
+  });
+
+  it("returns an empty list when there are no snapshots", async () => {
+    mocks.findMany.mockResolvedValue([]);
+    await expect(recentDomainOverviewTargets("project_1")).resolves.toEqual([]);
+    expect(mocks.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        take: 64,
+        where: {
+          OR: expect.any(Array),
+          cachedUntil: { gt: expect.any(Date) },
+          projectId: "project_1",
+        },
+      }),
+    );
+  });
+  it("projects validated original payment from saved overview metadata and leaves legacy unknown", async () => {
+    const payment = {
+      actionId: "original",
+      quoteId: null,
+      state: "settled",
+      option: {
+        id: "option",
+        connectionId: "conn_a00000000000000000000000",
+        providerId: "historic-provider",
+        providerLabel: "Historical provider",
+        fundingSource: "byok",
+        payableUnit: { kind: "currency", code: "USD" },
+      },
+      charge: { value: "0.03", unit: { kind: "currency", code: "USD" }, certainty: "measured" },
+    };
+    const row = {
+      cachedUntil: new Date(Date.now() + 60000),
+      fetchedAt: new Date(),
+      languageCode: "en",
+      locationCode: 2840,
+      scope: "root",
+      target: "example.com",
+    };
+    mocks.findMany.mockResolvedValue([
+      { ...row, overview: { count: 1, _payment: payment } },
+      { ...row, target: "legacy.example", overview: { count: 1 } },
+    ]);
+    const result = await recentDomainOverviewTargets("project_1");
+    expect(result[0]).toMatchObject({ originalPayment: payment });
+    expect(result[1]).not.toHaveProperty("originalPayment");
+    expect(result[0]).not.toHaveProperty("payment");
+  });
+});

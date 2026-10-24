@@ -1,0 +1,171 @@
+"use client";
+
+import { FeedMetadataTokens } from "@/components/feeds/FacetToken";
+import { RemoveNoteAction } from "@/components/timeline/RemoveNoteAction";
+import type { TimelineItem } from "@/lib/timeline/timeline-data";
+import type { Icon } from "@phosphor-icons/react";
+import { ArrowUpRightIcon as ArrowUpRight } from "@phosphor-icons/react/dist/csr/ArrowUpRight";
+import { DesktopIcon as Desktop } from "@phosphor-icons/react/dist/csr/Desktop";
+import { DeviceMobileIcon as DeviceMobile } from "@phosphor-icons/react/dist/csr/DeviceMobile";
+import { FileMagnifyingGlassIcon as FileMagnifyingGlass } from "@phosphor-icons/react/dist/csr/FileMagnifyingGlass";
+import { MedalIcon as Medal } from "@phosphor-icons/react/dist/csr/Medal";
+import { NotePencilIcon as NotePencil } from "@phosphor-icons/react/dist/csr/NotePencil";
+import { RocketLaunchIcon as RocketLaunch } from "@phosphor-icons/react/dist/csr/RocketLaunch";
+import { UploadSimpleIcon as UploadSimple } from "@phosphor-icons/react/dist/csr/UploadSimple";
+import { WarningIcon as Warning } from "@phosphor-icons/react/dist/csr/Warning";
+import { useTranslations } from "next-intl";
+
+const itemIcons = {
+  api: UploadSimple,
+  deploys: RocketLaunch,
+  notes: NotePencil,
+  pages: FileMagnifyingGlass,
+  rankings: Medal,
+  status: Warning,
+} satisfies Record<TimelineItem["icon"], Icon>;
+
+const tintStyles = {
+  amber: {
+    bg: "color-mix(in srgb, var(--yellow) 16%, transparent)",
+    color: "var(--yellow-text)",
+  },
+  green: { bg: "color-mix(in srgb, var(--green) 13%, transparent)", color: "var(--green)" },
+  red: { bg: "color-mix(in srgb, var(--red) 10%, transparent)", color: "var(--red)" },
+} satisfies Record<TimelineItem["tint"], { bg: string; color: string }>;
+
+type TimelineRowTranslations = ReturnType<typeof useTranslations<"projectTimeline.row">>;
+
+function TimelineMeta({ item, t }: Readonly<{ item: TimelineItem; t: TimelineRowTranslations }>) {
+  if (!item.marketMeta) {
+    return item.feedMeta ? <FeedMetadataTokens metadata={item.feedMeta} /> : item.meta;
+  }
+  const [keyword, location, language, source] = item.marketMeta.segments;
+  const deviceLabel = item.marketMeta.device === "mobile" ? t("deviceMobile") : t("deviceDesktop");
+  const DeviceIcon = item.marketMeta.device === "mobile" ? DeviceMobile : Desktop;
+  if (item.feedMeta) {
+    return (
+      <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <span className="max-w-[220px] truncate font-semibold text-fg">{keyword}</span>
+        <FeedMetadataTokens device={deviceLabel} metadata={item.feedMeta} />
+        <span className="sr-only">
+          {location} {language} {source}
+        </span>
+      </span>
+    );
+  }
+  const textSegments = [keyword, location, language];
+
+  return (
+    <span className="flex min-w-0 items-center gap-1" title={item.meta}>
+      {textSegments.map((segment, index) => (
+        <span className="contents" key={`${segment}-${index}`}>
+          {index > 0 ? <span aria-hidden>/</span> : null}
+          <span className="max-w-[220px] truncate">{segment}</span>
+        </span>
+      ))}
+      <span aria-hidden>/</span>
+      <span
+        aria-label={deviceLabel}
+        className="inline-flex size-3 shrink-0 items-center justify-center align-middle leading-none"
+        role="img"
+        title={deviceLabel}
+      >
+        <DeviceIcon aria-hidden size={12} weight="regular" />
+      </span>
+      <span aria-hidden>/</span>
+      <span className="max-w-[220px] truncate">{source}</span>
+    </span>
+  );
+}
+
+type TimelineRowProps = {
+  canDelete: boolean;
+  item: TimelineItem;
+  projectId: string;
+};
+
+export function TimelineRow({ canDelete, item, projectId }: Readonly<TimelineRowProps>) {
+  const t = useTranslations("projectTimeline.row");
+  const Icon = itemIcons[item.icon];
+  const tint = tintStyles[item.tint];
+
+  return (
+    <div
+      className="flex items-center gap-3.5 border-border border-b px-5 py-[13px] last:border-b-0"
+      id={`signal-${item.id}`}
+    >
+      <div className="grid min-w-0 flex-1 gap-2 md:grid-cols-[124px_minmax(0,1fr)_auto] md:items-center">
+        <span className="text-fg-muted">
+          {item.date}
+          <span className="mt-0.5 block text-fg-muted">{item.time}</span>
+        </span>
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span
+              className="inline-grid h-[22px] w-[22px] place-items-center rounded-control"
+              style={{ backgroundColor: tint.bg, color: tint.color }}
+            >
+              <Icon aria-hidden size={12} weight="regular" />
+            </span>
+            <span className="min-w-0 text-[13.5px] font-semibold leading-[1.35] text-fg">
+              {item.title}
+            </span>
+            {item.badge ? (
+              <span
+                className="inline-flex items-center rounded-full px-2 py-[2px] font-sans tabular-nums text-[10px] font-semibold"
+                style={{
+                  backgroundColor: tintStyles.amber.bg,
+                  color: tintStyles.amber.color,
+                }}
+              >
+                {item.badge}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-1 min-w-0 font-sans tabular-nums text-[11px] text-fg-muted">
+            <TimelineMeta item={item} t={t} />
+          </div>
+          {item.url ? (
+            <a
+              className="mt-1 inline-flex max-w-full items-center gap-1 truncate font-sans tabular-nums text-[12px] text-fg hover:text-accent-text hover:underline"
+              href={item.url}
+              rel="noreferrer noopener"
+              target="_blank"
+            >
+              <span className="truncate">{item.urlLabel}</span>
+              <ArrowUpRight weight="regular" aria-hidden className="shrink-0" size={11} />
+            </a>
+          ) : null}
+          {item.note ? (
+            <div className="mt-1 truncate text-[11.5px] text-fg-muted">{item.note}</div>
+          ) : null}
+          {item.details?.length ? (
+            <dl className="m-0 mt-2 flex flex-wrap gap-1.5">
+              {item.details.map((detail) => (
+                <div
+                  className="flex min-w-0 items-baseline gap-1 rounded-control border border-border bg-bg-sunken px-2 py-1"
+                  key={detail.label}
+                >
+                  <dt className="font-sans tabular-nums text-[9.5px] uppercase tracking-[0.4px] text-fg-muted">
+                    {detail.label}
+                  </dt>
+                  <dd className="m-0 min-w-0">
+                    <span className="break-all text-fg-muted">{detail.value}</span>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+        </div>
+        {item.position ? (
+          <span className="font-sans tabular-nums text-[13px] font-semibold text-fg">
+            {item.position}
+          </span>
+        ) : null}
+        {canDelete && item.removable ? (
+          <RemoveNoteAction projectId={projectId} signalId={item.id} />
+        ) : null}
+      </div>
+    </div>
+  );
+}

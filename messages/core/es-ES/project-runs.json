@@ -1,0 +1,196 @@
+{
+  "projectRuns": {
+    "navigation": {
+      "runs": "Ejecuciones",
+      "runsSections": "Secciones de ejecuciones",
+      "schedules": "Programaciones"
+    },
+    "filters": {
+      "active": "Activas",
+      "all": "Todas",
+      "allSources": "Todas las fuentes",
+      "allStatuses": "Todos los estados",
+      "finished": "Finalizadas",
+      "needsAttention": "Requieren atención",
+      "rankChecks": "Comprobaciones de posiciones",
+      "runSource": "Fuente de la ejecución",
+      "runStatus": "Estado de la ejecución",
+      "searchConsole": "Search Console",
+      "source": "Fuente:",
+      "status": "Estado:",
+      "aiTracking": "AI Tracking"
+    },
+    "content": {
+      "activeDescription": "Revisa el historial de ejecuciones o elige otro estado para encontrar el trabajo ya terminado.",
+      "activeTitle": "No hay ejecuciones en curso",
+      "clearFilters": "Quitar los filtros",
+      "filteredDescription": "Cambia o quita los filtros para ver otras ejecuciones.",
+      "filteredTitle": "No hay ninguna ejecución que coincida",
+      "historyDescription": "Aquí aparecerán las comprobaciones de posición, el seguimiento de IA y las importaciones de Search Console.",
+      "historyTitle": "Todavía no hay ejecuciones",
+      "loadError": "No se han podido cargar las ejecuciones",
+      "manageSchedules": "Gestionar programaciones",
+      "nextPage": "Página siguiente",
+      "openSearchConsole": "Abrir Search Console",
+      "plannedDescription": "Aquí aparecen las comprobaciones de posiciones programadas antes de que empiecen.",
+      "plannedSearchConsoleDescription": "Las importaciones de Search Console no tienen programación.",
+      "plannedSearchConsoleTitle": "No hay ejecuciones de Search Console previstas",
+      "plannedTitle": "No hay ejecuciones previstas",
+      "returnToFirstPage": "Volver a la primera página",
+      "runCount": "{count, plural, one {# ejecución} other {# ejecuciones}}",
+      "runs": "Ejecuciones",
+      "searchConsoleDescription": "Importa datos de Search Console para conservar aquí su historial de ejecuciones.",
+      "searchConsoleTitle": "Todavía no hay ejecuciones de Search Console",
+      "staleDescription": "El cursor ya no coincide con estos filtros. Vuelve a la primera página para continuar.",
+      "staleTitle": "Esta página de Ejecuciones está desactualizada",
+      "tryAgainDescription": "Inténtalo de nuevo. Si el problema continúa, vuelve a la primera página.",
+      "upcomingRuns": "Ejecuciones previstas",
+      "viewHistory": "Ver el historial"
+    },
+    "table": {
+      "actions": "Acciones",
+      "actual": "real",
+      "cost": "Coste",
+      "finalizedDays": "Días consolidados",
+      "notAvailable": "No disponible",
+      "notStarted": "Sin iniciar",
+      "operation": "Tarea",
+      "plannedUpdateFailed": "No se ha podido actualizar la ejecución prevista. Inténtalo de nuevo.",
+      "progress": "Progreso",
+      "progressValue": "{completed, number} / {total, number}",
+      "projectRuns": "Ejecuciones del proyecto",
+      "rankCheck": "Comprobación de posiciones",
+      "rankCheckApi": "Comprobación por API",
+      "rankCheckManual": "Comprobación manual",
+      "rankCheckRetry": "Reintento de comprobación",
+      "rankCheckScheduled": "Comprobación programada",
+      "scope": "Ámbito",
+      "searchConsole": "Search Console",
+      "searchConsoleImport": "Importación de Search Console",
+      "started": "Iniciada",
+      "status": "Estado",
+      "statusLegend": "Significado de los estados",
+      "submitted": "Enviada",
+      "targets": "Objetivos",
+      "type": "Tipo",
+      "unit": "Unidad",
+      "updatingPlannedRun": "Actualizando la ejecución prevista",
+      "keywordCount": "{count, plural, one {# palabra clave} other {# palabras clave}}",
+      "reviewIssue": "Revisar problema",
+      "reviewUsage": "Revisar presupuesto y uso",
+      "usageUnconfirmed": "Uso pendiente de confirmación",
+      "connectProvider": "Conecta un proveedor compatible",
+      "providerUnavailable": "Proveedor no disponible",
+      "workerUnavailable": "Proceso en segundo plano no disponible",
+      "marketPaused": "Mercado en pausa",
+      "noActiveKeywords": "Sin palabras clave activas",
+      "reviewBlocker": "Revisa el motivo del bloqueo",
+      "targetProgress": "{completed, number} / {total, number} {total, plural, one {objetivo} other {objetivos}}",
+      "dayProgress": "{completed, number} / {total, number} {total, plural, one {día consolidado} other {días consolidados}}",
+      "aiTrackingRun": "Medición de visibilidad en IA",
+      "sampleCount": "Muestras: {count, number}",
+      "sampleProgress": "{completed, number} / {total, number} muestras",
+      "costUnknown": "Coste sin confirmar",
+      "knownCost": "Coste conocido {cost} + sin confirmar",
+      "actualCost": "Coste {cost}"
+    },
+    "actions": {
+      "actionsFor": "Acciones para {title}",
+      "deleteRun": "Eliminar la ejecución",
+      "plannedUpdateFailed": "No se ha podido actualizar la ejecución prevista. Inténtalo de nuevo.",
+      "runNow": "Ejecutar ahora",
+      "skipOnce": "Omitir una vez",
+      "viewDetails": "Ver detalles"
+    },
+    "timeline": {
+      "all": "Todos",
+      "active": "En curso",
+      "upcoming": "Pendientes de inicio",
+      "history": "Historial",
+      "sections": "Etapas de ejecución",
+      "activeHint": "Primero los iniciados antes",
+      "upcomingHint": "Más próximas primero.",
+      "historyHint": "Primero las finalizadas más recientemente",
+      "noActiveKeywords": "No hay palabras clave activas",
+      "when": "Cuándo",
+      "finishedAt": "Finalizada",
+      "plannedFor": "Programada para",
+      "retryFrom": "Reintento desde",
+      "readyFrom": "Disponible desde",
+      "parallelWorkers": "Los workers pueden ejecutarse en paralelo.",
+      "oldestFirst": "Más antiguas primero",
+      "newestFirst": "Más recientes primero",
+      "waiting": "Pendientes de inicio",
+      "waitingHint": "Ejecuciones en espera. Se muestran las fechas registradas.",
+      "due": "Fecha ya pasada",
+      "dueHint": "Trabajo pendiente cuya fecha de inicio o reintento ya pasó.",
+      "later": "Programadas para después",
+      "laterHint": "Esperando una fecha futura.",
+      "pastFailuresHint": "Ejecuciones anteriores que terminaron con un problema. No son ejecuciones pendientes actuales.",
+      "attention": "Requiere atención",
+      "pastScheduled": "Fecha prevista superada",
+      "pastScheduledDays": "Sin iniciar · {count, plural, one {# día desde la fecha prevista} other {# días desde la fecha prevista}}"
+    },
+    "aiStatuses": {
+      "planned": {
+        "label": "Programado",
+        "description": "La medición de IA espera para comenzar."
+      },
+      "running": {
+        "label": "En curso",
+        "description": "Se están procesando las muestras de IA."
+      },
+      "completed": {
+        "label": "Completado",
+        "description": "La medición de IA ha terminado."
+      },
+      "partial": {
+        "label": "Parcial",
+        "description": "Solo parte de la medición de IA se completó correctamente."
+      },
+      "blocked": {
+        "label": "Bloqueado",
+        "description": "La medición de IA no pudo continuar."
+      },
+      "failed": {
+        "label": "Fallido",
+        "description": "La medición de IA ha fallado."
+      },
+      "cancelled": {
+        "label": "Cancelado",
+        "description": "La medición de IA se canceló."
+      },
+      "skipped": {
+        "label": "Omitido",
+        "description": "Se omitió la medición de IA. Revisa el motivo."
+      },
+      "cost_limit_exceeded": {
+        "label": "Límite de coste superado",
+        "description": "Se omitió la medición de IA por superar el límite de coste."
+      },
+      "status_unavailable": {
+        "label": "Estado no disponible",
+        "description": "No se pudo determinar el estado de la medición de IA."
+      }
+    },
+    "aiResults": {
+      "title": "Resultados de seguimiento de IA",
+      "back": "Volver a ejecuciones",
+      "next": "Más muestras",
+      "empty": "No se guardaron muestras para esta ejecución.",
+      "answer": "Respuesta guardada",
+      "citations": "Páginas citadas",
+      "observed": "Fecha de observación",
+      "model": "Modelo",
+      "measurement": "Medición",
+      "measurements": {
+        "answer_present": "Respuesta disponible",
+        "aio_not_present": "Sin resumen de IA",
+        "partial": "Resultado parcial",
+        "unavailable": "No disponible",
+        "failed": "Error",
+        "unknown": "Desconocido"
+      }
+    }
+  }
+}

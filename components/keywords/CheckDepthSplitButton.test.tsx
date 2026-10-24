@@ -1,0 +1,196 @@
+import { ProjectWriteModeProvider } from "@/components/shell/ProjectWriteModeProvider";
+import { renderWithProjectRankTrackerMessages as render } from "@/i18n/test-support/render-with-feature-messages";
+import { fireEvent, screen } from "@testing-library/react";
+import { type ReactNode, useState } from "react";
+import { describe, expect, it, vi } from "vitest";
+import { CheckDepthSplitButton } from "./CheckDepthSplitButton";
+
+function withProjectWriteMode({ children }: Readonly<{ children: ReactNode }>) {
+  return (
+    <ProjectWriteModeProvider projectRef="prj_1" writeMode="active">
+      {children}
+    </ProjectWriteModeProvider>
+  );
+}
+
+describe("CheckDepthSplitButton", () => {
+  it("uses the compact height and the same secondary chrome as the detail control", () => {
+    render(
+      <CheckDepthSplitButton
+        actionLabel="Run check (Top 20)"
+        currentDepth={20}
+        onAction={vi.fn()}
+        onDepthChange={vi.fn()}
+        size="xs"
+      />,
+      { wrapper: withProjectWriteMode },
+    );
+
+    const action = screen.getByRole("button", { name: "Run check (Top 20)" });
+    expect(action).toHaveClass("min-h-[30px]");
+    expect(action).toHaveAttribute("data-variant", "secondary");
+    expect(action).not.toHaveAttribute("data-variant", "primary");
+    expect(action.style.getPropertyValue("--control-border")).toBe("");
+    expect(action.style.getPropertyValue("--control-background-color")).toBe(
+      "var(--button-secondary-hover-bg)",
+    );
+  });
+
+  it("keeps both halves primary when placed on the bulk action bar", () => {
+    render(
+      <CheckDepthSplitButton
+        actionLabel="Run check"
+        currentDepth={20}
+        onAction={vi.fn()}
+        onDepthChange={vi.fn()}
+        size="xs"
+        variant="primary"
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Run check" })).toHaveAttribute(
+      "data-variant",
+      "primary",
+    );
+    expect(screen.getByRole("button", { name: "Choose check depth" })).toHaveAttribute(
+      "data-variant",
+      "primary",
+    );
+  });
+
+  it("uses the header CTA height at md", () => {
+    render(
+      <CheckDepthSplitButton
+        actionLabel="Run first check (Top 20)"
+        currentDepth={20}
+        onAction={vi.fn()}
+        onDepthChange={vi.fn()}
+      />,
+      { wrapper: withProjectWriteMode },
+    );
+
+    const action = screen.getByRole("button", { name: "Run first check (Top 20)" });
+    expect(action).toHaveClass("min-h-[36px]");
+    expect(action).toHaveAttribute("data-variant", "secondary");
+    expect(action).not.toHaveClass("min-h-[30px]");
+    expect(action).not.toHaveAttribute("data-variant", "primary");
+  });
+
+  it("runs from the primary button and only changes depth from the menu", () => {
+    const onAction = vi.fn();
+    const onDepthChange = vi.fn();
+    render(
+      <CheckDepthSplitButton
+        actionLabel="Run check (Top 50)"
+        currentDepth={50}
+        onAction={onAction}
+        onDepthChange={onDepthChange}
+      />,
+      { wrapper: withProjectWriteMode },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Run check (Top 50)" }));
+    expect(onAction).toHaveBeenCalledOnce();
+    expect(onDepthChange).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose check depth" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Top 20" }));
+    expect(onDepthChange).toHaveBeenCalledWith(20);
+    expect(onAction).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose check depth" }));
+    const changeDefault = screen.getByRole("link", { name: "Change default" });
+    expect(changeDefault).toHaveAttribute("href", "/app/prj_1/settings/tracking");
+    expect(changeDefault).toHaveClass("w-full");
+    const footer = changeDefault.closest('[data-slot="menu-action-footer"]');
+    expect(footer).toHaveClass("-mx-1.5", "-mb-3.5", "list-none");
+    expect(footer).not.toHaveClass("mb-1.5");
+    const divider = footer?.querySelector('[data-slot="menu-action-footer-divider"]');
+    expect(divider).toHaveAttribute("role", "presentation");
+    expect(divider).toHaveClass("m-0", "w-full");
+    const content = footer?.querySelector('[data-slot="menu-action-footer-content"]');
+    expect(content).toHaveClass("px-1.5", "py-1.5");
+    expect(content?.parentElement).toBe(footer);
+    fireEvent.click(changeDefault);
+    expect(onDepthChange).toHaveBeenCalledOnce();
+  });
+
+  it("shows shallow check guidance in a tooltip without an inline warning", async () => {
+    function DepthHarness() {
+      const [depth, setDepth] = useState<10 | 20 | 50 | 100>(50);
+      return (
+        <CheckDepthSplitButton
+          actionLabel={`Run check (Top ${depth})`}
+          currentDepth={depth}
+          onAction={vi.fn()}
+          onDepthChange={setDepth}
+        />
+      );
+    }
+
+    render(<DepthHarness />, { wrapper: withProjectWriteMode });
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose check depth" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Top 10" }));
+
+    const group = screen.getByRole("group");
+    expect(group).toHaveAccessibleDescription(
+      "Top 10 checks do not update Visibility. Affected keywords still count toward its coverage total.",
+    );
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    fireEvent.pointerMove(screen.getByRole("button", { name: "Choose check depth" }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Top 10 checks do not update Visibility",
+    );
+    expect(screen.queryByRole("menu", { name: "Check depth" })).not.toBeInTheDocument();
+  });
+
+  it("accepts feature-owned list copy without expanding the shared provider", async () => {
+    const onDepthChange = vi.fn();
+    render(
+      <CheckDepthSplitButton
+        actionLabel="Run checks (Top 10)"
+        caretAriaLabel="Choose check depth"
+        copy={{
+          changeDefault: "Change default",
+          depthMenu: "Check depth",
+          optionLabel: (depth) => `Top ${depth}`,
+          shallowVisibility:
+            "Top 10 checks do not update Visibility. Affected keywords still count toward its coverage total.",
+        }}
+        currentDepth={10}
+        onAction={vi.fn()}
+        onDepthChange={onDepthChange}
+      />,
+      { wrapper: withProjectWriteMode },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose check depth" }));
+    expect(screen.getByRole("menu", { name: "Check depth" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Change default" })).toHaveAttribute(
+      "href",
+      "/app/prj_1/settings/tracking",
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "Top 20" }));
+    expect(onDepthChange).toHaveBeenCalledWith(20);
+
+    fireEvent.pointerMove(screen.getByRole("button", { name: "Choose check depth" }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Top 10 checks do not update Visibility",
+    );
+  });
+});
+
+it("keeps full action context accessible while offering a shorter mobile label", () => {
+  render(
+    <CheckDepthSplitButton
+      actionLabel="Run checks (Top 20)"
+      compactActionLabel="Run checks"
+      currentDepth={20}
+      onAction={() => {}}
+      onDepthChange={() => {}}
+    />,
+  );
+  const button = screen.getByRole("button", { name: "Run checks (Top 20)" });
+  expect(button.querySelector(".sm\\:hidden")).toHaveTextContent("Run checks");
+  expect(button.querySelector(".hidden")).toHaveTextContent("Run checks (Top 20)");
+});

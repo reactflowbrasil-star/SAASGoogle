@@ -1,0 +1,184 @@
+---
+title: "Backlinks"
+description: "Analyze referring domains and backlinks for a site or page through a BYO DataForSEO connection."
+---
+
+## Analyze backlinks
+
+```http
+GET /api/v1/projects/{project_id}/backlinks?target=example.com&target_scope=site&result_limit=100
+Authorization: Bearer <api_key>
+```
+
+This paid BYO-key lookup uses one eligible DataForSEO connection owned by the
+project. The MCP tool is `analyze_backlinks`. See
+[Paid MCP tools](/agents/paid-tools). `target_scope=site` expects a bare domain and honors
+`include_subdomains`; `target_scope=page` expects a full URL and ignores it. The
+target is validated locally first, so an unsupported input returns the
+`unsupported_target` problem before any provider call is made.
+
+`result_limit` accepts `100`, `300`, `500`, or `1000` rows. `mode=as_is` returns
+rows as the provider stores them, `mode=one_per_domain` asks the provider for a
+single best row per referring domain across the whole corpus, not only across the
+rows you fetched. Endpoints that can spend provider budget require write scope.
+
+One paid snapshot per target is kept for 24 hours and shared with MCP and the
+UI, so filtering, sorting, and grouping the rows you already paid for is free.
+`fresh=true` skips the cache read and pays again. Use `estimate_only=true` for a
+free, cache-aware dry run. It returns a cost-only `BacklinksEstimate` (`estimate:
+true`, `estimated_cost_cents`, `cost_cents`, `cached`, `cached_until`, `provider`,
+and the normalized target) without calling the provider, consuming budget, or
+writing the cost ledger. A dry run never carries `summary`, `history`, `rows`,
+or `fetched_at`, so it cannot be mistaken for an empty backlink profile.
+`max_cost_cents=0` means cached result only. A cache miss returns
+`cost_limit_exceeded` with `estimated_cost_cents` before provider calls, holds or attempts.
+This also applies to retained next pages. `fresh=true` bypasses cache and is refused at zero.
+
+`max_cost_cents` limits admitted cost estimates across summary, history, rows
+and retries. The provider budget also applies. An unconfirmed charge stops
+further calls in the same analysis.
+
+A successful snapshot's `data` carries `target`, `target_scope`, `include_subdomains`,
+`provider`, `fetched_at`, `cached`, `cached_until`, `cost_cents`,
+`fetched_row_count`, and `total_rows_available`. `summary` reports
+`backlinks_total`, referring domain counts, `dofollow_pct`, `domain_rank`,
+broken backlink and page counts, and provider-lifetime `new_backlinks`,
+`lost_backlinks`, `new_referring_domains`, and `lost_referring_domains`.
+When available, `history` contains monthly `{month, new_links, lost_links}`
+entries for the previous twelve full UTC calendar months. The estimate and
+provider request use the same fixed date window. Page-scope analyses do not
+request history. The subdomain setting affects the summary and link rows;
+historical trends use the provider's domain-level history. An empty history array
+does not establish that every month had zero new or lost links.
+
+Each row carries `source_domain`, `source_url`, `anchor`, `target_url`,
+`flags` (`nofollow`, `ugc`, `sponsored`, `image`, `sitewide`), `links_count`,
+`domain_authority` (the provider's referring-domain rank on the 0-100 scale),
+`spam_score`, `first_seen`, `lost_at`, and `status`. `status` and `lost_at` come
+straight from the provider's own new and lost markers rather than from
+comparing snapshots, and `sitewide` is a derived heuristic over `links_count`.
+A provider result with no backlinks is a successful empty response, not an error.
+
+Unsupported targets, exhausted budgets, provider throttling, reauthorization,
+and missing eligible connections use the standard problem response.
+
+## Partial history
+
+For a site analysis, a typed transient history failure with a known, finite,
+nonnegative provider cost can produce a successful snapshot with the completed
+summary and fetched rows. The optional snapshot field `historyUnavailable`
+appears as `history_unavailable: true` in REST and MCP output, with
+`history: []`. Successful site history contains the months actually returned
+within the requested twelve-month window, from zero to twelve months. Fewer
+months are a valid provider result and do not set the unavailable flag. More than
+twelve months, or a nonempty history marked unavailable, are invalid. Page
+scope still permits empty history because it does not request the history endpoint.
+Treat unavailable trends as unavailable, not as twelve months of zeros.
+The snapshot's `cost_cents` includes the known cost of the failed history call
+along with the summary and rows. The existing snapshot cache still applies.
+
+Authentication, provider billing, admission, budget and policy refusals retain
+their error handling and stop the analysis. They are not eligible for this
+partial-history recovery.
+
+## Unconfirmed history cost
+
+If the summary completes but history fails with unconfirmed usage or accounting,
+an unknown-cost transient error, or an unexpected error, the request remains a
+failure. Its `BacklinksFailedSummary` evidence has `ok: false`, `status: failed`,
+`reason: history_failed`, `history_status: failed`, and
+`rows_status: not_requested`. The total `cost_cents` is `null`.
+`known_summary_cost_cents` records only the completed summary component; it is
+neither a settled total nor an upper bound for the request.
+
+REST returns HTTP `500` with `application/problem+json`. The evidence is in the
+problem's `details` member, not in a successful `data` envelope or the
+validation `errors` member. For example:
+
+```json
+{
+  "type": "https://bisibility.com/problems/internal_server_error",
+  "title": "Internal server error", "status": 500,
+  "detail": "The backlinks history request failed. Total provider cost is unknown.",
+  "instance": "urn:bisibility:api:v1:/api/v1/projects/prj_a00000000000000000000000/backlinks",
+  "docs_url": "https://bisibility.com/docs/api/errors#internal_server_error",
+  "details": {
+    "cost_cents": null,
+    "known_summary_cost_cents": 0.2,
+    "history_failure": { "code": "provider_usage_unconfirmed", "phase": "measurement" },
+    "history_status": "failed", "rows_status": "not_requested",
+    "include_subdomains": true, "provider": "dataforseo",
+    "ok": false, "status": "failed", "reason": "history_failed",
+    "summary": {
+      "backlinks_total": 12, "referring_domains_total": 2, "referring_pages": 3,
+      "broken_backlinks": 0, "broken_pages": 0, "dofollow_pct": 50,
+      "domain_rank": 10, "spam_score": 0,
+      "lost_backlinks": 0, "lost_referring_domains": 0,
+      "new_backlinks": 0, "new_referring_domains": 0
+    },
+    "target": "example.com", "target_scope": "site"
+  }
+}
+```
+
+`history_failure.code` is `provider_usage_unconfirmed`, `provider_transient`,
+or `unexpected_error`. Its `phase` is `admission`, `request`, `response_body`,
+`measurement`, `settlement`, or `unknown` for an accounting failure, and `null`
+for the other two codes. Raw provider errors, credentials and attempt IDs are
+not exposed.
+
+MCP returns `isError: true`, with the HTTP status and problem payload under
+`structuredContent.error`; the evidence is at
+`structuredContent.error.payload.details`. This is not a successful tool result.
+
+The [app displays the completed summary](/guides/backlinks#when-history-is-unavailable)
+for the current response only. This failed request creates no reusable cached
+snapshot or durable result to reopen, requests no rows, and offers no paid
+continuation from that evidence. Do not automatically repeat the paid request
+or interpret `null` cost as zero. See
+[API error guidance](/api/errors#500-backlinks-history-failure).
+
+## Load more rows
+
+```http
+POST /api/v1/projects/{project_id}/backlinks/rows
+Authorization: Bearer <api_key>
+Content-Type: application/json
+
+{
+  "target": "example.com",
+  "target_scope": "site",
+  "include_subdomains": true,
+  "snapshot_ref": "<snapshot_ref from the report>",
+  "limit": 100
+}
+```
+
+This paid call extends the exact unexpired snapshot identified by `snapshot_ref`,
+not the most recent analysis for the target. Pass the opaque reference from the
+analyze response, then replace it with the new reference returned after each
+append. `limit` is a multiple of `100` between `100` and `1000`.
+
+The response has the same envelope, but `rows` contains only the additional rows.
+Append them to your existing rows and use the updated `fetched_row_count` and
+`total_rows_available`. `cost_cents` is the cost of this additional page, not the
+cumulative cost of the original analysis.
+
+**Compatibility:** `snapshot_ref` is an additional response field. Older clients
+that omit it on the rows endpoint receive `409 snapshot_expired` before any paid
+provider request. A missing, altered, cross-project, expired or stale row revision
+is rejected in the same way. Never retry by silently choosing a newer snapshot.
+
+Concurrent appends cannot purchase the same offset twice. If a paid response was
+retained but writing its rows failed, retrying the same reference restores those
+rows without another provider request (`cached: true`, `cost_cents: 0`).
+A refusal proven to precede dispatch releases the claim for retry. If dispatch
+may have happened but no response was retained, the append remains blocked;
+inspect recorded usage before explicitly starting a new paid analysis.
+
+## Related operations
+
+- [`GET /projects/{project_id}/backlinks`](/api-reference/backlinks/analyze-backlinks) (`analyzeBacklinks`)
+- [`POST /projects/{project_id}/backlinks/rows`](/api-reference/backlinks/load-more-backlink-rows) (`loadMoreBacklinkRows`)
+
+Exact request and response schemas live in the generated API Reference.

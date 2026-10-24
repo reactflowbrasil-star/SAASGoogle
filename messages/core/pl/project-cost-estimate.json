@@ -1,0 +1,31 @@
+{
+  "projectCostEstimate": {
+    "providerSpend": {
+      "headerUnavailable": "Zużycie niedostępne",
+      "headerUsageUnknown": "Zużycie nieznane",
+      "headerCapTooltip": "Zużycie budżetów z uwzględnieniem rezerwacji. Szczegóły w widoku Zużycie.",
+      "headerNoCap": "Brak budżetu · Ustaw",
+      "headerNoCapAria": "Brak budżetu, ustaw go",
+      "headerUsed": "Wykorzystano {percent}%",
+      "headerAtLeastUsed": "Wykorzystano co najmniej {percent}%",
+      "headerUnderOne": "Wykorzystano mniej niż 1%",
+      "headerAtLeastUnderOne": "Co najmniej niewielkie zużycie",
+      "headerExceeded": "Przekroczono budżet",
+      "headerUsageAria": "Zużycie budżetów: {status}. Zobacz szczegóły",
+      "headerNoLimit": "Bez limitu",
+      "headerWarning": "Ostrzeżenie budżetu"
+    },
+    "status": {
+      "unavailable": "Szacowany koszt jest niedostępny.",
+      "retry": "Ponów",
+      "updating": "Aktualizowanie szacowanego kosztu…"
+    },
+    "spendInfo": {
+      "aria": "O wydatkach u dostawcy",
+      "description": "Twój miesięczny limit u dostawcy i bieżące zużycie.",
+      "session": "{spent} w tej sesji",
+      "details": "Szczegóły",
+      "setBudget": "Ustaw budżet"
+    }
+  }
+}

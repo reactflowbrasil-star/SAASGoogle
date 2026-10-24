@@ -1,0 +1,294 @@
+import "server-only";
+import { getAuditRetentionDays } from "@/lib/audit/retention";
+import { writeAudit } from "@/lib/auth/audit";
+import { type Actor, AuthorizationError, authorize, getProjectRole } from "@/lib/auth/authorize";
+import { initials as avatarInitials } from "@/lib/avatar/initials";
+import { prisma } from "@/lib/db/prisma";
+import { parsePublicId } from "@/lib/db/public-id";
+import { getQueryActor } from "@/lib/queries/_auth";
+import type { AuditDiff } from "@/lib/queries/audit-diff";
+import { auditEventDetailsFor, type ProviderSourceChange } from "@/lib/queries/audit-event-details";
+import {
+  publicAuditTargetIdOrNull,
+  redactAuditIds,
+  requiredPublicId,
+} from "@/lib/queries/audit-public-values";
+import type { RankCheckRunSkip } from "@/lib/queries/audit-rank-check-run-skip";
+import { trackedProjectDomain } from "@/lib/schemas/project";
+
+export type { AuditDiff } from "@/lib/queries/audit-diff";
+export type AuditOperation = "CREATE" | "DELETE" | "EXPORT" | "IMPORT" | "LOGIN" | "UPDATE";
+export type AuditStatus = "failed" | "success";
+export type AuditEventType = "auth" | "data" | "export" | "import" | "permissions" | "system";
+export type AuditDateRange = "7d" | "30d" | "90d" | "all";
+export type AuditEntry = {
+  action?: string;
+  rankCheckRunSkip?: RankCheckRunSkip;
+  providerSourceChange?: ProviderSourceChange;
+  id: string;
+  timestamp: string;
+  eventName?: string;
+  timestampLabel?: string;
+  eventType: AuditEventType;
+  actor: {
+    avatarUrl?: string | null;
+    id: string;
+    name: string | null;
+    email: string;
+    initials: string;
+  };
+  resource: {
+    id: string | null;
+    type: "api_key" | "auth_session" | "export" | "keyword" | "project" | "provider" | "team";
+    name: string | null;
+  };
+  operation: AuditOperation;
+  status: AuditStatus;
+  statusReason?: string;
+  source: {
+    channel: "api" | "oauth" | "ui";
+    ip: string | null;
+  };
+  diff: AuditDiff[];
+  metadata: {
+    event_id: string;
+    correlation_id: string | null;
+    user_agent: string | null;
+    app_version: string | null;
+  };
+};
+export type AuditProject = {
+  id: string;
+  publicId: string;
+  domain: string;
+  name: string;
+};
+type AuditProjectRecord = { id: string; publicId: string; domain: string | null; name: string };
+// biome-ignore format: compact view union keeps this module under the line cap.
+export type AuditLogView = | { authorized: false; project: AuditProject | null } | { authorized: true; dateRange: AuditDateRange; entries: readonly AuditEntry[]; entryLimit: number; project: AuditProject; retentionDays: number; truncated: boolean };
+const AUDIT_ENTRY_LIMIT = 200;
+const AUDIT_VIEW_DEBOUNCE_MINUTES = 30;
+function operationFor(action: string): AuditOperation {
+  if (/delete|revoke|remove|disconnect/.test(action)) {
+    return "DELETE";
+  }
+  if (action.includes("export")) {
+    return "EXPORT";
+  }
+  if (action.includes("import")) {
+    return "IMPORT";
+  }
+  if (/sign_in|login/.test(action)) {
+    return "LOGIN";
+  }
+  if (/add|create|issue|connect|run_now/.test(action)) {
+    return "CREATE";
+  }
+  return "UPDATE";
+}
+function auditProjectView(project: AuditProjectRecord): AuditProject {
+  return {
+    domain: trackedProjectDomain(project.domain) ?? "",
+    id: project.publicId,
+    name: project.name,
+    publicId: project.publicId,
+  };
+}
+function eventTypeFor(action: string): AuditEventType {
+  if (action.startsWith("auth")) {
+    return "auth";
+  }
+  if (action.startsWith("api_key")) {
+    return "permissions";
+  }
+  if (action.includes("export")) {
+    return "export";
+  }
+  if (action.includes("import")) {
+    return "import";
+  }
+  if (
+    action.startsWith("audit_log") ||
+    action.startsWith("provider") ||
+    action.includes("schedule") ||
+    action.includes("defaults")
+  ) {
+    return "system";
+  }
+  return "data";
+}
+const RESOURCE_TYPE_BY_TARGET: Record<string, AuditEntry["resource"]["type"]> = {
+  api_key: "api_key",
+  auth_session: "auth_session",
+  keyword: "keyword",
+  keyword_schedule: "keyword",
+  membership: "team",
+  project: "project",
+  project_defaults: "project",
+  provider_connection: "provider",
+  rank_check: "keyword",
+  session: "auth_session",
+  user: "auth_session",
+};
+function resourceTypeFor(targetType: string): AuditEntry["resource"]["type"] {
+  return RESOURCE_TYPE_BY_TARGET[targetType] ?? "project";
+}
+type AuditRow = {
+  id: string;
+  publicId: string | null;
+  action: string;
+  appVersion: string | null;
+  targetType: string;
+  targetId: string;
+  before: unknown;
+  after: unknown;
+  correlationId: string | null;
+  createdAt: Date;
+  sourceIpMasked: string | null;
+  status: string;
+  statusReason: string | null;
+  userAgent: string | null;
+  actor: {
+    email: string;
+    image: string | null;
+    name: string | null;
+    publicId: string | null;
+  } | null;
+};
+function statusFor(status: string): AuditStatus {
+  return status === "failed" ? "failed" : "success";
+}
+function safeMetadataId(value: string | null) {
+  const redacted = redactAuditIds(value, "correlation_id");
+  return typeof redacted === "string" && redacted.trim() ? redacted : null;
+}
+// AuditLog has no source-channel column, so derive it from the recorded user agent:
+// browser engines mean the action came through the UI, anything else is a programmatic API caller.
+function channelFor(userAgent: string | null): AuditEntry["source"]["channel"] {
+  if (!userAgent) {
+    return "api";
+  }
+  return /mozilla|gecko|webkit|chrome|safari|firefox|edg/i.test(userAgent) ? "ui" : "api";
+}
+function mapAuditRow(row: AuditRow): AuditEntry {
+  const name = row.actor?.name?.trim() || row.actor?.email || null;
+  const email = row.actor?.email ?? "";
+  return {
+    action: row.action,
+    actor: {
+      avatarUrl: row.actor?.image ?? null,
+      email,
+      id: row.actor ? requiredPublicId(row.actor.publicId, "Audit actor", "usr") : "system",
+      initials: avatarInitials(name ?? "", email),
+      name,
+    },
+    ...auditEventDetailsFor(row.action, row.before, row.after),
+    eventType: eventTypeFor(row.action),
+    id: requiredPublicId(row.publicId, "Audit log", "audit"),
+    metadata: {
+      app_version: row.appVersion?.trim() || null,
+      correlation_id: safeMetadataId(row.correlationId),
+      event_id: requiredPublicId(row.publicId, "Audit log", "audit"),
+      user_agent: row.userAgent?.trim() || null,
+    },
+    operation: operationFor(row.action),
+    resource: {
+      id: publicAuditTargetIdOrNull(row.targetId, row.targetType),
+      name: publicAuditTargetIdOrNull(row.targetId, row.targetType),
+      type: resourceTypeFor(row.targetType),
+    },
+    source: { channel: channelFor(row.userAgent), ip: row.sourceIpMasked?.trim() || null },
+    status: statusFor(row.status),
+    statusReason: row.statusReason ?? undefined,
+    timestamp: row.createdAt.toISOString(),
+  };
+}
+const DATE_RANGE_DAYS = { "7d": 7, "30d": 30, "90d": 90 } satisfies Record<
+  Exclude<AuditDateRange, "all">,
+  number
+>;
+function normalizeDateRange(value: string | string[] | undefined): AuditDateRange {
+  return value === "7d" || value === "90d" || value === "all" ? value : "30d";
+}
+function dateRangeCutoff(dateRange: AuditDateRange): Date | null {
+  if (dateRange === "all") {
+    return null;
+  }
+  return new Date(Date.now() - DATE_RANGE_DAYS[dateRange] * 24 * 60 * 60 * 1000);
+}
+async function loadAuditEntries(projectId: string, cutoff: Date | null) {
+  const rows = await prisma.auditLog.findMany({
+    include: { actor: { select: { email: true, image: true, name: true, publicId: true } } },
+    orderBy: { createdAt: "desc" },
+    take: AUDIT_ENTRY_LIMIT + 1,
+    where: { projectId, ...(cutoff ? { createdAt: { gte: cutoff } } : {}) },
+  });
+  return {
+    entries: rows.slice(0, AUDIT_ENTRY_LIMIT).map(mapAuditRow),
+    truncated: rows.length > AUDIT_ENTRY_LIMIT,
+  };
+}
+function assertCanReadAudit(actor: Actor, projectId: string) {
+  const role = getProjectRole(actor, projectId);
+  if (role === "auditor") {
+    return;
+  }
+  authorize(actor, "manage", { projectId, requiredRole: "admin", type: "audit_log" });
+}
+async function writeAuditView(actor: Actor, project: AuditProjectRecord) {
+  const viewedAfter = new Date(Date.now() - AUDIT_VIEW_DEBOUNCE_MINUTES * 60 * 1000);
+  const existing = await prisma.auditLog.findFirst({
+    select: { id: true },
+    where: {
+      action: "audit_log.view",
+      actorId: actor.id,
+      createdAt: { gte: viewedAfter },
+      projectId: project.id,
+      targetId: project.publicId,
+    },
+  });
+  if (existing) {
+    return;
+  }
+  await writeAudit({
+    action: "audit_log.view",
+    actorId: actor.id,
+    projectId: project.id,
+    targetId: project.publicId,
+    targetType: "project",
+  });
+}
+export async function getAuditLogView(
+  projectId: string,
+  options?: { dateRange?: string | string[] },
+): Promise<AuditLogView> {
+  if (parsePublicId(projectId)?.prefix !== "prj") throw new Error("Project not found.");
+  const actor = await getQueryActor();
+  const project = await prisma.project.findFirst({
+    select: { domain: true, id: true, name: true, publicId: true },
+    where: { publicId: projectId },
+  });
+  if (!project) {
+    throw new Error("Project not found.");
+  }
+  try {
+    assertCanReadAudit(actor, project.id);
+  } catch (error) {
+    if (error instanceof AuthorizationError) {
+      return { authorized: false, project: auditProjectView(project) };
+    }
+    throw error;
+  }
+  await writeAuditView(actor, project);
+  const dateRange = normalizeDateRange(options?.dateRange);
+  const { entries, truncated } = await loadAuditEntries(project.id, dateRangeCutoff(dateRange));
+  return {
+    authorized: true,
+    dateRange,
+    entries,
+    entryLimit: AUDIT_ENTRY_LIMIT,
+    project: auditProjectView(project),
+    retentionDays: getAuditRetentionDays(),
+    truncated,
+  };
+}

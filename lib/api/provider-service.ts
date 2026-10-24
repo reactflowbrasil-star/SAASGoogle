@@ -1,0 +1,297 @@
+import "server-only";
+
+import { auditConnection, auditProviderMutation } from "@/lib/api/provider-audit";
+import { renumberProviderChain } from "@/lib/api/provider-chain-writer";
+import { withProviderCredentialDefaults } from "@/lib/api/provider-credential-defaults";
+import { verifyProviderConnectionBeforeSave } from "@/lib/api/provider-verification";
+import { requireApiPublicId } from "@/lib/api/public-id";
+import { prisma } from "@/lib/db/prisma";
+import { makePublicId } from "@/lib/db/public-id";
+import { dollarsToCents } from "@/lib/format/currency";
+import type { Prisma } from "@/lib/generated/prisma/client";
+import { guardConnectionFundingMutation } from "@/lib/metering/budget-mirror";
+import { initializeConnectionBudgets } from "@/lib/provider-allocations/initialize";
+import {
+  hasAcceptedConnectionRun,
+  lockProjectForProviderMutation,
+} from "@/lib/provider-allocations/project-lock";
+import { rankCheckRateSelection, withRankCheckManualRate } from "@/lib/provider-rates/manual-rate";
+import { credentialsFromInput } from "@/lib/providers/credentials-input";
+import { decryptProviderCredentials, encryptSecret } from "@/lib/providers/crypto";
+import { PROVIDER_CATALOG } from "@/lib/providers/registry";
+import { connectProviderSchema, providerConnectionRefSchema } from "@/lib/schemas/provider";
+import { firstSyncIntentOnConnect } from "@/lib/traffic/first-sync-intent-state";
+import { publishWorkerIntent } from "@/lib/worker-intents/realtime";
+import { z } from "zod";
+
+const prioritySchema = z.coerce.number().int().min(0).max(1000);
+
+export const connectProviderActionSchema = connectProviderSchema.extend({
+  enabled: z.coerce.boolean().default(true),
+  priority: prioritySchema.optional(),
+});
+export const providerSettingsSchema = providerConnectionRefSchema.extend({
+  enabled: z.coerce.boolean().optional(),
+  priority: prioritySchema.optional(),
+});
+
+type ConnectProviderInput = z.infer<typeof connectProviderActionSchema>;
+type ProviderSettingsInput = z.infer<typeof providerSettingsSchema>;
+type ProviderMutationContext = {
+  actorId: string | null;
+  projectId: string;
+  projectPublicId?: string;
+};
+type ProviderMutationClient = Prisma.TransactionClient;
+
+function wakeTrafficFirstSyncWorker() {
+  void publishWorkerIntent("traffic_first_sync").catch(() => undefined);
+}
+function providerCatalogItem(providerId: string) {
+  const item = PROVIDER_CATALOG.find((provider) => provider.id === providerId);
+  if (!item) throw new Error(`Unknown provider: ${providerId}`);
+  return item;
+}
+
+export { credentialsFromInput } from "@/lib/providers/credentials-input";
+
+function findConnection(
+  projectId: string,
+  providerId: string,
+  client: Pick<typeof prisma, "providerConnection"> = prisma,
+) {
+  return client.providerConnection.findUnique({
+    include: { rates: rankCheckRateSelection },
+    where: { projectId_provider: { projectId, provider: providerId } },
+  });
+}
+
+export async function connectProviderConnection(
+  input: ConnectProviderInput,
+  context: ProviderMutationContext,
+  options: { restoreStoredCredentials?: boolean; activateStoredCredentials?: boolean } = {},
+) {
+  const item = providerCatalogItem(input.providerId);
+  const stored = await findConnection(context.projectId, item.id);
+  // Only the explicit reactivation action may probe an inactive retained key.
+  if (
+    options.restoreStoredCredentials &&
+    (stored?.credentialSource !== "hosted" ||
+      !stored.credentialsEncrypted ||
+      stored.publicId !== input.expectedConnectionId ||
+      stored.updatedAt.toISOString() !== input.expectedConnectionUpdatedAt)
+  )
+    throw new Error("Provider connection changed. Refresh and try again.");
+  const credentials = await withProviderCredentialDefaults(item, context.projectId, {
+    ...(stored?.credentialSource === "hosted" && !options.restoreStoredCredentials
+      ? {}
+      : decryptProviderCredentials(stored?.credentialsEncrypted)),
+    ...credentialsFromInput(input),
+  });
+  const verification = await verifyProviderConnectionBeforeSave({
+    credentials,
+    hasStoredCredentials:
+      stored?.credentialSource !== "hosted" && Boolean(stored?.credentialsEncrypted),
+    projectId: context.projectId,
+    provider: item,
+  });
+  const secret =
+    !options.restoreStoredCredentials && Object.keys(credentials).length
+      ? encryptSecret(JSON.stringify(credentials))
+      : undefined;
+  const cost = input.costPerCheck === undefined ? null : dollarsToCents(input.costPerCheck);
+
+  const writeConnection = async (client: ProviderMutationClient) => {
+    await lockProjectForProviderMutation(client, context.projectId);
+    const before = await findConnection(context.projectId, item.id, client);
+    if (before) await guardConnectionFundingMutation(client, before.id);
+    if (
+      before?.id !== stored?.id ||
+      before?.credentialsEncrypted !== stored?.credentialsEncrypted ||
+      before?.credentialSource !== stored?.credentialSource ||
+      (options.restoreStoredCredentials &&
+        before?.updatedAt.getTime() !== stored?.updatedAt.getTime()) ||
+      (input.expectedCredentialSource !== undefined &&
+        (before?.credentialSource ?? "own") !== input.expectedCredentialSource) ||
+      (input.expectedConnectionId !== undefined &&
+        (before?.publicId ?? null) !== input.expectedConnectionId) ||
+      (input.expectedConnectionUpdatedAt !== undefined &&
+        (before?.updatedAt.toISOString() ?? null) !== input.expectedConnectionUpdatedAt)
+    ) {
+      throw new Error("Provider connection changed during verification. Try again.");
+    }
+    if (
+      before?.credentialSource === "hosted" &&
+      (await hasAcceptedConnectionRun(client, context.projectId, before.id))
+    ) {
+      throw new Error("Please wait for accepted checks to finish, then try again.");
+    }
+    const connections = await client.providerConnection.findMany({
+      select: { priority: true },
+      where: { kind: item.kind, projectId: context.projectId },
+    });
+    // An explicit priority wins; otherwise a reconnect keeps its place and a new
+    // connection appends to the fallback chain.
+    const priority =
+      input.priority ??
+      before?.priority ??
+      (connections.length === 0
+        ? 0
+        : Math.max(...connections.map((connection) => connection.priority)) + 1);
+    const enabled =
+      options.restoreStoredCredentials && stored
+        ? options.activateStoredCredentials === true || stored.enabled
+        : priority === 0 || input.enabled;
+    const firstSyncIntent = firstSyncIntentOnConnect(
+      before,
+      { enabled, kind: item.kind, status: "connected" },
+      new Date(),
+      true,
+    );
+    const connection = await client.providerConnection.upsert({
+      create: {
+        credentialsEncrypted: secret ?? null,
+        credentialSource: "own",
+        enabled,
+        ...firstSyncIntent,
+        kind: item.kind,
+        publicId: makePublicId("conn"),
+        priority,
+        projectId: context.projectId,
+        provider: item.id,
+        status: "connected",
+      },
+      update: {
+        enabled,
+        ...firstSyncIntent,
+        ...(secret ? { credentialsEncrypted: secret } : {}),
+        credentialSource: "own",
+        ...(before?.publicId ? {} : { publicId: makePublicId("conn") }),
+        priority,
+        status: "connected",
+      },
+      where: { projectId_provider: { projectId: context.projectId, provider: item.id } },
+    });
+    if (!before) await initializeConnectionBudgets(client, connection, item, verification);
+    if (input.priority === 0) {
+      await renumberProviderChain(context.projectId, item.kind, item.id, client);
+    }
+    if (cost !== null) {
+      await client.providerConnectionRate.upsert({
+        create: {
+          amountCents: cost,
+          connectionId: connection.id,
+          feature: "rank_check",
+        },
+        update: { amountCents: cost },
+        where: {
+          connectionId_feature: {
+            connectionId: connection.id,
+            feature: "rank_check",
+          },
+        },
+      });
+    }
+    const projectedConnection = {
+      ...connection,
+      costPerCheckCents:
+        cost === null
+          ? before
+            ? withRankCheckManualRate({ ...before, credentialSource: "own" }).costPerCheckCents
+            : null
+          : String(cost),
+    };
+    await auditProviderMutation(
+      {
+        action: before ? "provider.update" : "provider.connect",
+        actorId: context.actorId,
+        after: auditConnection(projectedConnection),
+        before: before ? auditConnection(withRankCheckManualRate(before)) : null,
+        projectId: context.projectId,
+        targetId: requireApiPublicId(connection.publicId ?? "", "conn"),
+      },
+      client,
+    );
+    if (before?.credentialSource === "hosted") {
+      await auditProviderMutation(
+        {
+          action: "provider.credential_source_changed",
+          actorId: context.actorId,
+          after: { provider: item.id, source: "own" },
+          before: { provider: item.id, source: "hosted" },
+          projectId: context.projectId,
+          targetId: requireApiPublicId(connection.publicId ?? "", "conn"),
+        },
+        client,
+      );
+    }
+    return {
+      connection: projectedConnection,
+      shouldWake: "firstSyncRequestedAt" in firstSyncIntent,
+    };
+  };
+
+  const result = await prisma.$transaction(writeConnection);
+  if (result.shouldWake) wakeTrafficFirstSyncWorker();
+  return result.connection;
+}
+
+export async function setProviderSettings(
+  input: ProviderSettingsInput,
+  context: ProviderMutationContext,
+) {
+  const item = providerCatalogItem(input.providerId);
+  const result = await prisma.$transaction(async (tx) => {
+    await lockProjectForProviderMutation(tx, context.projectId);
+    const before = await findConnection(context.projectId, item.id, tx);
+    if (!before) throw new Error("Provider connection not found.");
+    const firstSyncIntent =
+      item.kind !== "analytics"
+        ? {}
+        : input.enabled === false
+          ? {
+              firstSyncFinishedAt: null,
+              firstSyncRequestedAt: null,
+              firstSyncStartedAt: null,
+            }
+          : input.enabled === true
+            ? firstSyncIntentOnConnect(before, { ...before, enabled: true }, new Date())
+            : {};
+    const updated = await tx.providerConnection.update({
+      data: {
+        ...(typeof input.enabled === "boolean" ? { enabled: input.enabled } : {}),
+        ...firstSyncIntent,
+        ...(typeof input.priority === "number" ? { priority: input.priority } : {}),
+      },
+      where: { id: before.id },
+    });
+    if (input.priority === 0) {
+      await renumberProviderChain(context.projectId, item.kind, item.id, tx);
+    }
+    await auditProviderMutation(
+      {
+        action: "provider.set_settings",
+        actorId: context.actorId,
+        after: auditConnection({
+          ...updated,
+          costPerCheckCents: withRankCheckManualRate(before).costPerCheckCents,
+        }),
+        before: auditConnection(withRankCheckManualRate(before)),
+        projectId: context.projectId,
+        targetId: requireApiPublicId(updated.publicId ?? "", "conn"),
+      },
+      tx,
+    );
+    return {
+      connection: {
+        ...updated,
+        costPerCheckCents: withRankCheckManualRate(before).costPerCheckCents,
+      },
+      shouldWake: "firstSyncRequestedAt" in firstSyncIntent,
+    };
+  });
+  if (result.shouldWake) wakeTrafficFirstSyncWorker();
+  return result.connection;
+}
+
+export { disconnectProviderConnection } from "@/lib/api/provider-disconnect";

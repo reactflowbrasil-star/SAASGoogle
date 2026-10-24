@@ -1,0 +1,259 @@
+import { KEYWORD_TEXT_MAX } from "@/lib/schemas/keyword";
+import type { schemas } from "./openapi-components";
+import { keywordBulkRequest, keywordBulkResponse } from "./openapi-keyword-bulk";
+import { keywordCreateRequest } from "./openapi-keyword-create";
+import { withRequiredBody } from "./openapi-operations";
+import { publicIdSchema } from "./openapi-public-id";
+import { openEnum, sdkName } from "./openapi-sdk-schema";
+import { KEYWORD_MATCH_MAX_TEXTS } from "./schemas";
+
+type BearerOperation = (
+  summary: string,
+  operationId: string,
+  schema: object,
+  requestSchema?: object,
+  parameters?: object[],
+) => Record<string, unknown>;
+
+type KeywordPathHelpers = {
+  bearer: BearerOperation;
+  keywordListParameters: object[];
+  list: (schema: object) => object;
+  ref: (name: keyof typeof schemas) => object;
+};
+
+const latestCheckRunIdSchema = {
+  ...publicIdSchema("rcr"),
+  description: "Rank-check run that produced this check, or null for a legacy row.",
+  type: ["string", "null"],
+};
+
+export const keywordCheckStateSchemas = {
+  KeywordLatestCheck: {
+    description:
+      'The most recent executed check of any status. A completed check with `position: null` can have unknown coverage; read `observation_completeness` before inferring absence within the requested depth; `latest_check.status: "failed"` means "unknown, the check did not run to completion".',
+    properties: {
+      checked_at: { format: "date-time", type: "string" },
+      error: { type: ["string", "null"] },
+      error_code: { type: ["string", "null"] },
+      id: publicIdSchema("check"),
+      observation_completeness: {
+        description:
+          "Persisted coverage, or null when legacy metadata is absent. Only complete coverage supports absence within depth; a valid positive rank remains valid with truncated coverage.",
+        enum: ["complete", "truncated_by_stop_on_match", "unknown", null],
+        type: ["string", "null"],
+        ...openEnum("ObservationCompleteness"),
+      },
+      position: { type: ["integer", "null"] },
+      run_id: latestCheckRunIdSchema,
+      status: {
+        enum: ["completed", "failed", "running"],
+        type: "string",
+        ...openEnum("RankCheckStatus"),
+      },
+    },
+    required: [
+      "checked_at",
+      "error",
+      "error_code",
+      "id",
+      "observation_completeness",
+      "position",
+      "run_id",
+      "status",
+    ],
+    type: ["object", "null"],
+  },
+  KeywordLatestSuccessfulCheck: {
+    description:
+      "The most recent completed check. Null position with unknown observation_completeness does not establish absence within depth.",
+    properties: {
+      checked_at: { format: "date-time", type: "string" },
+      id: publicIdSchema("check"),
+      observation_completeness: {
+        description:
+          "Persisted coverage, or null when legacy metadata is absent. Only complete coverage supports absence within depth; a valid positive rank remains valid with truncated coverage.",
+        enum: ["complete", "truncated_by_stop_on_match", "unknown", null],
+        type: ["string", "null"],
+        ...openEnum("ObservationCompleteness"),
+      },
+      position: { type: ["integer", "null"] },
+      ranking_url: { type: ["string", "null"] },
+      run_id: latestCheckRunIdSchema,
+    },
+    required: ["checked_at", "id", "observation_completeness", "position", "ranking_url", "run_id"],
+    type: ["object", "null"],
+  },
+};
+
+export const keywordMatchSchemas = {
+  KeywordMatch: {
+    properties: {
+      keyword_id: publicIdSchema("kw"),
+      latest_position: { type: ["integer", "null"] },
+      matched_text: {
+        description: "Trimmed, lowercase request text used to match this keyword.",
+        example: "headless cms",
+        type: "string",
+      },
+      market: { $ref: "#/components/schemas/KeywordMatchMarket" },
+      previous_position: { type: ["integer", "null"] },
+      ranking_url: {
+        description:
+          "Ranking URL from the most recent executed check, or null when that check has no ranking URL or no check exists. Fetch the keyword resource to read latest_successful_check for the most recent completed observation and its coverage.",
+        type: ["string", "null"],
+      },
+      text: {
+        description:
+          "Stored keyword text, which can differ from matched_text in case and whitespace.",
+        example: "Headless CMS",
+        type: "string",
+      },
+    },
+    required: [
+      "keyword_id",
+      "matched_text",
+      "text",
+      "market",
+      "latest_position",
+      "previous_position",
+      "ranking_url",
+    ],
+    type: "object",
+  },
+  KeywordMatchMarket: {
+    properties: {
+      country_code: { example: "US", type: "string" },
+      device: { enum: ["desktop", "mobile"], type: "string" },
+      language_code: { example: "en", type: "string" },
+      language_label: { example: "English", type: "string" },
+      location: { example: "United States", type: "string" },
+      location_key: { example: "ES/Andalusia/Malaga@en", type: "string" },
+    },
+    required: [
+      "location",
+      "location_key",
+      "country_code",
+      "language_code",
+      "language_label",
+      "device",
+    ],
+    type: "object",
+  },
+  KeywordMatchRequest: {
+    properties: {
+      texts: {
+        items: { maxLength: KEYWORD_TEXT_MAX, minLength: 1, type: "string" },
+        maxItems: KEYWORD_MATCH_MAX_TEXTS,
+        minItems: 1,
+        type: "array",
+      },
+    },
+    required: ["texts"],
+    type: "object",
+  },
+  KeywordMatchResponse: {
+    properties: {
+      data: {
+        items: { $ref: "#/components/schemas/KeywordMatch" },
+        type: "array",
+      },
+      meta: {
+        properties: {
+          truncated_texts: {
+            description:
+              "Normalized texts with more than 100 matching markets. Their returned rows are partial.",
+            items: { type: "string" },
+            type: "array",
+          },
+        },
+        required: ["truncated_texts"],
+        type: "object",
+      },
+    },
+    required: ["data", "meta"],
+    type: "object",
+  },
+};
+
+export function keywordPaths({ bearer, keywordListParameters, list, ref }: KeywordPathHelpers) {
+  const keywordMutationResult = {
+    ...sdkName("KeywordCreateResult"),
+    type: "object",
+    properties: {
+      created: { type: "integer", minimum: 0 },
+      skipped: { type: "integer", minimum: 0 },
+      warnings: { type: "array", items: { type: "string" } },
+      results: {
+        type: "array",
+        items: {
+          ...sdkName("KeywordCreateItemResult"),
+          type: "object",
+          properties: {
+            keyword: ref("Keyword"),
+            status: {
+              type: "string",
+              enum: ["created", "skipped"],
+              ...openEnum("KeywordCreateStatus"),
+            },
+            warning: { type: "string" },
+          },
+          required: ["keyword", "status"],
+        },
+      },
+    },
+    required: ["created", "skipped", "results"],
+  };
+  const addOperation = withRequiredBody(
+    bearer("Add one or more keywords", "addKeywords", keywordMutationResult, keywordCreateRequest, [
+      { $ref: "#/components/parameters/IdempotencyKey" },
+    ]),
+  );
+  const matchOperation = bearer(
+    "Match exact tracked keyword texts across project markets",
+    "matchProjectKeywords",
+    ref("KeywordMatchResponse"),
+    ref("KeywordMatchRequest"),
+  );
+
+  return {
+    "/keywords/{keyword_id}": {
+      delete: bearer("Delete one keyword", "deleteKeyword", ref("Keyword")),
+      get: bearer("Get one keyword", "getKeyword", ref("Keyword")),
+      patch: bearer("Set keyword target URL or metadata", "setKeywordTargetUrl", ref("Keyword")),
+    },
+    "/keywords/bulk": {
+      post: withRequiredBody(
+        bearer(
+          "Bulk mutate keywords",
+          "bulkUpdateKeywords",
+          keywordBulkResponse,
+          keywordBulkRequest,
+          [{ $ref: "#/components/parameters/IdempotencyKey" }],
+        ),
+      ),
+    },
+    "/projects/{project_id}/keyword-matches": {
+      post: withRequiredBody(matchOperation),
+    },
+    "/projects/{project_id}/keywords": {
+      get: bearer(
+        "List project keywords",
+        "listKeywords",
+        list(ref("Keyword")),
+        undefined,
+        keywordListParameters,
+      ),
+      post: {
+        ...addOperation,
+        responses: {
+          ...(addOperation.responses as object),
+          "201": {
+            description: "At least one keyword created",
+            content: { "application/json": { schema: keywordMutationResult } },
+          },
+        },
+      },
+    },
+  };
+}

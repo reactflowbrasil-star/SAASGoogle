@@ -1,0 +1,376 @@
+import { renderWithAlertMessages as render } from "@/i18n/test-support/render-with-feature-messages";
+import type { AlertActionHandlers, TriggeredAlertFeedView } from "@/lib/alerts/alert-data";
+import { canProjectAction, canReadProjectAudit } from "@/lib/auth/capabilities";
+import type { Role } from "@/lib/generated/prisma/client";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import type { AnchorHTMLAttributes } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AlertsPageContent } from "./AlertsPageContent";
+import { keywordScopedAlertRule, makeAlertRule } from "./AlertsPageContent.fixtures";
+
+const mocks = vi.hoisted(() => ({
+  getAlertCtaTargets: vi.fn(),
+  markProjectAlertsRead: vi.fn(),
+  muteTriggeredAlert: vi.fn(),
+}));
+
+vi.mock("next/link", () => ({
+  default: ({ children, ...props }: AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a data-next-link {...props}>
+      {children}
+    </a>
+  ),
+}));
+
+vi.mock("@/lib/actions/alert-feed", () => ({
+  getAlertCtaTargets: mocks.getAlertCtaTargets,
+  markProjectAlertsRead: mocks.markProjectAlertsRead,
+  muteTriggeredAlert: mocks.muteTriggeredAlert,
+}));
+
+const actions: AlertActionHandlers = {
+  createAlertRuleAction: vi.fn(),
+  deleteAlertRuleAction: vi.fn(),
+  deleteWebhookEndpointAction: vi.fn(),
+  setAlertRuleEnabledAction: vi.fn(),
+  testWebhookEndpointAction: vi.fn(),
+  upsertWebhookEndpointAction: vi.fn(),
+  updateAlertRuleAction: vi.fn(),
+};
+
+const alerts: TriggeredAlertFeedView[] = [
+  {
+    afterPosition: 8,
+    beforePosition: 3,
+    condition: {
+      changePct: null,
+      competitorDomain: null,
+      dropPositions: 5,
+      serpFeature: null,
+      thresholdPosition: null,
+      topN: null,
+    },
+    conditionType: "position_drop",
+    deliveryAttempts: [
+      {
+        attemptedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
+        channel: "email",
+        error: "Email delivery has no enabled recipients.",
+        status: "failed",
+        webhookEndpoint: null,
+      },
+    ],
+    deliveryState: "dead_letter",
+    firedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+    id: "al_abcdefghijklmnopqrstuvwx",
+    keyword: "rank tracker",
+    device: "desktop",
+    rule: "Slipped",
+    severity: "urgent",
+    unread: true,
+  },
+];
+
+function renderAlerts({
+  firedInWindowCount = alerts.length,
+  gscConnected = false,
+  initialAlerts = alerts,
+  canCreate = true,
+  canDelete = true,
+  canManage = true,
+  canReadAudit = true,
+  canUpdate = true,
+  rules = [],
+  snoozedInWindowCount = 0,
+  templates = [],
+}: {
+  firedInWindowCount?: number;
+  gscConnected?: boolean;
+  initialAlerts?: TriggeredAlertFeedView[];
+  canCreate?: boolean;
+  canDelete?: boolean;
+  canManage?: boolean;
+  canReadAudit?: boolean;
+  canUpdate?: boolean;
+  rules?: Parameters<typeof AlertsPageContent>[0]["rules"];
+  snoozedInWindowCount?: number;
+  templates?: Parameters<typeof AlertsPageContent>[0]["templates"];
+} = {}) {
+  render(
+    <AlertsPageContent
+      actions={actions}
+      alerts={initialAlerts}
+      canCreate={canCreate}
+      canDelete={canDelete}
+      canManage={canManage}
+      canReadAudit={canReadAudit}
+      canUpdate={canUpdate}
+      firedInWindowCount={firedInWindowCount}
+      gscConnected={gscConnected}
+      gscInstallHref="/api/integrations/google/install?provider=gsc&projectId=prj_abcdefghijklmnopqrstuvwx"
+      hasTrackedKeywords
+      projectId="prj_abcdefghijklmnopqrstuvwx"
+      projectRef="prj_abcdefghijklmnopqrstuvwx"
+      rules={rules}
+      snoozedInWindowCount={snoozedInWindowCount}
+      targets={{ keywords: [], markets: [], members: [], tags: [] }}
+      templates={templates}
+    />,
+  );
+}
+
+describe("AlertsPageContent optimistic rollback", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.markProjectAlertsRead.mockResolvedValue({ updated: 1 });
+    mocks.muteTriggeredAlert.mockResolvedValue({ muted: true });
+  });
+
+  it("does not show the live evaluation caption", () => {
+    renderAlerts();
+
+    expect(
+      screen.queryByText(/rules evaluated after each completed rank check/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("rolls back mark-all-read state and surfaces the failure", async () => {
+    mocks.markProjectAlertsRead.mockRejectedValueOnce(new Error("failed"));
+    renderAlerts();
+
+    const markAllRead = screen.getByRole("button", { name: /mark all read/i });
+    fireEvent.click(markAllRead);
+
+    await waitFor(() =>
+      expect(screen.getByText("Could not mark alerts read. Try again.")).toBeInTheDocument(),
+    );
+    expect(markAllRead).not.toBeDisabled();
+  });
+
+  it("renders the triggering keyword's real location and device in the meta line", () => {
+    renderAlerts({
+      initialAlerts: [
+        {
+          ...alerts[0],
+          keyword: "rank tracker",
+          device: "mobile",
+          feedMeta: {
+            engine: "Google",
+            market: { id: "pmkt_warsaw", label: "Warsaw, Poland" },
+            severity: "urgent",
+            source: "RANK",
+          },
+        },
+      ],
+    });
+
+    expect(screen.getByText("Rank tracking")).toBeInTheDocument();
+    expect(screen.getByText("Warsaw, Poland")).toBeInTheDocument();
+    expect(screen.getByText("Mobile")).toBeInTheDocument();
+    expect(screen.queryByText("/", { exact: true })).toBeNull();
+  });
+
+  it("renders distinct meta lines for alerts with different keyword markets", () => {
+    renderAlerts({
+      initialAlerts: [
+        {
+          ...alerts[0],
+          id: "al_aaaaaaaaaaaaaaaaaaaaaaaa",
+          keyword: "rank tracker",
+          device: "mobile",
+          feedMeta: {
+            engine: "Google",
+            market: { id: "pmkt_warsaw", label: "Warsaw, Poland" },
+            severity: "urgent",
+            source: "RANK",
+          },
+        },
+        {
+          ...alerts[0],
+          id: "al_bbbbbbbbbbbbbbbbbbbbbbbb",
+          keyword: "best CRM",
+          device: "desktop",
+          feedMeta: {
+            engine: "Google",
+            market: { id: "pmkt_london", label: "London, United Kingdom" },
+            severity: "urgent",
+            source: "RANK",
+          },
+        },
+      ],
+    });
+
+    expect(screen.getByText("Warsaw, Poland")).toBeInTheDocument();
+    expect(screen.getByText("London, United Kingdom")).toBeInTheDocument();
+    expect(screen.getByText("Desktop")).toBeInTheDocument();
+  });
+
+  it("renders the terminal delivery state and its affected channel", () => {
+    renderAlerts();
+
+    expect(screen.getByText("Delivery: Failed / dead letter")).toBeInTheDocument();
+    expect(
+      screen.getByText("Email Failed: Email delivery has no enabled recipients. / 4m ago"),
+    ).toBeInTheDocument();
+  });
+
+  it("identifies the webhook endpoint in the delivery log", () => {
+    renderAlerts({
+      initialAlerts: [
+        {
+          ...alerts[0],
+          deliveryAttempts: [
+            {
+              attemptedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
+              channel: "webhook",
+              error: null,
+              status: "sent",
+              webhookEndpoint: { id: "we_abcdefghijklmnopqrstuvwx", label: "Primary alerts" },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(screen.getByText("Webhook Sent (Primary alerts) / 4m ago")).toBeInTheDocument();
+  });
+
+  it("labels a removed webhook endpoint without exposing its former id", () => {
+    renderAlerts({
+      initialAlerts: [
+        {
+          ...alerts[0],
+          deliveryAttempts: [
+            {
+              attemptedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
+              channel: "webhook",
+              error: "Endpoint removed after delivery.",
+              status: "failed",
+              webhookEndpoint: null,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(
+      screen.getByText(
+        "Webhook Failed (Deleted endpoint): Endpoint removed after delivery. / 4m ago",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("restores a snoozed row and surfaces the failure", async () => {
+    mocks.muteTriggeredAlert.mockRejectedValueOnce(new Error("failed"));
+    renderAlerts();
+
+    fireEvent.click(screen.getByRole("button", { name: /snooze/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Could not snooze alert. Try again.")).toBeInTheDocument(),
+    );
+    expect(screen.getByText("rank tracker dropped 5 positions")).toBeInTheDocument();
+  });
+
+  it("does not report all clear after the last visible alert is snoozed", async () => {
+    renderAlerts();
+
+    fireEvent.click(screen.getByRole("button", { name: /snooze/i }));
+
+    expect(await screen.findByText("All caught up")).toBeInTheDocument();
+    expect(screen.getByText(/1 alert snoozed in the last 48 hours/i)).toBeInTheDocument();
+    expect(screen.queryByText("All clear")).not.toBeInTheDocument();
+  });
+
+  it("states only the known active-rule count in the all-clear state", () => {
+    const rule = keywordScopedAlertRule;
+
+    renderAlerts({ firedInWindowCount: 0, initialAlerts: [], rules: [rule] });
+
+    expect(screen.getByText(/you have 1 active rule/i)).toBeInTheDocument();
+    expect(screen.queryByText(/every tracked keyword/i)).not.toBeInTheDocument();
+    expect(screen.getByText("won't fire below top 10")).toBeInTheDocument();
+  });
+
+  it("renders template buttons without decorative SVG icons", () => {
+    const templateLabels = ["Dropped more than 3", "Slipped", "Entered top 3"];
+    renderAlerts({
+      templates: [
+        { id: "positiondrop", label: templateLabels[0], severity: "warning" },
+        { id: "slipped", label: templateLabels[1], severity: "urgent" },
+        { id: "top3", label: templateLabels[2], severity: "info" },
+      ],
+    });
+
+    for (const label of templateLabels) {
+      expect(screen.getByRole("button", { name: label }).querySelector("svg")).toBeNull();
+    }
+  });
+
+  it("disables the CTR template and links its requirement when GSC is disconnected", () => {
+    renderAlerts({
+      gscConnected: false,
+      templates: [
+        { id: "ctr", label: "CTR drop (GSC)", requirement: "Requires GSC", severity: "warning" },
+      ],
+    });
+
+    expect(screen.getByRole("button", { name: "CTR drop (GSC)" })).toBeDisabled();
+    const requirementLink = screen.getByRole("link", { name: "Requires GSC" });
+    expect(requirementLink).toHaveAttribute(
+      "href",
+      "/api/integrations/google/install?provider=gsc&projectId=prj_abcdefghijklmnopqrstuvwx",
+    );
+    expect(requirementLink).not.toHaveAttribute("data-next-link");
+  });
+
+  it("enables the CTR template without a requirement link when GSC is connected", () => {
+    renderAlerts({
+      gscConnected: true,
+      templates: [
+        { id: "ctr", label: "CTR drop (GSC)", requirement: "Requires GSC", severity: "warning" },
+      ],
+    });
+
+    expect(screen.getByRole("button", { name: "CTR drop (GSC)" })).toBeEnabled();
+    expect(screen.queryByRole("link", { name: "Requires GSC" })).not.toBeInTheDocument();
+  });
+
+  it.each(["viewer", "auditor", "member", "admin", "owner"] satisfies Role[])(
+    "renders audit navigation for the %s role at the audit threshold",
+    (role) => {
+      const canReadAudit = canReadProjectAudit(role);
+
+      renderAlerts({ canReadAudit });
+
+      expect(Boolean(screen.queryByRole("link", { name: "View audit log" }))).toBe(canReadAudit);
+    },
+  );
+
+  it.each(["viewer", "auditor", "member", "admin", "owner"] satisfies Role[])(
+    "renders alert mutation affordances for the %s role at the matrix threshold",
+    (role) => {
+      const rule = makeAlertRule();
+      const canCreate = canProjectAction(role, "create", "alert_rule");
+      const canUpdate = canProjectAction(role, "update", "alert_rule");
+      const canDelete = canProjectAction(role, "delete", "alert_rule");
+
+      renderAlerts({
+        canCreate,
+        canDelete,
+        canManage: canProjectAction(role, "manage", "webhook_endpoint"),
+        canUpdate,
+        firedInWindowCount: 0,
+        initialAlerts: [],
+        rules: [rule],
+      });
+
+      expect(screen.queryAllByRole("button", { name: "New rule" }).length > 0).toBe(canCreate);
+      expect(Boolean(screen.queryByRole("switch", { name: "Pause rule" }))).toBe(canUpdate);
+      expect(Boolean(screen.queryByRole("button", { name: "Edit Ranking drop" }))).toBe(canUpdate);
+      expect(Boolean(screen.queryByRole("button", { name: "Delete Ranking drop" }))).toBe(
+        canDelete,
+      );
+    },
+  );
+});

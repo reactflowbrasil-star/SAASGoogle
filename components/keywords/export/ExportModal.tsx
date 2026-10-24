@@ -1,0 +1,278 @@
+"use client";
+
+import { useSharedErrorMessages } from "@/components/i18n/useSharedErrorMessages";
+import type { KeywordExportTarget } from "@/components/keywords/export-target-model";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { exportKeywords } from "@/lib/actions/keyword-export-action";
+import { zodResolver } from "@/lib/forms/zod-resolver";
+import { downloadBlob } from "@/lib/ui/download";
+import { ArrowsClockwiseIcon as ArrowsClockwise } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
+import { CheckIcon as Check } from "@phosphor-icons/react/dist/csr/Check";
+import { DownloadSimpleIcon as DownloadSimple } from "@phosphor-icons/react/dist/csr/DownloadSimple";
+import { LockSimpleIcon as LockSimple } from "@phosphor-icons/react/dist/csr/LockSimple";
+import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+import { ExportHistoryOptions } from "./ExportHistoryOptions";
+import {
+  ExportOptionRow,
+  exportColumns,
+  exportFormats,
+  exportScopes,
+  useExportModalPresentation,
+} from "./ExportModalParts";
+import { exportFailureMessage } from "./export-action-error";
+import { historyActionFields } from "./export-history-request";
+
+const exportSchema = z.object({
+  columns: z.record(z.enum(exportColumns), z.boolean()),
+  format: z.enum(exportFormats),
+  granularity: z.enum(["daily", "weekly"]),
+  historyVersion: z.enum(["1", "2"]),
+  stream: z.enum(["observations", "attempts"]),
+  range: z.enum(["30", "90", "all"]),
+  scope: z.enum(exportScopes),
+});
+
+type ExportValues = z.infer<typeof exportSchema>;
+type ExportFile = Awaited<ReturnType<typeof exportKeywords>>;
+
+type ExportModalProps = {
+  onClose: () => void;
+  open: boolean;
+  projectId?: string;
+  target: KeywordExportTarget;
+};
+
+function exportContent(file: ExportFile) {
+  if (file.encoding !== "base64") return file.content;
+  const binary = atob(file.content);
+  return Uint8Array.from(binary, (char) => char.codePointAt(0) ?? 0);
+}
+
+function downloadExport(file: ExportFile) {
+  downloadBlob(new Blob([exportContent(file)], { type: file.mimeType }), file.filename);
+}
+
+export function ExportModal({ onClose, open, projectId, target }: Readonly<ExportModalProps>) {
+  const { columnLabels, formatOptions, scopeOptions, t } = useExportModalPresentation();
+  const sharedErrors = useSharedErrorMessages();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const {
+    formState: { isSubmitting },
+    handleSubmit,
+    register,
+    setValue,
+    watch,
+  } = useForm<ExportValues>({
+    defaultValues: {
+      columns: {
+        change: false,
+        country: true,
+        device: true,
+        intent: true,
+        tags: true,
+        topic: true,
+        url: true,
+      },
+      format: "csv",
+      granularity: "daily",
+      historyVersion: "1",
+      stream: "observations",
+      range: "30",
+      scope: "current",
+    },
+    resolver: zodResolver(exportSchema),
+  });
+  const values = watch();
+  const report = values.scope === "history" && values.historyVersion === "2";
+  const ctaLabel = t("export", { format: values.format.toUpperCase() });
+  const subtitle =
+    target.selection.mode === "all"
+      ? t("targetAll")
+      : target.selection.mode === "query"
+        ? t("targetFiltered", { count: target.count })
+        : t("targetSelected", { count: target.count });
+  async function submit(formValues: ExportValues) {
+    setActionError(null);
+    try {
+      const file = await exportKeywords({
+        ...formValues,
+        ...historyActionFields(formValues),
+        selection: target.selection,
+        projectId,
+      });
+      downloadExport(file);
+      onClose();
+    } catch (error) {
+      setActionError(exportFailureMessage(error, sharedErrors, t));
+    }
+  }
+
+  return (
+    <Modal
+      footer={
+        <>
+          <Button disabled={isSubmitting} onClick={onClose} type="button" variant="ghost">
+            {t("cancel")}
+          </Button>
+          <Button
+            form="export-keywords"
+            loading={isSubmitting}
+            loadingLabel={t("exporting")}
+            startIcon={<DownloadSimple size={15} weight="regular" />}
+            type="submit"
+          >
+            {ctaLabel}
+          </Button>
+        </>
+      }
+      headerDivider
+      onClose={onClose}
+      open={open}
+      size="md"
+      title={
+        <span className="block">
+          <span className="block">{t("title")}</span>
+          <span className="mt-1 block text-[12.5px] font-normal tracking-normal text-fg-muted">
+            {subtitle}
+          </span>
+        </span>
+      }
+    >
+      <form className="grid gap-4.5" id="export-keywords" onSubmit={handleSubmit(submit)}>
+        <input type="hidden" {...register("range")} />
+        <input type="hidden" {...register("granularity")} />
+        <input type="hidden" {...register("historyVersion")} />
+        <input type="hidden" {...register("stream")} />
+        <div>
+          <div className="font-sans tabular-nums text-[10px] uppercase tracking-[0.5px] text-fg-muted">
+            {t("format")}
+          </div>
+          <div className="mt-[9px] grid gap-[7px]">
+            {formatOptions.map((option) => {
+              const Icon = option.icon;
+              const active = values.format === option.id;
+              return (
+                <ExportOptionRow
+                  active={active}
+                  key={option.id}
+                  onClick={() => setValue("format", option.id)}
+                >
+                  <span
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-control"
+                    style={{
+                      backgroundColor: `color-mix(in srgb, var(--${option.tint}) 13%, transparent)`,
+                      color: `var(--${option.tint})`,
+                    }}
+                  >
+                    <Icon size={20} weight="regular" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-[7px]">
+                      <span className="text-[13.5px] font-semibold text-fg">{option.name}</span>
+                      <span className="rounded-control bg-bg-sunken px-1.5 py-px font-sans tabular-nums text-[10px] text-fg-muted">
+                        {option.ext}
+                      </span>
+                    </span>
+                    <span className="mt-0.5 block text-[11.5px] text-fg-muted">{option.desc}</span>
+                  </span>
+                </ExportOptionRow>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <div className="font-sans tabular-nums text-[10px] uppercase tracking-[0.5px] text-fg-muted">
+            {t("data")}
+          </div>
+          <div className="mt-[9px] grid gap-[7px]">
+            {scopeOptions.map((option) => {
+              const Icon = option.icon;
+              const active = values.scope === option.id;
+              return (
+                <ExportOptionRow
+                  active={active}
+                  key={option.id}
+                  onClick={() => setValue("scope", option.id)}
+                >
+                  <Icon
+                    className={active ? "text-accent-text" : "text-fg-muted"}
+                    size={18}
+                    weight="regular"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13.5px] font-semibold text-fg">{option.name}</span>
+                    <span className="mt-0.5 block text-[11.5px] text-fg-muted">{option.desc}</span>
+                  </span>
+                </ExportOptionRow>
+              );
+            })}
+          </div>
+          {values.scope === "history" ? (
+            <ExportHistoryOptions
+              values={values}
+              onRangeChange={(value) => setValue("range", value)}
+              onGranularityChange={(value) => setValue("granularity", value)}
+              onVersionChange={(value) => setValue("historyVersion", value)}
+              onStreamChange={(value) => setValue("stream", value)}
+            />
+          ) : null}
+        </div>
+
+        {!report ? (
+          <div>
+            <div className="font-sans tabular-nums text-[10px] uppercase tracking-[0.5px] text-fg-muted">
+              {t("columns")}
+            </div>
+            <div className="mt-[9px] grid grid-cols-2 gap-[7px]">
+              <div className="inline-flex items-center gap-[9px] rounded-control border border-border bg-bg px-2.5 py-2">
+                <span className="grid h-[17px] w-[17px] place-items-center rounded-control bg-accent-solid text-accent-on-solid">
+                  <LockSimple size={10} weight="regular" />
+                </span>
+                <span className="flex-1 text-[12.5px] text-fg">{t("keywordAndPosition")}</span>
+                <span className="font-sans tabular-nums text-[9px] uppercase tracking-[0.4px] text-fg-muted">
+                  {t("always")}
+                </span>
+              </div>
+              {exportColumns.map((column) => {
+                const active = values.columns[column];
+                return (
+                  <button
+                    className="inline-flex items-center gap-[9px] rounded-control border border-border bg-bg-elev px-2.5 py-2 text-left outline-none hover:border-accent focus-visible:border-accent"
+                    key={column}
+                    onClick={() => setValue(`columns.${column}`, !active)}
+                    type="button"
+                  >
+                    <span
+                      className="grid h-[17px] w-[17px] place-items-center rounded-control border-[1.5px]"
+                      style={{
+                        backgroundColor: active ? "var(--accent)" : "var(--bg-elev)",
+                        borderColor: active ? "var(--accent)" : "var(--border)",
+                      }}
+                    >
+                      {active ? <Check className="text-white" size={11} weight="regular" /> : null}
+                    </span>
+                    <span className="text-[12.5px] text-fg">{columnLabels[column]}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="flex items-center gap-[9px] rounded-control border border-dashed border-border bg-transparent px-[13px] py-[11px]">
+          <ArrowsClockwise weight="regular" className="shrink-0 text-accent-text" size={15} />
+          <span className="text-[11.5px] leading-[1.45] text-fg-muted">
+            {t(report ? "reportFileFormatNote" : "fileFormatNote")}
+          </span>
+        </div>
+        {actionError ? (
+          <p className="m-0 font-sans tabular-nums text-[11.5px] text-red-text">{actionError}</p>
+        ) : null}
+      </form>
+    </Modal>
+  );
+}

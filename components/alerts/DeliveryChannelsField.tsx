@@ -1,0 +1,130 @@
+"use client";
+
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Tooltip } from "@/components/ui/Tooltip";
+import type { NewRuleForm } from "@/lib/alerts/new-rule-data";
+import type { AlertChannelInput } from "@/lib/alerts/schema";
+import { BellIcon as Bell } from "@phosphor-icons/react/dist/csr/Bell";
+import { EnvelopeSimpleIcon as EnvelopeSimple } from "@phosphor-icons/react/dist/csr/EnvelopeSimple";
+import { LockSimpleIcon as LockSimple } from "@phosphor-icons/react/dist/csr/LockSimple";
+import { SlackLogoIcon as SlackLogo } from "@phosphor-icons/react/dist/csr/SlackLogo";
+import { WebhooksLogoIcon as WebhooksLogo } from "@phosphor-icons/react/dist/csr/WebhooksLogo";
+import type { Icon } from "@phosphor-icons/react/lib";
+import { useTranslations } from "next-intl";
+import type { UseFormRegister, UseFormSetValue, UseFormWatch } from "react-hook-form";
+
+type DeliveryChannelsFieldProps = {
+  register: UseFormRegister<NewRuleForm>;
+  setValue: UseFormSetValue<NewRuleForm>;
+  watch: UseFormWatch<NewRuleForm>;
+};
+
+export function DeliveryChannelsField({
+  register,
+  setValue,
+  watch,
+}: Readonly<DeliveryChannelsFieldProps>) {
+  const t = useTranslations("projectAlerts.drawer");
+  const channels = watch("channels") ?? [];
+  const deliveryChannels = [
+    { Icon: EnvelopeSimple, label: t("email"), name: "email" },
+    { Icon: SlackLogo, label: t("slack"), name: "slack" },
+    { Icon: WebhooksLogo, label: t("webhook"), name: "webhook" },
+  ] satisfies { Icon: Icon; label: string; name: AlertChannelInput }[];
+
+  function toggleChannel(channel: AlertChannelInput) {
+    const next = channels.includes(channel)
+      ? channels.filter((item) => item !== channel)
+      : [...channels, channel];
+
+    setValue("channels", next, { shouldDirty: true, shouldValidate: true });
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <label
+        className="flex cursor-default items-center gap-[11px] rounded-control border border-accent bg-accent-soft px-[13px] py-[11px]"
+        htmlFor="delivery-channel-feed"
+      >
+        <Checkbox
+          aria-label={t("inAppFeed")}
+          checked
+          id="delivery-channel-feed"
+          readOnly
+          tabIndex={-1}
+        />
+        <Bell
+          aria-hidden
+          className="text-accent-text"
+          data-testid="delivery-channel-feed-icon"
+          size={15}
+          weight="regular"
+        />
+        <span className="flex-1 text-[13px] font-semibold">{t("inAppFeed")}</span>
+        <span className="font-sans tabular-nums text-[10px] text-accent-text">{t("alwaysOn")}</span>
+      </label>
+      {deliveryChannels.map(({ Icon, label, name }) => {
+        const checked = channels.includes(name);
+        const unavailable = name === "slack";
+
+        return (
+          <label
+            className={`flex items-center gap-[11px] rounded-control border px-[13px] py-[11px] transition-colors ${
+              unavailable
+                ? "cursor-not-allowed border-border-control bg-transparent text-fg-muted"
+                : checked
+                  ? "border-accent bg-accent-soft"
+                  : "cursor-pointer border-border-control bg-bg-elev hover:border-accent"
+            }`}
+            htmlFor={`delivery-channel-${name}`}
+            key={name}
+          >
+            {unavailable ? (
+              <Checkbox
+                aria-label={label}
+                checked={checked}
+                disabled
+                id={`delivery-channel-${name}`}
+                readOnly
+              />
+            ) : (
+              <Checkbox
+                aria-label={label}
+                id={`delivery-channel-${name}`}
+                value={name}
+                {...register("channels")}
+                checked={checked}
+                onChange={() => toggleChannel(name)}
+              />
+            )}
+            <Icon
+              aria-hidden
+              className={
+                unavailable ? "text-fg-muted" : checked ? "text-accent-text" : "text-fg-muted"
+              }
+              size={15}
+              weight="regular"
+            />
+            <span className="flex-1 text-[13px] font-semibold">{label}</span>
+            {unavailable ? (
+              <Tooltip content={t("slackUnavailable")}>
+                <span
+                  aria-label={`${label} ${t("slackUnavailable")}`}
+                  className="inline-flex text-fg-muted"
+                >
+                  <LockSimple aria-hidden size={13} weight="regular" />
+                </span>
+              </Tooltip>
+            ) : (
+              <span
+                className={`font-sans tabular-nums text-[10px] ${checked ? "text-accent-text" : "text-fg-muted"}`}
+              >
+                {checked ? t("selected") : t("optional")}
+              </span>
+            )}
+          </label>
+        );
+      })}
+    </div>
+  );
+}

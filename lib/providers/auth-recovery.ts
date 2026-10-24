@@ -1,0 +1,69 @@
+import "server-only";
+
+import { prisma } from "@/lib/db/prisma";
+import { lockProjectForProviderMutation } from "@/lib/provider-allocations/project-lock";
+import { resolveProviderCredentialsWithOverrides } from "@/lib/providers/credentials";
+import type { ProviderCredentials } from "@/lib/providers/types";
+import type { TestProviderConnectionInput } from "@/lib/schemas/provider";
+import { firstSyncIntentOnConnect } from "@/lib/traffic/first-sync-intent-state";
+import { publishWorkerIntent } from "@/lib/worker-intents/realtime";
+
+export async function credentialsForProviderTest(
+  projectId: string,
+  providerId: string,
+  inputCredentials: ProviderCredentials,
+) {
+  const connection = await prisma.providerConnection.findUnique({
+    select: { credentialSource: true, credentialsEncrypted: true },
+    where: { projectId_provider: { projectId, provider: providerId } },
+  });
+  if (connection?.credentialSource === "hosted") return inputCredentials;
+  return resolveProviderCredentialsWithOverrides(
+    providerId,
+    connection?.credentialsEncrypted,
+    inputCredentials,
+  );
+}
+
+function hasCredentialOverride(input: TestProviderConnectionInput) {
+  return Boolean(
+    input.login ||
+      input.secret ||
+      input.credentials?.apiKey ||
+      input.credentials?.endpoint ||
+      input.credentials?.login ||
+      input.credentials?.secret,
+  );
+}
+
+export async function restoreProviderAfterSuccessfulTest(input: {
+  ok: boolean;
+  projectId: string;
+  providerId: string;
+  testInput: TestProviderConnectionInput;
+}) {
+  if (!input.ok || hasCredentialOverride(input.testInput)) return false;
+  const restored = await prisma.$transaction(async (tx) => {
+    await lockProjectForProviderMutation(tx, input.projectId);
+    const current = await tx.providerConnection.findUnique({
+      where: {
+        projectId_provider: { projectId: input.projectId, provider: input.providerId },
+      },
+    });
+    if (current?.status !== "needs_reauth") return { count: 0 };
+    if (current.credentialSource === "hosted") return { count: 0 };
+    const syncIntent = firstSyncIntentOnConnect(
+      current,
+      { ...current, status: "connected" },
+      new Date(),
+    );
+    const result = await tx.providerConnection.updateMany({
+      data: { status: "connected", ...syncIntent },
+      where: { id: current.id, status: "needs_reauth" },
+    });
+    return { ...result, shouldWake: result.count > 0 && "firstSyncRequestedAt" in syncIntent };
+  });
+  if ("shouldWake" in restored && restored.shouldWake)
+    void publishWorkerIntent("traffic_first_sync").catch(() => undefined);
+  return restored.count > 0;
+}

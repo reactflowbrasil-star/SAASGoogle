@@ -1,0 +1,307 @@
+import { renderWithProjectRankTrackerMessages as render } from "@/i18n/test-support/render-with-feature-messages";
+import type { KeywordLocation, KeywordRow } from "@/lib/queries/keywords";
+import { keywordLocation, locationSearchWireCandidate } from "@/lib/test/fixtures/location";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { KeywordInlineEdit } from "./KeywordInlineEdit";
+
+// The location typeahead fetches /api/locations/search; never hit the network in tests.
+const fetchMock = vi.fn(async () => ({
+  ok: true,
+  json: async () => ({ data: [] }),
+}));
+vi.stubGlobal("fetch", fetchMock);
+
+afterEach(() => {
+  fetchMock.mockClear();
+});
+
+function mockLocations(items: unknown[]) {
+  fetchMock.mockResolvedValueOnce({
+    ok: true,
+    json: async () => ({ data: items }),
+  } as Response);
+}
+
+function location(overrides: Partial<KeywordLocation> = {}): KeywordLocation {
+  return keywordLocation(overrides);
+}
+
+function keyword(overrides: Partial<KeywordRow> = {}): KeywordRow {
+  const loc = overrides.location ?? location();
+  return {
+    bestPosition: 3,
+    cpc: "0.00",
+    checkState: "ranked",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    dataAsOfAt: "2026-01-01T00:00:00.000Z",
+    dataProvider: "primary",
+    device: "Desktop",
+    difficulty: 0,
+    engine: "Google",
+    hasRankData: true,
+    id: "kw_1",
+    keyword: "rank tracker",
+    lastCheckAt: null,
+    lastCheckErrorCode: null,
+    lastCheckStatus: null,
+    latestAttemptHealth: "ok",
+    location: loc,
+    locationName: loc.displayName,
+    position: 3,
+    positionHistory: [],
+    previousPosition: 4,
+    rankingPages: 1,
+    rankingPath: "/",
+    rankingUrl: "https://example.com/",
+    rankingUrlHistory: [],
+    schedule: {
+      cron_expression: null,
+      frequency: "daily",
+      jitter_minutes: 60,
+      last_checked_at: null,
+      next_check_at: null,
+      timezone: "UTC",
+    },
+    serpFeatures: [],
+    sparkline: [],
+    tags: [],
+    targetUrl: null,
+    topic: null,
+    intent: null,
+    volume: 0,
+    ...overrides,
+    clicks: overrides.clicks ?? null,
+    ctr: overrides.ctr ?? null,
+    impressions: overrides.impressions ?? null,
+    positionBaseline: overrides.positionBaseline === undefined ? 4 : overrides.positionBaseline,
+    positionHistoryBoundaryAt: overrides.positionHistoryBoundaryAt ?? null,
+  };
+}
+
+describe("KeywordInlineEdit", () => {
+  it("provides help for editable keyword fields", () => {
+    render(
+      <KeywordInlineEdit keyword={keyword()} onSaved={vi.fn()} updateKeywordAction={vi.fn()} />,
+    );
+
+    const help = [
+      "The exact search query being tracked.",
+      "The page you expect to rank. Used to highlight when a different URL ranks instead.",
+      "Desktop and mobile results often differ - each device is checked separately.",
+      "Country or city the search results are localized to.",
+      "Free-form grouping label for filtering and reporting.",
+      "Search intent category (informational, transactional, ...) for filtering and reporting.",
+      "Comma-separated labels for filtering; not sent to providers.",
+    ];
+
+    for (const text of help) {
+      expect(screen.getByRole("button", { name: text })).toBeInTheDocument();
+    }
+
+    const tags = screen.getByLabelText("Tags");
+    expect(tags).toHaveAttribute("id");
+    expect(screen.getByText("Tags")).toHaveAttribute("for", tags.getAttribute("id"));
+  });
+
+  it("renders the location field and does not rewrite location when untouched", async () => {
+    const updateKeywordAction = vi.fn();
+    const onSaved = vi.fn();
+
+    render(
+      <KeywordInlineEdit
+        keyword={keyword()}
+        onSaved={onSaved}
+        updateKeywordAction={updateKeywordAction}
+      />,
+    );
+
+    expect(screen.getByRole("combobox", { name: /location/i })).toHaveDisplayValue("United States");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(updateKeywordAction).toHaveBeenCalledTimes(1);
+    });
+    expect(updateKeywordAction.mock.calls[0][0]).not.toHaveProperty("location");
+    expect(updateKeywordAction.mock.calls[0][0]).not.toHaveProperty("locationKey");
+    expect(onSaved).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts from the stored target URL and omits it when unchanged", async () => {
+    const updateKeywordAction = vi.fn();
+
+    render(
+      <KeywordInlineEdit
+        keyword={keyword({
+          rankingPath: "/ranking-now",
+          rankingUrl: "https://example.com/ranking-now",
+          targetUrl: "https://example.com/canonical-target",
+        })}
+        onSaved={vi.fn()}
+        updateKeywordAction={updateKeywordAction}
+      />,
+    );
+
+    expect(screen.getByLabelText("Target URL")).toHaveDisplayValue(
+      "https://example.com/canonical-target",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(updateKeywordAction).toHaveBeenCalledTimes(1);
+    });
+    expect(updateKeywordAction.mock.calls[0][0]).not.toHaveProperty("targetUrl");
+  });
+
+  it("renders topic and intent fields and submits their values", async () => {
+    const updateKeywordAction = vi.fn();
+
+    render(
+      <KeywordInlineEdit
+        keyword={keyword({ intent: "commercial", topic: "Product" })}
+        onSaved={vi.fn()}
+        updateKeywordAction={updateKeywordAction}
+      />,
+    );
+
+    expect(screen.getByLabelText("Topic")).toHaveDisplayValue("Product");
+    expect(screen.getByLabelText("Intent")).toHaveDisplayValue("commercial");
+
+    fireEvent.change(screen.getByLabelText("Topic"), {
+      target: { value: "Docs" },
+    });
+    fireEvent.change(screen.getByLabelText("Intent"), {
+      target: { value: "informational" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(updateKeywordAction).toHaveBeenCalledWith(
+        expect.objectContaining({ intent: "informational", topic: "Docs" }),
+      );
+    });
+  });
+
+  it("sends the selected country canonical key when the country is changed", async () => {
+    const updateKeywordAction = vi.fn();
+    mockLocations([
+      locationSearchWireCandidate({
+        canonical_key: "DE",
+        country_code: "DE",
+        display_name: "Germany",
+        id: "country:DE",
+      }),
+    ]);
+
+    render(
+      <KeywordInlineEdit
+        keyword={keyword()}
+        onSaved={vi.fn()}
+        updateKeywordAction={updateKeywordAction}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("combobox", { name: /location/i }), {
+      target: { value: "ger" },
+    });
+    fireEvent.click(await screen.findByText("Germany"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(updateKeywordAction).toHaveBeenCalledWith(
+        expect.objectContaining({ locationKey: "DE" }),
+      );
+    });
+    expect(updateKeywordAction.mock.calls[0][0]).not.toHaveProperty("location");
+  });
+
+  it("sends the selected city canonical key when the city is changed", async () => {
+    const updateKeywordAction = vi.fn();
+    mockLocations([
+      locationSearchWireCandidate({
+        canonical_key: "US/Texas/Austin",
+        city_name: "Austin",
+        country_code: "US",
+        display_name: "Austin, Texas, United States",
+        id: "location:US/Texas/Austin",
+        kind: "city",
+        region_code: "US-TX",
+        region_name: "Texas",
+      }),
+    ]);
+
+    render(
+      <KeywordInlineEdit
+        keyword={keyword()}
+        onSaved={vi.fn()}
+        projectId="prj_1"
+        updateKeywordAction={updateKeywordAction}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("combobox", { name: /location/i }), {
+      target: { value: "aus" },
+    });
+    fireEvent.click(await screen.findByText("Austin"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(updateKeywordAction).toHaveBeenCalledWith(
+        expect.objectContaining({ locationKey: "US/Texas/Austin" }),
+      );
+    });
+  });
+  it.each(["/alternatives", "https://example.com/alternatives", ""])(
+    "saves target %s without changing keyword identity",
+    async (targetUrl) => {
+      const updateKeywordAction = vi.fn();
+      const onSaved = vi.fn();
+      render(
+        <KeywordInlineEdit
+          keyword={keyword({ targetUrl: "/old" })}
+          lockIdentity
+          layout="drawer"
+          onSaved={onSaved}
+          updateKeywordAction={updateKeywordAction}
+        />,
+      );
+      expect(screen.getByLabelText("Keyword")).toHaveAttribute("readonly");
+      expect(screen.queryByRole("button", { name: "Device" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("combobox", { name: "Market" })).not.toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Target URL"), { target: { value: targetUrl } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+      expect(updateKeywordAction).toHaveBeenCalledWith(
+        expect.objectContaining({ keywordId: "kw_1", targetUrl: targetUrl || null }),
+      );
+      for (const field of ["keyword", "device", "locationKey", "location", "rankingUrl"]) {
+        expect(updateKeywordAction.mock.calls[0][0]).not.toHaveProperty(field);
+      }
+    },
+  );
+
+  it("validates target URLs and keeps the draft after a failed save", async () => {
+    const updateKeywordAction = vi.fn().mockRejectedValue(new Error("Save unavailable"));
+    const onSaved = vi.fn();
+    render(
+      <KeywordInlineEdit
+        keyword={keyword()}
+        lockIdentity
+        layout="drawer"
+        onSaved={onSaved}
+        updateKeywordAction={updateKeywordAction}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Target URL"), { target: { value: "invalid target" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Enter an absolute URL or a path.")).toBeInTheDocument();
+    expect(updateKeywordAction).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Target URL"), { target: { value: "/alternatives" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Keyword could not be saved. Try again.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Target URL")).toHaveDisplayValue("/alternatives");
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+});

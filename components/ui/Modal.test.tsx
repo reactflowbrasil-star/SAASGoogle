@@ -1,0 +1,287 @@
+import {
+  renderWithFeatureMessages,
+  sharedControlTestMessages,
+} from "@/i18n/test-support/render-with-feature-messages";
+import { MOTION_MODAL_EXIT } from "@/lib/ui/motion";
+import { act, fireEvent, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Modal } from "./Modal";
+
+function render(ui: React.ReactElement) {
+  return renderWithFeatureMessages(ui, { messages: sharedControlTestMessages });
+}
+
+function renderModal(
+  overrides: { onPrimaryAction?: () => void; primaryActionDisabled?: boolean } = {},
+) {
+  const onClose = vi.fn();
+  const onPrimaryAction = overrides.onPrimaryAction ?? vi.fn();
+  render(
+    <Modal
+      onClose={onClose}
+      onPrimaryAction={onPrimaryAction}
+      open
+      primaryActionDisabled={overrides.primaryActionDisabled}
+      title="Test modal"
+    >
+      <button type="button">content</button>
+    </Modal>,
+  );
+  return { onClose, onPrimaryAction, target: () => screen.getByText("content") };
+}
+
+describe("Modal keyboard shortcuts", () => {
+  it("gives the close button tokenized pointer-only press feedback", () => {
+    renderModal();
+
+    const close = screen.getByRole("button", { name: "Close modal" });
+    expect(close).toHaveClass("duration-(--motion-press)");
+    expect(close).toHaveClass("motion-safe:active:not-focus-visible:scale-[0.97]");
+    expect(close).toHaveClass(
+      "focus-visible:outline-solid",
+      "focus-visible:outline-2",
+      "focus-visible:outline-accent-solid",
+      "focus-visible:outline-offset-2",
+      "motion-reduce:transition-none",
+    );
+  });
+
+  it("calls onClose on Escape and prevents default", () => {
+    const { onClose, target } = renderModal();
+    const el = target();
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Escape",
+    });
+    el.dispatchEvent(event);
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("stops Escape propagation so the dialog owner is not re-notified", () => {
+    const { onClose, target } = renderModal();
+    fireEvent.keyDown(target(), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("invokes onPrimaryAction on Cmd+Enter when enabled", () => {
+    const { onPrimaryAction, target } = renderModal();
+    fireEvent.keyDown(target(), { key: "Enter", metaKey: true });
+    expect(onPrimaryAction).toHaveBeenCalledOnce();
+  });
+
+  it("invokes onPrimaryAction on Ctrl+Enter when enabled", () => {
+    const { onPrimaryAction, target } = renderModal();
+    fireEvent.keyDown(target(), { key: "Enter", ctrlKey: true });
+    expect(onPrimaryAction).toHaveBeenCalledOnce();
+  });
+
+  it("does not invoke onPrimaryAction on Cmd+Enter when disabled", () => {
+    const { onPrimaryAction, target } = renderModal({ primaryActionDisabled: true });
+    const el = target();
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Enter",
+      metaKey: true,
+    });
+    el.dispatchEvent(event);
+    expect(onPrimaryAction).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("ignores Cmd+Enter when no primary action is provided", () => {
+    const onClose = vi.fn();
+    render(
+      <Modal onClose={onClose} open title="No action">
+        <button type="button">content</button>
+      </Modal>,
+    );
+    expect(() =>
+      fireEvent.keyDown(screen.getByText("content"), { key: "Enter", metaKey: true }),
+    ).not.toThrow();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("ignores Escape during IME composition (isComposing)", () => {
+    const { onClose, target } = renderModal();
+    const el = target();
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Escape",
+    });
+    Object.defineProperty(event, "isComposing", { value: true });
+    el.dispatchEvent(event);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("ignores Cmd+Enter during IME composition (isComposing)", () => {
+    const { onPrimaryAction, target } = renderModal();
+    const el = target();
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Enter",
+      metaKey: true,
+    });
+    Object.defineProperty(event, "isComposing", { value: true });
+    el.dispatchEvent(event);
+    expect(onPrimaryAction).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("ignores Ctrl+Enter during IME composition (keyCode 229)", () => {
+    const { onPrimaryAction, target } = renderModal();
+    const el = target();
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Enter",
+      ctrlKey: true,
+    });
+    Object.defineProperty(event, "keyCode", { value: 229 });
+    el.dispatchEvent(event);
+    expect(onPrimaryAction).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("ignores Escape during IME composition (keyCode 229)", () => {
+    const { onClose, target } = renderModal();
+    const el = target();
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Escape",
+    });
+    Object.defineProperty(event, "keyCode", { value: 229 });
+    el.dispatchEvent(event);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("does not stop propagation during IME composition", () => {
+    const { target } = renderModal();
+    const outer = document.createElement("div");
+    outer.appendChild(target());
+    document.body.appendChild(outer);
+    const caught = vi.fn();
+    outer.addEventListener("keydown", caught);
+    const event = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Enter",
+      metaKey: true,
+    });
+    Object.defineProperty(event, "isComposing", { value: true });
+    target().dispatchEvent(event);
+    expect(caught).toHaveBeenCalled();
+    document.body.removeChild(outer);
+  });
+});
+
+describe("Modal exit lifecycle", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("does not fire onExited when open remains true", () => {
+    const onExited = vi.fn();
+    render(
+      <Modal onClose={vi.fn()} onExited={onExited} open title="Stay open">
+        <button type="button">content</button>
+      </Modal>,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(MOTION_MODAL_EXIT + 50);
+    });
+
+    expect(onExited).not.toHaveBeenCalled();
+  });
+});
+
+describe("Modal token classes", () => {
+  it("applies rounded-card to the dialog paper", () => {
+    render(
+      <Modal onClose={vi.fn()} open title="Token test">
+        <p>body</p>
+      </Modal>,
+    );
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveClass("rounded-card");
+    expect(dialog).toHaveStyle({ borderRadius: "12px" });
+  });
+
+  it("uses numeric spacing utilities for header, content, and footer", () => {
+    render(
+      <Modal footer={<span>ok</span>} headerDivider onClose={vi.fn()} open title="Token test">
+        <p>body</p>
+      </Modal>,
+    );
+
+    const dialog = screen.getByRole("dialog");
+
+    const header = within(dialog).getByText("Token test").closest("header");
+    expect(header).toHaveClass("px-5.5", "py-4.5");
+
+    const content = screen.getByText("body").closest("div");
+    expect(content).toHaveClass("px-5.5", "py-4.5");
+
+    const footer = within(dialog).getByText("ok").closest("footer");
+    expect(footer).toHaveClass("px-5.5", "py-3.5", "gap-3");
+  });
+});
+
+describe("Modal sizes", () => {
+  it("keeps a fixed width and a content-sized height for the md preset", () => {
+    render(
+      <Modal onClose={vi.fn()} open title="Medium">
+        <p>body</p>
+      </Modal>,
+    );
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.style.width).toBe("480px");
+    expect(dialog.style.height).toBe("");
+  });
+
+  it("fills the viewport inside the gutter and lets the body take the remaining height", () => {
+    render(
+      <Modal onClose={vi.fn()} open size="full" title="Full">
+        <p>body</p>
+      </Modal>,
+    );
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.style.width).toBe("calc(100vw - 48px)");
+    expect(dialog.style.height).toBe("calc(100dvh - 48px)");
+    expect(within(dialog).getByRole("button", { name: "Close modal" })).toBeVisible();
+    expect(within(dialog).getByRole("heading", { name: "Full" })).toBeVisible();
+    const content = screen.getByText("body").parentElement as HTMLElement;
+    expect(content).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
+    expect(content.parentElement).toHaveClass("flex-1");
+  });
+});
+
+it("keeps optional inert decoration outside the dialog content and focus order", () => {
+  render(
+    <Modal
+      open
+      onClose={vi.fn()}
+      title="Decorated modal"
+      decoration={<span>Decorative accent</span>}
+    >
+      <button type="button">Primary content</button>
+    </Modal>,
+  );
+  const decoration = screen.getByText("Decorative accent").parentElement;
+  expect(decoration).toHaveAttribute("aria-hidden", "true");
+  expect(decoration).toHaveAttribute("inert");
+  expect(screen.getByRole("dialog")).not.toContainElement(decoration);
+  expect(
+    within(screen.getByRole("dialog")).getByRole("button", { name: "Primary content" }),
+  ).toBeVisible();
+});

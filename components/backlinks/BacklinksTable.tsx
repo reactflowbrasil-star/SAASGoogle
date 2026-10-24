@@ -1,0 +1,260 @@
+"use client";
+
+import { PaymentChargeLine } from "@/components/action-payment/PaymentChargeLine";
+import { unresolvedPayment } from "@/components/action-payment/unresolved-payment";
+import type { ActionPaymentReceipt } from "@/lib/action-payment/contract";
+import type { LoadMoreBacklinkRowsAction } from "@/lib/actions/backlinks";
+import type { BacklinksRow } from "@/lib/backlinks/types";
+import { CheckIcon as Check } from "@phosphor-icons/react/dist/csr/Check";
+import { useTranslations } from "next-intl";
+import { type ReactNode, useState } from "react";
+import { BacklinksAggregateTable } from "./BacklinksAggregateTable";
+import { BacklinksExportMenu } from "./BacklinksExportMenu";
+import { BacklinksFiltersDrawer } from "./BacklinksFiltersDrawer";
+import { BacklinksColumnHeaders, BacklinksRows } from "./BacklinksTableRows";
+import { BacklinksTableToolbar } from "./BacklinksTableToolbar";
+import {
+  activeBacklinksFilterCount,
+  type BacklinksFilters,
+  backlinkLinkTypeCounts,
+  emptyBacklinksFilters,
+  filterBacklinksDomainGroups,
+} from "./backlinks-filters-model";
+import {
+  aggregateBacklinksView,
+  type BacklinksFilter,
+  type BacklinksSlice,
+  type BacklinksView,
+  domainFilterCounts,
+  groupBacklinksByDomain,
+} from "./backlinks-table-model";
+
+export type BacklinksTableProps = {
+  fetchedRowCount: number;
+  initialAdvancedFilters?: BacklinksFilters;
+  initialDrawerOpen?: boolean;
+  initialFilter?: BacklinksFilter;
+  initialExpandedDomains?: string[];
+  initialSlice?: BacklinksSlice;
+  initialView?: BacklinksView;
+  loadMoreEstimateCents?: number;
+  loadMorePrice?: ReactNode;
+  now?: Date;
+  onLoadMore?: () => Promise<Awaited<ReturnType<LoadMoreBacklinkRowsAction>> | null>;
+  rows: BacklinksRow[];
+  target: string;
+  totalDomains: number;
+  totalRowsAvailable: number;
+};
+
+function BrokenEmptyState() {
+  const t = useTranslations("projectBacklinks.workspace.table");
+  return (
+    <div className="flex flex-col items-center gap-2.5 px-5 py-12 text-center">
+      <span className="grid h-11 w-11 place-items-center rounded-full bg-green/10 text-green-text">
+        <Check aria-hidden size={20} weight="regular" />
+      </span>
+      <strong className="text-[14.5px]">{t("noBrokenTitle")}</strong>
+      <p className="m-0 max-w-[360px] text-[12.5px] leading-5 text-fg-muted">
+        {t("noBrokenDescription")}
+      </p>
+    </div>
+  );
+}
+
+export function BacklinksTable({
+  fetchedRowCount,
+  initialAdvancedFilters = emptyBacklinksFilters,
+  initialDrawerOpen = false,
+  initialFilter = "all",
+  initialExpandedDomains = [],
+  initialSlice = "one_per_domain",
+  initialView = "backlinks",
+  loadMorePrice,
+  now,
+  onLoadMore,
+  rows,
+  target,
+  totalDomains,
+  totalRowsAvailable,
+}: Readonly<BacklinksTableProps>) {
+  const t = useTranslations("projectBacklinks.workspace.table");
+  const [currentRows, setCurrentRows] = useState(rows);
+  const [currentFetchedCount, setCurrentFetchedCount] = useState(fetchedRowCount);
+  const [currentTotalAvailable, setCurrentTotalAvailable] = useState(totalRowsAvailable);
+  const [view, setView] = useState<BacklinksView>(initialView);
+  const [slice, setSlice] = useState<BacklinksSlice>(initialSlice);
+  const [filter, setFilter] = useState<BacklinksFilter>(initialFilter);
+  const [appliedFilters, setAppliedFilters] = useState<BacklinksFilters>(initialAdvancedFilters);
+  const [draftFilters, setDraftFilters] = useState<BacklinksFilters>(initialAdvancedFilters);
+  const [filtersOpen, setFiltersOpen] = useState(initialDrawerOpen);
+  const [expandedDomains, setExpandedDomains] = useState<string[]>(initialExpandedDomains);
+  const [expandedRuns, setExpandedRuns] = useState<Record<string, string[]>>({});
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
+  const [moreUnresolved, setMoreUnresolved] = useState(false);
+  const [morePayment, setMorePayment] = useState<ActionPaymentReceipt>();
+  const referenceNow = now ?? new Date();
+  const groups = groupBacklinksByDomain(currentRows, referenceNow);
+  const filteredGroups = filterBacklinksDomainGroups(groups, appliedFilters, filter, referenceNow);
+  const filteredRows = filteredGroups.flatMap((group) => group.rows);
+  const draftGroups = filterBacklinksDomainGroups(groups, draftFilters, filter, referenceNow);
+  const counts = domainFilterCounts(groups, referenceNow, totalDomains);
+  const linkTypeCounts = backlinkLinkTypeCounts(groups);
+  const aggregateRows =
+    view === "backlinks" ? [] : aggregateBacklinksView(view, filteredRows, referenceNow);
+  const shownDomainTotal = counts[filter];
+  const shownLabel =
+    filter === "broken"
+      ? ""
+      : t("showing", { shown: filteredGroups.length, total: shownDomainTotal });
+  const expandedRunMap = new Map(
+    Object.entries(expandedRuns).map(([domain, signatures]) => [domain, new Set(signatures)]),
+  );
+
+  function toggleDomain(domain: string) {
+    setExpandedDomains((current) =>
+      current.includes(domain) ? current.filter((item) => item !== domain) : [...current, domain],
+    );
+  }
+
+  function expandRun(domain: string, signature: string) {
+    setExpandedRuns((current) => ({
+      ...current,
+      [domain]: [...(current[domain] ?? []), signature],
+    }));
+  }
+
+  function openFilters() {
+    setDraftFilters(appliedFilters);
+    setFiltersOpen(true);
+  }
+
+  function applyFilters() {
+    setAppliedFilters(draftFilters);
+    setFiltersOpen(false);
+  }
+
+  async function loadMore() {
+    if (!onLoadMore || loadingMore || moreUnresolved) return;
+    setLoadingMore(true);
+    setLoadMoreError(false);
+    try {
+      const outcome = await onLoadMore();
+      if (!outcome) return;
+      if ("payment" in outcome && outcome.payment && !("estimate" in outcome))
+        setMorePayment(outcome.payment);
+      if (unresolvedPayment(outcome)) setMoreUnresolved(true);
+      if (!outcome.ok || "estimate" in outcome) {
+        setLoadMoreError(true);
+        return;
+      }
+      setCurrentRows((current) => [...current, ...outcome.rows]);
+      setCurrentFetchedCount(outcome.fetchedRowCount);
+      setCurrentTotalAvailable(outcome.totalRowsAvailable);
+    } catch {
+      setMoreUnresolved(true);
+      setLoadMoreError(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  const hasLoadMore =
+    Boolean(onLoadMore) &&
+    filter !== "broken" &&
+    filteredRows.length > 0 &&
+    currentFetchedCount < currentTotalAvailable;
+
+  return (
+    <>
+      <section className="min-w-0 overflow-hidden rounded-card border border-border bg-bg-elev">
+        <BacklinksTableToolbar
+          counts={counts}
+          filter={filter}
+          filterCount={activeBacklinksFilterCount(appliedFilters)}
+          onFilterChange={setFilter}
+          onOpenFilters={openFilters}
+          onSliceChange={setSlice}
+          onViewChange={setView}
+          shownLabel={shownLabel}
+          slice={slice}
+          view={view}
+          exportControl={
+            <BacklinksExportMenu
+              now={referenceNow}
+              rows={filteredRows}
+              slice={slice}
+              target={target}
+              view={view}
+            />
+          }
+        />
+        <div
+          aria-labelledby={`backlinks-tab-${view}`}
+          className="min-w-0 overflow-x-auto"
+          id="backlinks-view-panel"
+          role="tabpanel"
+        >
+          <div className="min-w-[1010px]">
+            {filter === "broken" ? (
+              <BrokenEmptyState />
+            ) : view === "backlinks" ? (
+              <>
+                <BacklinksColumnHeaders />
+                <BacklinksRows
+                  expandedDomains={new Set(expandedDomains)}
+                  expandedRuns={expandedRunMap}
+                  groups={filteredGroups}
+                  onRunExpand={expandRun}
+                  onToggle={toggleDomain}
+                  rows={filteredRows}
+                  slice={slice}
+                />
+              </>
+            ) : (
+              <BacklinksAggregateTable
+                fetchedCount={currentFetchedCount}
+                rows={aggregateRows}
+                totalCount={currentTotalAvailable}
+                view={view}
+              />
+            )}
+          </div>
+        </div>
+        <footer className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-2.5">
+          <span className="text-[12.5px] text-fg-muted">
+            {t("fetched", { fetched: currentFetchedCount, total: currentTotalAvailable })}
+          </span>
+          {hasLoadMore ? (
+            <button
+              className="cursor-pointer border-0 bg-transparent p-0 text-[12.5px] font-medium text-accent-text hover:text-accent-text focus-visible:rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-solid disabled:cursor-wait disabled:bg-bg-sunken disabled:text-fg-muted"
+              disabled={loadingMore || moreUnresolved}
+              onClick={() => void loadMore()}
+              type="button"
+            >
+              {loadingMore ? t("loadingMore") : t("loadMore")} {loadMorePrice}
+            </button>
+          ) : null}
+          {morePayment ? <PaymentChargeLine payment={morePayment} /> : null}
+          {loadMoreError ? (
+            <span className="text-[12px] text-red-text" role="status">
+              {t("loadFailed")}
+            </span>
+          ) : null}
+          <span className="flex-1" />
+          <span className="text-[12px] text-fg-muted">{t("freeFilters")}</span>
+        </footer>
+      </section>
+      <BacklinksFiltersDrawer
+        draft={draftFilters}
+        linkTypeCounts={linkTypeCounts}
+        onApply={applyFilters}
+        onChange={setDraftFilters}
+        onClose={() => setFiltersOpen(false)}
+        open={filtersOpen}
+        resultCount={draftGroups.length}
+      />
+    </>
+  );
+}

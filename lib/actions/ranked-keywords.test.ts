@@ -1,0 +1,118 @@
+import { APP_REQUEST_ORIGIN } from "@/lib/provider-usage/surface";
+import { DeploymentAdmissionExhaustedError } from "@/lib/providers/execution-extension-errors";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fetchRankedKeywordSuggestions } from "./ranked-keywords";
+
+const connectionId = "conn_a00000000000000000000000";
+
+const mocks = vi.hoisted(() => ({
+  fetch: vi.fn(),
+  getActor: vi.fn(),
+  requireScope: vi.fn(),
+}));
+
+vi.mock("@/lib/ranked-keywords/service", () => ({ fetchRankedKeywords: mocks.fetch }));
+vi.mock("./_shared", () => ({
+  getActionActor: mocks.getActor,
+  parseActionInput: (schema: { parse: (input: unknown) => unknown }, input: unknown) =>
+    schema.parse(input),
+  requireProjectScope: mocks.requireScope,
+}));
+
+describe("fetchRankedKeywordSuggestions action", () => {
+  it("resolves a hosted missing-budget refusal", async () => {
+    mocks.fetch.mockRejectedValueOnce(
+      new DeploymentAdmissionExhaustedError("budget", { budgetReason: "budget_missing" }),
+    );
+    await expect(fetchRankedKeywordSuggestions({ projectId: "prj_1" })).resolves.toEqual({
+      reason: "budget_exhausted",
+      budgetReason: "budget_missing",
+    });
+  });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getActor.mockResolvedValue({ id: "user_1" });
+    mocks.requireScope.mockResolvedValue({ id: "project_1" });
+  });
+
+  it("authorizes keyword creation and delegates validated pagination", async () => {
+    mocks.fetch.mockResolvedValue({ ok: false, reason: "no_source" });
+    await expect(
+      fetchRankedKeywordSuggestions({
+        connectionId,
+        offset: 100,
+        projectId: "prj_1",
+      }),
+    ).resolves.toEqual({ reason: "no_source" });
+    expect(mocks.requireScope).toHaveBeenCalledWith({ id: "user_1" }, "create", "prj_1", {
+      type: "keyword",
+    });
+    expect(mocks.fetch).toHaveBeenCalledWith({
+      actorId: "user_1",
+      connectionId,
+      limit: 100,
+      offset: 100,
+      origin: APP_REQUEST_ORIGIN,
+      projectId: "project_1",
+      requirePayment: true,
+      estimateOnly: undefined,
+      paymentOptionId: undefined,
+      acceptedPayment: undefined,
+    });
+    expect(mocks.fetch.mock.calls[0]?.[0].origin).toEqual(APP_REQUEST_ORIGIN);
+  });
+
+  it("passes the accepted price to execution and makes estimates non-executing", async () => {
+    mocks.fetch.mockResolvedValue({ ok: false, reason: "no_source" });
+    await fetchRankedKeywordSuggestions({ projectId: "prj_1", estimateOnly: true });
+    expect(mocks.fetch.mock.calls.at(-1)?.[0]).toMatchObject({
+      estimateOnly: true,
+      requirePayment: false,
+    });
+    await fetchRankedKeywordSuggestions({
+      projectId: "prj_1",
+      paymentOptionId: "route",
+      acceptedPayment: { quoteToken: "price" },
+    });
+    expect(mocks.fetch.mock.calls.at(-1)?.[0]).toMatchObject({
+      requirePayment: true,
+      paymentOptionId: "route",
+      acceptedPayment: { quoteToken: "price" },
+    });
+  });
+
+  it("rejects non-page-aligned offsets", async () => {
+    await expect(
+      fetchRankedKeywordSuggestions({ offset: 50, projectId: "prj_1" }),
+    ).rejects.toThrow();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["connection_1", "key_a00000000000000000000000"])(
+    "rejects connection ID %s before authorization",
+    async (invalidId) => {
+      await expect(
+        fetchRankedKeywordSuggestions({
+          connectionId: invalidId,
+          projectId: "prj_1",
+        }),
+      ).rejects.toThrow();
+      expect(mocks.requireScope).not.toHaveBeenCalled();
+      expect(mocks.fetch).not.toHaveBeenCalled();
+    },
+  );
+});
+
+it("preserves the missing-budget reason in the action result", async () => {
+  mocks.getActor.mockResolvedValue({ id: "user_1" });
+  mocks.requireScope.mockResolvedValue({ id: "project_1" });
+  mocks.fetch.mockResolvedValue({
+    ok: false,
+    reason: "budget_exhausted",
+    budgetReason: "budget_missing",
+  });
+  await expect(fetchRankedKeywordSuggestions({ projectId: "prj_1" })).resolves.toEqual({
+    reason: "budget_exhausted",
+    budgetReason: "budget_missing",
+  });
+});

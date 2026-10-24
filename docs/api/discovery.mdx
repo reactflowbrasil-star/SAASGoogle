@@ -1,0 +1,294 @@
+---
+title: "Discovery"
+description: "Public probe status, protected diagnostics, and agent discovery endpoints."
+---
+
+Discovery endpoints expose their public response without an API key and remain
+rate limited by client identity. Valid API credentials change only `/health`:
+they unlock its detailed operator response. Deployment automation can use an
+optional `INTERNAL_PROBE_TOKEN` instead of a database-backed credential.
+
+## Liveness and readiness
+
+Use liveness to decide whether to restart the web process:
+
+```http
+GET /api/v1/liveness
+```
+
+Liveness performs no database, migration, worker, or Temporal checks. A response
+means the web process can execute the handler, so it returns `200` even when the
+database contract is not ready.
+
+```json
+{ "status": "ok" }
+```
+
+Use readiness to decide whether to send web traffic:
+
+```http
+GET /api/v1/readiness
+```
+
+Readiness returns `200` only when the database is reachable and blocking data
+migrations report `ready`; otherwise it returns `503`. Worker heartbeat,
+Temporal, and worker-schema parity do not decide web readiness because reads can
+still be served while those asynchronous subsystems are unavailable.
+
+Both the `200` and `503` responses contain aggregate status only:
+
+```json
+{ "status": "degraded" }
+```
+
+## Composite health
+
+```http
+GET /api/v1/health
+```
+
+Anonymous response:
+
+```json
+{ "status": "ok" }
+```
+
+Send a valid API credential to inspect detailed diagnostics:
+
+```bash
+curl -sS "$BISIBILITY_BASE/health" \
+  -H "Authorization: Bearer $BISIBILITY_API_KEY"
+```
+
+Deployment automation can instead configure the same random value, at least 32
+characters long, as `INTERNAL_PROBE_TOKEN` on the application and send it as a
+Bearer token. Never expose or log that value.
+
+Detailed response:
+
+```json
+{
+  "checked_at": "2026-06-28T10:00:00.000Z",
+  "providers": {
+    "analytics": ["gsc", "ga4", "plausible"],
+    "serp": ["dataforseo", "serpapi"]
+  },
+  "rate_limits": {
+    "dataforseo": { "per_minute": 1800, "window_seconds": 60 },
+    "ga4": { "per_minute": 60, "window_seconds": 60 },
+    "gsc": { "per_minute": 600, "window_seconds": 60 },
+    "plausible": { "per_minute": 60, "window_seconds": 60 },
+    "serpapi": { "per_minute": 60, "window_seconds": 60 }
+  },
+  "serp": {
+    "default_depth": 100,
+    "default_device": "desktop",
+    "default_location_key": "US",
+    "default_market": "United States",
+    "depths": [10, 20, 50, 100],
+    "devices": ["desktop", "mobile"],
+    "engine": "google",
+    "markets": [
+      {
+        "gl": "us",
+        "language_code": "en",
+        "language_label": "English",
+        "location_key": "US",
+        "name": "United States"
+      }
+    ]
+  },
+  "liveness": "ok",
+  "rank_check_scheduler_mode": "legacy",
+  "readiness": "ok",
+  "scheduler_driver": "temporal",
+  "services": {
+    "app": "ok",
+    "appRelease": "0.2.1",
+    "appRevision": "0123456789abcdef0123456789abcdef01234567",
+    "appSchedulerDriver": "temporal",
+    "database": "ok",
+    "migrations": "ready",
+    "schedulerConfiguration": "ok",
+    "temporal": "ok",
+    "worker": "ok",
+    "workerRelease": "0.2.1",
+    "workerRevision": "0123456789abcdef0123456789abcdef01234567",
+    "workerSchedulerDriver": "temporal",
+    "workerSchema": "ok"
+  },
+  "status": "ok"
+}
+```
+
+`/health` remains the composite diagnostics endpoint. Its aggregate
+`status` still degrades for a database or migration failure, a degraded or down
+worker or Temporal service, or worker-schema drift. Use the explicit probe
+endpoints for restart and traffic decisions.
+
+The detailed body is an operator surface, not part of the public SDK response
+schema. Anonymous clients and official SDK probe methods receive only
+`{ "status": ... }`.
+
+`services.appRevision` and `services.workerRevision` identify the public source
+revision baked into each artifact. They are `"unknown"` when the build did not
+provide `APP_REVISION`. Runtime environment overrides cannot change the reported
+revision after the artifact is built.
+
+`scheduler_driver` distinguishes a core deployment (`none`) from Temporal
+scheduling (`temporal`) and legacy compatibility (`legacy-auto`). In core mode,
+the detailed `worker` and `temporal` service states are `disabled`, not failed.
+Invalid scheduler configuration reports `invalid` and degrades the probes. A
+fresh worker heartbeat carrying a different driver reports
+`schedulerConfiguration: "driver-mismatch"` and also degrades health.
+A fresh worker heartbeat carrying a different known source revision reports
+`schedulerConfiguration: "release-mismatch"` and also degrades health. Deploy web and worker
+from the same immutable release before admitting traffic.
+
+`services.migrations` answers whether blocking data migrations have finished
+with their expected checksums and whether the public ID database contract is
+ready. It does not report whether the Prisma schema is current. Run
+`npx prisma migrate status` in the deployed application environment to check
+schema currency. This known limitation is unchanged from 0.1.0 and is scheduled
+to be addressed.
+
+Composite status is `200` when all reported health checks succeed and `503` when
+health is degraded.
+
+## OpenAPI
+
+```http
+GET /api/v1/openapi.json
+```
+
+Returns an OpenAPI 3.1 document generated by `lib/api/openapi.ts`.
+Every operation documents the optional `Bisibility-API-Version` request header
+and the `409` response returned for an unsupported declared version.
+
+## Capabilities
+
+```http
+GET /api/v1/capabilities
+```
+
+Response:
+
+```json
+{
+  "apiVersions": ["v1"],
+  "rank_check_scheduler_mode": "legacy",
+  "scheduler_driver": "temporal",
+  "data": [
+    {
+      "name": "listKeywords",
+      "operationId": "listKeywords",
+      "description": "List project keywords",
+      "input_schema": {
+        "type": "object"
+      }
+    }
+  ]
+}
+```
+
+`apiVersions` is the set of API contracts this server serves.
+`scheduler_driver` reports the execution backend available to API clients, and
+`rank_check_scheduler_mode` reports automatic scheduling ownership. They belong here
+because capabilities is the machine-readable contract discovery surface.
+`/health`, `/liveness`, and `/readiness` remain operational probes and do not
+duplicate API compatibility state.
+
+Capabilities are derived from the OpenAPI operation ids and the agent-facing
+tool input schemas in `lib/api/capabilities.ts`.
+
+These camelCase names are REST/OpenAPI operation identifiers. MCP clients use
+the separate unprefixed snake_case tool names advertised by `/api/mcp`, such as
+`list_keywords`.
+
+## API version declaration
+
+A client can opt into the advertised contract by sending:
+
+```http
+Bisibility-API-Version: v1
+```
+
+The product-namespaced header avoids collisions with unrelated API version
+headers and does not use the deprecated `X-` convention. A request with no
+header, or an empty header, is undeclared and follows the existing request path
+without version negotiation. This keeps clients deployed before version
+declarations were introduced working unchanged.
+
+If a client declares a version that is not in `apiVersions`, the server returns
+`409 Conflict` before authentication, rate limiting, or request parsing:
+
+```json
+{
+  "type": "https://bisibility.com/problems/unsupported_api_version",
+  "title": "Unsupported API version",
+  "status": 409,
+  "detail": "The declared API version v2 is not served by this server.",
+  "instance": "urn:bisibility:api:v1:/api/v1/projects",
+  "docs_url": "https://bisibility.com/docs/api/errors#unsupported_api_version",
+  "errors": {
+    "apiVersions": ["v1"],
+    "declaredApiVersion": "v2"
+  }
+}
+```
+
+## Provider rates
+
+```http
+GET /api/v1/provider-rates
+```
+
+Returns provider pricing inputs used by the public rank-tracking cost estimator.
+
+## Cost estimate
+
+```http
+GET /api/v1/cost-estimate
+```
+
+Returns the shared anonymous usage and cost estimate used by onboarding and the
+rank-tracking calculator. It accepts keyword count, market count (`locations` for
+API compatibility), device count, schedule, provider, and organic result depth.
+Pass `depth=10`, `20`, `50`, or `100`; omitted depth defaults to `100`.
+
+`checks_per_run` counts logical rank checks. `result_pages_per_run` includes depth,
+and `monthly_billing_units` estimates result pages for the full month. One keyword
+in one market on one device, checked daily at Top 20, returns 1 check, 2 pages per
+run, and 60 pages per month.
+
+`frequency` accepts `daily`, `weekly`, `monthly`, `manual`, `paused`, or
+`custom_cron`. Manual and paused schedules return zero scheduled runs and monthly
+usage. For custom schedules, send `cron_expression`; a missing or invalid cron
+returns `null` for `runs_per_month` and monthly usage/cost fields. Per-run usage
+remains available. Estimates assume full depth; actual usage can be lower.
+
+```http
+GET /api/v1/cost-estimate?keywords=1&locations=1&devices=1&frequency=daily&depth=20&provider=dataforseo&option=live
+```
+
+## llms.txt
+
+```http
+GET /api/v1/llms.txt
+```
+
+Returns a plain-text summary with the API base URL, auth scheme, resources, and
+tool names.
+
+## Related operations
+
+- [`GET /capabilities`](/api-reference/discovery/get-api-capabilities) (`getCapabilities`)
+- [`GET /cost-estimate`](/api-reference/discovery/estimate-monthly-serp-provider-cost) (`getCostEstimate`)
+- [`GET /health`](/api-reference/discovery/check-api-health) (`getHealth`)
+- [`GET /liveness`](/api-reference/discovery/check-web-process-liveness) (`getLiveness`)
+- [`GET /llms.txt`](/api-reference/discovery/get-api-documentation-for-llms) (`getLlmsTxt`)
+- [`GET /openapi.json`](/api-reference/discovery/get-the-openapi-document) (`getOpenApi`)
+- [`GET /provider-rates`](/api-reference/discovery/list-public-serp-provider-rate-cards) (`getProviderRates`)
+- [`GET /readiness`](/api-reference/discovery/check-web-traffic-readiness) (`getReadiness`)
+
+Exact request and response schemas live in the generated API Reference.

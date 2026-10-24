@@ -1,0 +1,2777 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  owner
+  admin
+  member
+  auditor
+  viewer
+}
+
+enum Device {
+  desktop
+  mobile
+}
+
+enum SavedViewVisibility {
+  private
+  project
+}
+
+enum LocationKind {
+  country
+  region
+  city
+}
+
+enum RankCheckFrequency {
+  paused
+  manual
+  daily
+  weekly
+  monthly
+  custom_cron
+}
+
+enum ProviderKind {
+  serp
+  analytics
+  enrichment
+}
+
+enum ProviderStatus {
+  connected
+  needs_reauth
+  ready
+  planned
+  optional
+}
+
+enum SearchInsightsPropertyStatus {
+  active
+  archived
+}
+
+enum ProviderAllocationUnit {
+  cents
+  units
+}
+
+enum ProviderCostFeature {
+  ai_tracking
+  ai_visibility
+  prompt_explorer
+  backlinks
+  domain_overview
+  keyword_metrics
+  keyword_research
+  local_scan
+  rank_check
+  ranked_keywords
+}
+
+enum ProviderCredentialSource {
+  own
+  hosted
+}
+
+enum AlertConditionType {
+  threshold
+  change_pct
+  ctr_drop
+  position_drop
+  downtrend
+  enters_top_n
+  exits_top_n
+  competitor_overtake
+  serp_feature
+  url_mismatch
+}
+
+enum AlertSeverity {
+  info
+  warning
+  urgent
+}
+
+enum AlertTargetType {
+  keyword
+  tag
+  all
+}
+
+enum AlertChannel {
+  email
+  slack
+  webhook
+  push
+}
+
+enum TriggeredAlertStatus {
+  firing
+  resolved
+  acknowledged
+  muted
+}
+
+enum AlertDeliveryState {
+  pending
+  digest_pending
+  digesting
+  digested
+  suppressed
+  delivering
+  delivered
+  dead_letter
+  skipped
+}
+
+enum NotificationType {
+  alert_fired
+  check_complete
+  check_failed
+  invite
+  member_joined
+  import_done
+  import_failed
+  system
+}
+
+enum MigrationScope {
+  keywords
+  full
+}
+
+enum CloudImportState {
+  idle
+  receiving
+  importing
+  done
+  failed
+}
+
+enum ProjectWriteMode {
+  active
+  migration_hold
+  migrated
+}
+
+enum ProjectMarketStatus {
+  active
+  paused
+  removed
+}
+
+enum CompetitorSource {
+  suggested
+  manual
+}
+
+enum CompetitorScopePolicy {
+  all_markets
+  selected_markets
+}
+
+enum CompetitorMarketOverrideMode {
+  added
+  excluded
+}
+
+enum CompetitorSetupOutcome {
+  confirmed
+  skipped
+}
+
+enum SignalSource {
+  rank_tracker
+  search_analytics
+  url_inspection
+  sitemap
+  deploy
+  cms
+  search_engine_status
+  manual
+  api
+}
+
+enum SignalSeverity {
+  info
+  warning
+  critical
+}
+
+enum OnboardingQuizStatus {
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED_ALL
+}
+
+model User {
+  achievementState AchievementState?
+  achievementDays AchievementDay[]
+  achievementAwards AchievementAward[]
+  achievementMails AchievementMail[]
+  analyticsConsent             UserAnalyticsConsent?
+  providerComparisonPreviews ProviderComparisonPreview[]
+  providerComparisonRuns ProviderComparisonRun[]
+  measurementSettingsMutations MeasurementSettingsMutation[]
+  id                           String                   @id @default(cuid())
+  publicId                     String                   @unique
+  name                         String
+  email                        String                   @unique
+  emailVerified                Boolean                  @default(false)
+  twoFactorEnabled             Boolean                  @default(false)
+  image                        String?
+  role                         Role                     @default(member)
+  isInstanceAdmin              Boolean                  @default(false)
+  deactivatedAt                DateTime?
+  marketingEmailUnsubscribedAt DateTime?
+  dateFormat                   String                   @default("auto")
+  uiLocale                     String                   @default("en")
+  uiLocaleSelectedAt           DateTime?
+  /// Project opened first at sign-in. The entry page ignores it without a membership.
+  defaultProjectId             String?
+  defaultProject               Project?                 @relation("UserDefaultProject", fields: [defaultProjectId], references: [id], onDelete: SetNull)
+  welcomeFollowupRequestedAt   DateTime?
+  welcomeFollowupStartedAt     DateTime?
+  welcomeFollowupFinishedAt    DateTime?
+  welcomeFollowupExpiredAt     DateTime?
+  pausedSearchAnalyticsImports SearchAnalyticsImport[]  @relation("SearchImportPausedBy")
+  sessions                     Session[]
+  accounts                     Account[]
+  twoFactors                   TwoFactor[]
+  legacyOauthApplications      LegacyOauthApplication[]
+  legacyOauthAccessTokens      LegacyOauthAccessToken[]
+  legacyOauthConsents          LegacyOauthConsent[]
+  oauthClients                 OauthClient[]
+  oauthRefreshTokens           OauthRefreshToken[]
+  oauthAccessTokens            OauthAccessToken[]
+  oauthConsents                OauthConsent[]
+  projects                     Project[]                @relation("ProjectOwner")
+  memberships                  Membership[]
+  auditLogs                    AuditLog[]               @relation("AuditActor")
+  notifications                Notification[]
+  notificationPreferences      NotificationPreference[]
+  sentInvites                  Invite[]
+  createdAlertRules            AlertRule[]
+  alertRuleRecipients          AlertRuleRecipient[]
+  savedViews                   SavedView[]                 @relation("SavedViewCreator")
+  personalSavedViews           SavedView[]                 @relation("SavedViewOwner")
+  projectSurfacePreferences    UserProjectSurfacePreference[]
+  savedViewCreationRequests    SavedViewCreationRequest[]
+  slackConnections             SlackConnection[]
+  createdMigrationTokens       MigrationToken[]
+  personalAccessTokens         PersonalAccessToken[]
+  devicePushTokens             DevicePushToken[]
+  writeModeChangedProjects     Project[]                @relation("ProjectWriteModeChangedBy")
+  signalsCreated               Signal[]                 @relation("SignalCreator")
+  createdIngestHooks           IngestHook[]
+  onboardingQuizResponses      OnboardingQuizResponse[]
+  requestedRankCheckRuns       RankCheckRun[]           @relation("RankCheckRunRequestedBy")
+  createdAt                    DateTime                 @default(now())
+  updatedAt                    DateTime                 @updatedAt
+
+  // Migration-only partial index: users (welcomeFollowupStartedAt) for pending worker intents.
+  @@index([defaultProjectId])
+  @@map("users")
+
+  business_assignment_revisions     BusinessAssignmentRevision[]
+  business_identity_revisions       BusinessIdentityRevision[]
+  business_location_mutations       BusinessLocationMutation[]
+  business_match_decisions          BusinessMatchDecision[]
+  local_measurement_points          LocalMeasurementPoint[]
+  local_measurement_runs            LocalMeasurementRun[]
+  local_measurement_targets         LocalMeasurementTarget[]
+  local_monitor_launch_intents      LocalMonitorLaunchIntent[]
+  local_monitor_mutations           LocalMonitorMutation[]
+  local_monitor_occurrences         LocalMonitorOccurrence[]
+  local_monitor_recurring_approvals LocalMonitorRecurringApproval[]
+  local_monitor_revisions           LocalMonitorRevision[]
+  local_monitor_schedule_intents    LocalMonitorScheduleIntent[]
+}
+
+model Session {
+  id                 String              @id @default(cuid())
+  publicId           String              @unique
+  token              String              @unique
+  expiresAt          DateTime
+  ipAddress          String?
+  userAgent          String?
+  userId             String
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  oauthRefreshTokens OauthRefreshToken[]
+  oauthAccessTokens  OauthAccessToken[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  providerId            String
+  accountId             String
+  password              String?
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([providerId, accountId])
+  @@index([providerId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("verifications")
+}
+
+model TwoFactor {
+  id                      String    @id @default(cuid())
+  secret                  String
+  backupCodes             String
+  userId                  String
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verified                Boolean?  @default(true)
+  failedVerificationCount Int?      @default(0)
+  lockedUntil             DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("twoFactor")
+}
+
+model LegacyOauthApplication {
+  id           String                   @id @default(cuid())
+  name         String
+  icon         String?
+  metadata     String?
+  clientId     String                   @unique
+  clientSecret String?
+  redirectUrls String
+  type         String
+  disabled     Boolean                  @default(false)
+  userId       String?
+  user         User?                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessTokens LegacyOauthAccessToken[]
+  consents     LegacyOauthConsent[]
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+
+  @@index([userId])
+  @@map("oauthApplication")
+}
+
+model LegacyOauthAccessToken {
+  id                    String                 @id @default(cuid())
+  accessToken           String                 @unique
+  refreshToken          String                 @unique
+  accessTokenExpiresAt  DateTime
+  refreshTokenExpiresAt DateTime
+  clientId              String
+  application           LegacyOauthApplication @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  userId                String?
+  user                  User?                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scopes                String
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  @@index([clientId])
+  @@index([userId])
+  @@map("oauthAccessToken")
+}
+
+model LegacyOauthConsent {
+  id           String                 @id @default(cuid())
+  clientId     String
+  application  LegacyOauthApplication @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  userId       String
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scopes       String
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+  consentGiven Boolean
+
+  @@index([clientId])
+  @@index([userId])
+  @@map("oauthConsent")
+}
+
+model OauthClient {
+  id                      String              @id @default(cuid())
+  clientId                String              @unique
+  clientSecret            String?
+  disabled                Boolean?            @default(false)
+  skipConsent             Boolean?
+  enableEndSession        Boolean?
+  subjectType             String?
+  scopes                  String[]
+  userId                  String?
+  user                    User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt               DateTime?           @default(now())
+  updatedAt               DateTime?           @updatedAt
+  name                    String?
+  uri                     String?
+  icon                    String?
+  contacts                String[]
+  tos                     String?
+  policy                  String?
+  softwareId              String?
+  softwareVersion         String?
+  softwareStatement       String?
+  redirectUris            String[]
+  postLogoutRedirectUris  String[]
+  tokenEndpointAuthMethod String?
+  grantTypes              String[]
+  responseTypes           String[]
+  public                  Boolean?
+  type                    String?
+  requirePKCE             Boolean?
+  referenceId             String?
+  metadata                Json?
+  refreshTokens           OauthRefreshToken[]
+  accessTokens            OauthAccessToken[]
+  consents                OauthConsent[]
+
+  @@index([userId])
+  @@map("oauthClient")
+}
+
+model OauthRefreshToken {
+  id           String             @id @default(cuid())
+  token        String             @unique
+  clientId     String
+  client       OauthClient        @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  sessionId    String?
+  session      Session?           @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  userId       String
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referenceId  String?
+  expiresAt    DateTime
+  createdAt    DateTime           @default(now())
+  revoked      DateTime?
+  authTime     DateTime?
+  scopes       String[]
+  accessTokens OauthAccessToken[]
+
+  @@index([clientId])
+  @@index([sessionId])
+  @@index([userId])
+  @@map("oauthRefreshToken")
+}
+
+model OauthAccessToken {
+  id           String             @id @default(cuid())
+  token        String             @unique
+  clientId     String
+  client       OauthClient        @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  sessionId    String?
+  session      Session?           @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  userId       String?
+  user         User?              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referenceId  String?
+  refreshId    String?
+  refreshToken OauthRefreshToken? @relation(fields: [refreshId], references: [id], onDelete: Cascade)
+  expiresAt    DateTime
+  createdAt    DateTime           @default(now())
+  scopes       String[]
+
+  @@index([clientId])
+  @@index([sessionId])
+  @@index([userId])
+  @@index([refreshId])
+  @@map("oauthAccessTokenV2")
+}
+
+model OauthConsent {
+  id          String      @id @default(cuid())
+  clientId    String
+  client      OauthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  userId      String?
+  user        User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referenceId String?
+  scopes      String[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([clientId])
+  @@index([userId])
+  @@map("oauthConsentV2")
+}
+
+model Jwks {
+  id         String    @id @default(cuid())
+  publicKey  String
+  privateKey String
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime?
+
+  @@map("jwks")
+}
+
+model Waitlist {
+  id                    String    @id @default(cuid())
+  email                 String    @unique
+  source                String
+  cloudPrice            String?
+  prefersUsagePricing   Boolean   @default(false)
+  hostedPrice           String?
+  hostedPriceAnsweredAt DateTime?
+  // Lifetime count: incremented on every accepted upsert across all sources;
+  // not a per-source feedback counter and never reset.
+  submissions           Int       @default(1)
+  lastSubmittedAt       DateTime  @default(now())
+  createdAt             DateTime  @default(now())
+
+  @@map("waitlists")
+}
+
+// One row per address and named interest, such as a beta list it joined. Kept apart from
+// Waitlist so an address already on the waitlist can still record each later interest.
+model WaitlistInterest {
+  id              String   @id @default(cuid())
+  email           String
+  interest        String
+  submissions     Int      @default(1)
+  lastSubmittedAt DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  @@unique([email, interest])
+  @@map("waitlist_interests")
+}
+
+model Project {
+  providerComparisonPreviews ProviderComparisonPreview[]
+  providerComparisonRuns ProviderComparisonRun[]
+  historyEvidenceReplayRuns HistoryEvidenceReplayRun[]
+  historyEvidenceReplayReceipts HistoryEvidenceReplayReceipt[]
+  measurementSettingsMutations MeasurementSettingsMutation[]
+  measurementTargetEpoch BigInt @default(0)
+  measurementPolicyEpoch BigInt @default(0)
+  measurementPolicyConfig Json?
+  usageDisplaySettings Json?
+  lookupCacheTtlSeconds Int?
+  providerUiRevision               BigInt                           @default(0)
+  id                               String                           @id @default(cuid())
+  publicId                         String                           @unique
+  name                             String
+  // Optional: a workspace exists before the user says which domain to track.
+  domain                           String?
+  isSample                         Boolean                          @default(false)
+  trackingScope                    String                           @default("country")
+  writeMode                        ProjectWriteMode                 @default(active)
+  writeModeChangedAt               DateTime?
+  writeModeChangedById             String?
+  writeModeChangedBy               User?                            @relation("ProjectWriteModeChangedBy", fields: [writeModeChangedById], references: [id], onDelete: SetNull)
+  defaultForUsers                  User[]                           @relation("UserDefaultProject")
+  onboardingCompletedAt            DateTime?
+  competitorSetupOutcome           CompetitorSetupOutcome?
+  competitorSetupDecidedAt         DateTime?
+  ownerId                          String
+  owner                            User                             @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members                          Membership[]
+  keywords                         Keyword[]
+  markets                          ProjectMarket[]
+  savedKeywords                    SavedKeyword[]
+  tags                             Tag[]
+  competitors                      Competitor[]
+  competitorSuggestionDismissals   CompetitorSuggestionDismissal[]
+  defaults                         ProjectDefaults?
+  providerConnections              ProviderConnection[]
+  queuedRankCheckBatches           QueuedRankCheckBatch[]
+  aiTopics                         AiTopic[]
+  aiPrompts                        AiPrompt[]
+  aiPromptRevisions                AiPromptRevision[]
+  aiTrackingSuggestionGenerations  AiTrackingSuggestionGeneration[]
+  aiTrackingSchedules              AiTrackingSchedule[]
+  aiTrackingRuns                   AiTrackingRun[]
+  aiTrackingSamples                AiTrackingSample[]
+  rankCheckRuns                    RankCheckRun[]
+  checkSchedules                   CheckSchedule[]
+  backlinkSnapshots                BacklinkSnapshot[]
+  domainOverviewSnapshots          DomainOverviewSnapshot[]
+  keywordResearchSnapshots         KeywordResearchSnapshot[]
+  context                          ProjectContext?
+  agentReports                     AgentReport[]
+  pageTrafficSnapshots             PageTrafficSnapshot[]
+  searchAnalyticsDaily             SearchAnalyticsDaily[]
+  searchAnalyticsQueryDaily        SearchAnalyticsQueryDaily[]
+  searchAnalyticsPageDaily         SearchAnalyticsPageDaily[]
+  searchAnalyticsQueryPageDaily    SearchAnalyticsQueryPageDaily[]
+  searchAnalyticsImports           SearchAnalyticsImport[]
+  searchAnalyticsSyncPartitions    SearchAnalyticsSyncPartition[]
+  observationRuns                  ObservationRun[]
+  searchAnalyticsRequestUsage      SearchAnalyticsRequestUsage[]
+  searchInsightsPropertyRegistry   SearchInsightsPropertyRegistry[]
+  searchInsightsWindowFacts        SearchInsightsWindowFacts[]
+  organicSessionsDaily             OrganicSessionsDaily[]
+  organicSessionsPageDaily         OrganicSessionsPageDaily[]
+  apiKeys                          ApiKey[]
+  ingestHooks                      IngestHook[]
+  auditLogs                        AuditLog[]
+  alertRules                       AlertRule[]
+  signals                          Signal[]
+  sitemapMonitoringEnabled         Boolean                          @default(true)
+  sitemapSnapshots                 SitemapSnapshot[]
+  urlPresences                     UrlPresence[]
+  webhookEndpoints                 WebhookEndpoint[]
+  slackConnection                  SlackConnection?
+  notifications                    Notification[]
+  notificationPreferences          NotificationPreference[]
+  savedViews                       SavedView[]
+  surfacePreferences               UserProjectSurfacePreference[]
+  savedViewCreationRequests         SavedViewCreationRequest[]
+  invites                          Invite[]
+  migrationTokens                  MigrationToken[]
+  cloudImportJobs                  CloudImportJob[]
+  createdAt                        DateTime                         @default(now())
+  updatedAt                        DateTime                         @updatedAt
+
+  @@index([ownerId])
+  @@index([writeModeChangedById])
+  @@map("projects")
+
+  business_assignment_heads         BusinessAssignmentHead[]
+  business_assignment_revisions     BusinessAssignmentRevision[]
+  business_identifier_claims        BusinessIdentifierClaim[]
+  business_identity_revisions       BusinessIdentityRevision[]
+  business_location_mutations       BusinessLocationMutation[]
+  business_locations                BusinessLocation[]
+  business_match_decisions          BusinessMatchDecision[]
+  business_match_heads              BusinessMatchHead[]
+  local_measurement_points          LocalMeasurementPoint[]
+  local_measurement_run_items       LocalMeasurementRunItem[]
+  local_measurement_runs            LocalMeasurementRun[]
+  local_measurement_targets         LocalMeasurementTarget[]
+  local_monitor_grid_points         LocalMonitorGridPoint[]
+  local_monitor_keywords            LocalMonitorKeyword[]
+  local_monitor_launch_intents      LocalMonitorLaunchIntent[]
+  local_monitor_mutations           LocalMonitorMutation[]
+  local_monitor_occurrences         LocalMonitorOccurrence[]
+  local_monitor_recurring_approvals LocalMonitorRecurringApproval[]
+  local_monitor_recurring_cursors   LocalMonitorRecurringCursor[]
+  local_monitor_retry_selections    LocalMonitorRetrySelection[]
+  local_monitor_revisions           LocalMonitorRevision[]
+  local_monitor_schedule_intents    LocalMonitorScheduleIntent[]
+  local_monitors                    LocalMonitor[]
+  local_original_submit_proofs      LocalOriginalSubmitProof[]
+}
+
+
+model Membership {
+  id                  String    @id @default(cuid())
+  publicId            String    @unique
+  userId              String
+  projectId           String
+  role                Role      @default(member)
+  setupAcknowledgedAt DateTime?
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project             Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([userId, projectId])
+  @@index([projectId])
+  @@map("memberships")
+}
+
+model ProjectDefaults {
+  id                         String             @id @default(cuid())
+  projectId                  String             @unique
+  project                    Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  locationKey                String?
+  locationRef                Location?          @relation("ProjectDefaultLocation", fields: [locationKey], references: [canonicalKey], onDelete: Restrict)
+  country                    String?
+  city                       String?
+  device                     Device?
+  serpDepth                  Int                @default(100)
+  serpStopOnMatch            Boolean            @default(true)
+  frequency                  RankCheckFrequency @default(daily)
+  cronExpression             String?
+  timezone                   String             @default("UTC")
+  jitterMinutes              Int                @default(60)
+  inspectionDailyLimit       Int                @default(50)
+  searchSyncImportMonths     Int?
+  searchSyncPace             String?
+  enabledExperimentalModules String[]           @default([])
+  lastCheckedAt              DateTime?
+  nextCheckAt                DateTime?
+  createdAt                  DateTime           @default(now())
+  updatedAt                  DateTime           @updatedAt
+
+  @@index([locationKey])
+  @@map("project_defaults")
+}
+
+model ProjectMarket {
+  id                   String                     @id @default(cuid())
+  publicId             String                     @unique
+  projectId            String
+  locationId           String
+  name                 String                     @default("Market")
+  futureKeywordDevices Device[]                   @default([desktop, mobile])
+  status               ProjectMarketStatus        @default(active)
+  project              Project                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  location             Location                   @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  alertRuleMarkets     AlertRuleMarket[]
+  competitorOverrides  CompetitorMarketOverride[]
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+
+  @@unique([projectId, locationId])
+  @@index([projectId, status, createdAt, id])
+  @@index([locationId])
+  @@unique([projectId, id], map: "project_markets_scope_business_key")
+  @@map("project_markets")
+
+  business_assignment_heads BusinessAssignmentHead[]
+}
+
+// The legacy expression index remains for its existing consumers. textNormalized is a
+// migration-owned stored generated column, represented with dbgenerated for Prisma 7.
+model Keyword {
+  providerComparisonPreviews ProviderComparisonPreview[]
+  providerComparisonRuns ProviderComparisonRun[]
+  historyEvidenceReplayReceipts HistoryEvidenceReplayReceipt[]
+  measurementSnapshotRequests MeasurementSnapshotRequestBinding[]
+  measurementTargetEpoch BigInt @default(0)
+  measurementPolicyEpoch BigInt @default(0)
+  measurementTargets MeasurementTargetRevision[]
+  measurementPolicies MeasurementPolicyRevision[]
+  measurementHead MeasurementDefinitionHead?
+  measurementBindings MeasurementExecutionBinding[]
+  id                   String                   @id @default(cuid())
+  publicId             String                   @unique
+  projectId            String
+  text                 String
+  textNormalized       String?                  @default(dbgenerated("lower((regexp_replace(text, '^[\t\n\u000b\u000c\r    -     　﻿]+|[\t\n\u000b\u000c\r    -     　﻿]+$'::text, ''::text, 'g'::text) COLLATE \"en-US-x-icu\"))"))
+  location             String
+  locationId           String
+  device               Device                   @default(desktop)
+  checkScheduleId      String?
+  targetUrl            String?
+  topic                String?
+  intent               String?
+  project              Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  locationRef          Location                 @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  checkSchedule        CheckSchedule?           @relation(fields: [checkScheduleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  tags                 KeywordTag[]
+  schedule             KeywordSchedule?
+  dispatchState        KeywordDispatchState?
+  queuedRankCheckTasks QueuedRankCheckTask[]
+  rankChecks           RankCheck[]
+  rankCheckRunItems    RankCheckRunItem[]
+  trafficSnapshots     KeywordTrafficSnapshot[]
+  alertTargets         AlertRuleTarget[]
+  triggeredAlerts      TriggeredAlert[]
+  signals              Signal[]
+  archivedAt           DateTime?
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+
+  @@unique([projectId, text, locationId, device])
+  @@index([projectId])
+  @@index([projectId, textNormalized])
+  @@index([projectId, topic])
+  @@index([locationId])
+  @@index([checkScheduleId])
+  @@unique([projectId, id], map: "keywords_scope_business_key")
+  @@map("keywords")
+
+  business_assignment_heads                                           BusinessAssignmentHead[]
+  check_schedules_keywords_projectId_checkScheduleIdTocheck_schedules CheckSchedule?                      @relation("keywords_projectId_checkScheduleIdTocheck_schedules", fields: [projectId, checkScheduleId], references: [projectId, id], onDelete: NoAction, onUpdate: NoAction, map: "measurement_keyword_schedule_project")
+  local_measurement_targets                                           LocalMeasurementTarget[]
+  local_monitor_keywords                                              LocalMonitorKeyword[]
+}
+
+model SavedKeyword {
+  id             String   @id @default(cuid())
+  publicId       String   @unique
+  projectId      String
+  text           String
+  normalizedText String
+  location       String
+  countryCode    String
+  languageCode   String
+  volume         Int?
+  difficulty     Int?
+  cpc            Float?
+  intent         String?
+  trend          Json?
+  variantCount   Int      @default(0)
+  sourceSeed     String?
+  savedAt        DateTime @default(now())
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, normalizedText, location, countryCode, languageCode], map: "saved_keywords_market_pair_key")
+  @@index([projectId, savedAt])
+  @@map("saved_keywords")
+}
+
+model Location {
+  measurementEpoch BigInt @default(0)
+  id               String            @id @default(cuid())
+  kind             LocationKind
+  displayName      String
+  countryCode      String
+  regionCode       String?
+  cityName         String?
+  gl               String
+  hl               String
+  languageCode     String
+  languageLabel    String
+  primaryGeoCode   Int?
+  primaryGeoName   String
+  secondaryGeoName String
+  canonicalKey     String            @unique
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  keywords         Keyword[]
+  projectDefaults  ProjectDefaults[] @relation("ProjectDefaultLocation")
+  projectMarkets   ProjectMarket[]
+
+  @@index([countryCode])
+  @@map("locations")
+}
+
+model Tag {
+  id           String            @id @default(cuid())
+  publicId     String            @unique
+  projectId    String
+  name         String
+  color        String?
+  project      Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  keywords     KeywordTag[]
+  alertTargets AlertRuleTarget[]
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@unique([projectId, name])
+  @@index([projectId])
+  @@map("tags")
+}
+
+model Competitor {
+  id              String                     @id @default(cuid())
+  publicId        String                     @unique
+  projectId       String
+  project         Project                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  domain          String
+  label           String?
+  aliases         String[]                   @default([])
+  source          CompetitorSource           @default(manual)
+  evidence        Json?
+  scopePolicy     CompetitorScopePolicy      @default(all_markets)
+  marketOverrides CompetitorMarketOverride[]
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+
+  @@unique([projectId, domain])
+  @@index([projectId])
+  @@map("competitors")
+}
+
+model CompetitorMarketOverride {
+  id              String                       @id @default(cuid())
+  competitorId    String
+  projectMarketId String
+  mode            CompetitorMarketOverrideMode
+  competitor      Competitor                   @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  projectMarket   ProjectMarket                @relation(fields: [projectMarketId], references: [id], onDelete: Cascade)
+  createdAt       DateTime                     @default(now())
+  updatedAt       DateTime                     @updatedAt
+
+  @@unique([competitorId, projectMarketId])
+  @@index([projectMarketId])
+  @@map("competitor_market_overrides")
+}
+
+model CompetitorSuggestionDismissal {
+  id        String   @id @default(cuid())
+  projectId String
+  domain    String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([projectId, domain])
+  @@index([projectId, createdAt])
+  @@map("competitor_suggestion_dismissals")
+}
+
+model KeywordTag {
+  id        String   @id @default(cuid())
+  keywordId String
+  tagId     String
+  keyword   Keyword  @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([keywordId, tagId])
+  @@index([tagId])
+  @@map("keyword_tags")
+}
+
+model KeywordSchedule {
+  id             String             @id @default(cuid())
+  keywordId      String             @unique
+  keyword        Keyword            @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  frequency      RankCheckFrequency
+  serpDepth      Int?
+  cronExpression String?
+  timezone       String
+  jitterMinutes  Int                @default(60)
+  lastCheckedAt  DateTime?
+  nextCheckAt    DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@map("keyword_schedules")
+}
+
+model CheckSchedule {
+  measurementEpoch BigInt @default(0)
+  @@unique([projectId,id], map: "measurement_check_schedule_project_id")
+  id             String             @id @default(cuid())
+  publicId       String             @unique
+  projectId      String
+  project        Project            @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  name           String
+  archivedAt     DateTime?
+  frequency      RankCheckFrequency
+  cronExpression String?
+  /// Local time in 24-hour HH:mm format.
+  timeOfDay      String?
+  /// Null uses the project time zone.
+  timezone       String?
+  jitterMinutes  Int                @default(60)
+  serpDepth      Int?
+  /// Null uses the project provider policy.
+  providerPolicy String?
+  enabled        Boolean            @default(true)
+  /// A migration-only partial unique index enforces one default per project.
+  isDefault      Boolean            @default(false)
+  keywords       Keyword[]
+  rankCheckRuns  RankCheckRun[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([projectId])
+  @@index([projectId, archivedAt])
+  @@map("check_schedules")
+
+  keywords_keywords_projectId_checkScheduleIdTocheck_schedules Keyword[]                    @relation("keywords_projectId_checkScheduleIdTocheck_schedules")
+  local_monitor_schedule_intents                               LocalMonitorScheduleIntent[]
+}
+
+model KeywordDispatchState {
+  keywordId   String   @id
+  keyword     Keyword  @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  nextCheckAt DateTime
+
+  @@index([nextCheckAt, keywordId])
+  @@map("keyword_dispatch_states")
+}
+
+model RankCheck {
+  historyEvidenceReplayReceipts HistoryEvidenceReplayReceipt[]
+  definitionExecutionToken String?
+  definitionWorkflowId String?
+  definitionExecutionPrincipal Json?
+  measurementSnapshotRequests MeasurementSnapshotRequestBinding[]
+  measurementBindings MeasurementExecutionBinding[]
+  @@unique([keywordId,id], map: "measurement_rank_check_keyword_id")
+  id                   String               @id @default(cuid())
+  publicId             String               @unique
+  keywordId            String
+  keyword              Keyword              @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  position             Int?
+  previousPosition     Int?
+  rankingUrl           String?
+  expectedUrlAtCheck   String?
+  /// Allowed values: "running", "completed", "failed", "deferred".
+  status               String               @default("completed")
+  error                String?
+  errorCode            String?
+  checkedAt            DateTime             @default(now())
+  provider             String
+  /// Allowed values when set: "scheduled", "manual".
+  trigger              String?
+  /// Legacy Temporal schedule ID written by rank-check activities, not a CheckSchedule ID.
+  scheduleId           String?
+  runId                String?
+  run                  RankCheckRun?        @relation(fields: [runId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  runItem              RankCheckRunItem?
+  workflowRunId        String?
+  scheduledAt          DateTime?
+  startedAt            DateTime?
+  finishedAt           DateTime?
+  deferredReason       String?
+  requestedDepth       Int?
+  normalizationVersion String?              @default("v1")
+  costCents            Decimal?             @db.Decimal(10, 4)
+  estimatedCostCents   Decimal?             @db.Decimal(10, 4)
+  billingUnits         Int?
+  /// Compact top-100 organic snapshot as [{ domain, position }]. Null means unavailable or legacy.
+  organicRanks         Json?
+  raw                  Json?
+  attempts             Json?
+  viaFallback          Boolean              @default(false)
+  degradedToCountry    Boolean              @default(false)
+  attemptCount         Int                  @default(1)
+  triggeredAlerts      TriggeredAlert[]
+  queuedTask           QueuedRankCheckTask?
+  recoveryResult       RankCheckResultEvidence?
+  observationRun       ObservationRun?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  @@unique([keywordId, checkedAt])
+  @@index([keywordId, checkedAt(sort: Desc), id(sort: Desc)])
+  @@index([checkedAt])
+  // Migration-only partial index: rank_checks (checkedAt, id) WHERE raw IS NOT NULL.
+  @@index([scheduledAt])
+  @@index([startedAt])
+  @@index([status, checkedAt])
+  @@index([viaFallback, checkedAt, id])
+  @@index([provider, checkedAt, id])
+  @@index([trigger, checkedAt, id])
+  @@index([runId])
+  @@map("rank_checks")
+}
+
+model RankCheckRun {
+  definitionExecutionOrigin Json?
+  recoveryGrant           RankCheckRunRecoveryGrant?
+  /// Removed from user-facing history; retained for scheduler idempotency and accounting.
+  deletedAt               DateTime?
+  id                      String                 @id @default(cuid())
+  publicId                String                 @unique
+  projectId               String
+  project                 Project                @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  /// Allowed values: "manual", "scheduled", "api", "retry".
+  trigger                 String
+  /// ProviderRequestSource of the launcher; null for legacy rows.
+  source                  String?
+  credentialKind          String?
+  credentialId            String?
+  /// Allowed values: "single", "selected", "filter", "all", "scheduled_due", "retry_failed", "rerun", "legacy_schedule".
+  selectionKind           String
+  selectionSpec           Json
+  selectionHash           String
+  idempotencyKey          String?
+  /// Allowed values: "planned", "blocked", "queued", "running", "cancelling", "completed", "cancelled".
+  status                  String                 @default("queued")
+  /// Allowed values when set: "succeeded", "partial", "failed", "deferred".
+  outcome                 String?
+  blockedReason           String?
+  requestedCount          Int                    @default(0)
+  totalCount              Int                    @default(0)
+  skippedCount            Int                    @default(0)
+  completedCount          Int                    @default(0)
+  failedCount             Int                    @default(0)
+  deferredCount           Int                    @default(0)
+  cancelledCount          Int                    @default(0)
+  keywordCount            Int                    @default(0)
+  targetCount             Int                    @default(0)
+  estimatedCostCents      Int                    @default(0)
+  costCents               Int                    @default(0)
+  requestedById           String?
+  requestedBy             User?                  @relation("RankCheckRunRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  checkScheduleId         String?
+  checkSchedule           CheckSchedule?         @relation(fields: [checkScheduleId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  plannedFor              DateTime?
+  launchedAt              DateTime?
+  claimedAt               DateTime?
+  startedAt               DateTime?
+  finishedAt              DateTime?
+  parentRunId             String?
+  parentRun               RankCheckRun?          @relation("RankCheckRunParent", fields: [parentRunId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  childRuns               RankCheckRun[]         @relation("RankCheckRunParent")
+  /// Allowed values when set: "retry_failed", "retry_deferred", "rerun".
+  parentRelation          String?
+  orchestrationWorkflowId String?                @unique
+  items                   RankCheckRunItem[]
+  rankChecks              RankCheck[]
+  queuedRankCheckBatches  QueuedRankCheckBatch[]
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+
+  @@unique([projectId, idempotencyKey])
+  @@index([projectId, startedAt, id])
+  @@index([projectId, status])
+  @@index([status, claimedAt, id])
+  @@index([checkScheduleId, plannedFor])
+  @@map("rank_check_runs")
+}
+
+model RankCheckRunItem {
+  definitionIntent Json?
+  id                 String             @id @default(cuid())
+  runId              String
+  run                RankCheckRun       @relation(fields: [runId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  keywordId          String
+  keyword            Keyword            @relation(fields: [keywordId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  /// Allowed values: "queued", "running", "completed", "failed", "deferred", "cancelled", "skipped", "blocked".
+  status             String             @default("queued")
+  blockedReason      String?
+  notBefore          DateTime?
+  claimExpiresAt     DateTime?
+  claimAttempts      Int                @default(0)
+  rankCheckId        String?            @unique
+  rankCheck          RankCheck?         @relation(fields: [rankCheckId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  sourceRunItemId    String?
+  sourceRunItem      RankCheckRunItem?  @relation("RankCheckRunItemSource", fields: [sourceRunItemId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  derivedRunItems    RankCheckRunItem[] @relation("RankCheckRunItemSource")
+  estimatedCostCents Int?
+  actualCostCents    Int?
+  startedAt          DateTime?
+  finishedAt         DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@unique([runId, keywordId])
+  @@index([runId, status])
+  @@index([keywordId])
+  // Migration-only partial unique index: keywordId WHERE status = 'running'.
+  @@index([status, notBefore])
+  @@map("rank_check_run_items")
+}
+
+model ObservationRun {
+  definitionBindingId String?
+  definitionBinding           MeasurementExecutionBinding? @relation(fields: [projectId, definitionBindingId], references: [projectId, id], onDelete: NoAction, onUpdate: NoAction, map: "measurement_observation_binding_fk")
+  @@index([definitionBindingId], map: "measurement_observation_binding_index")
+  id              String            @id @default(cuid())
+  rankCheckId     String?           @unique
+  rankCheck       RankCheck?        @relation(fields: [rankCheckId], references: [id], onDelete: Cascade)
+  neutralExecutionItemId String?   @unique
+  projectId       String
+  project         Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  provider        String
+  /// Allowed values: "web_serp", "maps", "local_finder"; capability admission is separate.
+  surface         String
+  /// Allowed values: "google".
+  engine          String
+  /// Request as sent: { depth, stopOnMatch, findTargetsIn, forcedAiOverview }.
+  requestPolicy   Json
+  /// Allowed values: "complete", "truncated_by_stop_on_match", "unknown".
+  completeness    String
+  /// Requested scope as { location, language, device }.
+  configuredScope Json
+  /// Provider-proven effective scope; absent proof remains unknown.
+  effectiveScope  Json?
+  executedAt      DateTime
+  items           ObservationItem[]
+  createdAt       DateTime          @default(now())
+
+  @@index([projectId, executedAt(sort: Desc)])
+  @@unique([projectId, id], map: "observation_runs_scope_business_key")
+  @@map("observation_runs")
+
+  business_match_heads        BusinessMatchHead[]
+  local_measurement_run_items LocalMeasurementRunItem?     @relation(fields: [projectId, neutralExecutionItemId], references: [projectId, id], onDelete: Cascade, onUpdate: NoAction, map: "observation_runs_neutral_project_fk")
+}
+
+model ObservationItem {
+  id               String         @id @default(cuid())
+  observationRunId String
+  observationRun   ObservationRun @relation(fields: [observationRunId], references: [id], onDelete: Cascade)
+  /// Allowed values: "organic_result", "local_pack", "ai_overview".
+  resultKind       String
+  /// Order of the item within the run as emitted by the provider adapter.
+  ordinal          Int
+  rankScale        String?
+  promotion        String?
+  sourcePage       Int?
+  sourceBlockId    String?
+  sourceOrdinal    Int?
+  observedAt       DateTime?
+  rankGroup        Int?
+  rankAbsolute     Int?
+  /// Position of the feature block on the page (1-based) when the provider supplies it.
+  blockPosition    Int?
+  /// Position of this item inside its block (1-based).
+  positionInBlock  Int?
+  title            String?
+  url              String?
+  domain           String?
+  businessName     String?
+  placeId          String?
+  /// Opaque provider identifier; never parsed as a number.
+  cid              String?
+  mapsUrl          String?
+  /// Rating as { value, count }.
+  rating           Json?
+  /// Provider fragment for this item only, never the whole page.
+  rawFragment      Json
+  createdAt        DateTime       @default(now())
+
+  @@index([observationRunId, resultKind])
+  @@unique([id, observationRunId], map: "observation_items_scope_business_key")
+  @@map("observation_items")
+
+  business_match_heads BusinessMatchHead[]
+}
+
+model RankCheckRawPurgeProgress {
+  id              String    @id
+  cutoff          DateTime?
+  retentionDays   Int?
+  maxBatches      Int
+  batchCount      Int       @default(0)
+  updatedCount    Int       @default(0)
+  completed       Boolean   @default(false)
+  hasMore         Boolean   @default(false)
+  resultClearedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Migration-only partial index: id WHERE completed AND resultClearedAt IS NULL.
+  @@index([completed, resultClearedAt, id], map: "rank_check_raw_purge_progress_reclaim_idx")
+  @@map("rank_check_raw_purge_progress")
+}
+
+model QueuedRankCheckBatch {
+  definitionWorkflowId String?
+  definitionWorkflowRunId String?
+  id              String                @id
+  projectId       String
+  project         Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  runId           String?
+  run             RankCheckRun?         @relation(fields: [runId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  connectionId    String?
+  connection      ProviderConnection?   @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  provider        String                @default("dataforseo")
+  priority        String
+  state           String
+  /// ProviderRequestSource of the request that queued the batch.
+  source          String?
+  /// "manual" | "scheduled".
+  trigger         String?
+  credentialKind  String?
+  credentialId    String?
+  claimedAt       DateTime
+  queueDeadlineAt DateTime
+  submittedAt     DateTime?
+  ambiguousAt     DateTime?
+  terminalAt      DateTime?
+  expiresAt       DateTime?
+  error           String?
+  tasks           QueuedRankCheckTask[]
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@index([projectId, createdAt])
+  @@index([runId])
+  @@index([state, expiresAt])
+  // Migration-only partial index: queued_rank_check_batches (queueDeadlineAt, id) for active states.
+  @@map("queued_rank_check_batches")
+}
+
+model QueuedRankCheckTask {
+  measurementBindings MeasurementExecutionBinding[]
+  @@unique([keywordId,id], map: "measurement_queued_task_keyword_id")
+  id                        String               @id
+  batchId                   String
+  batch                     QueuedRankCheckBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  keywordId                 String
+  keyword                   Keyword              @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  rankCheckId               String               @unique
+  rankCheck                 RankCheck            @relation(fields: [rankCheckId], references: [id], onDelete: Cascade)
+  providerTaskId            String?              @unique
+  providerTag               String?
+  meteringContext           Json?
+  recoveryContextHash       String?
+  state                     String
+  costCents                 Decimal?             @db.Decimal(10, 4)
+  error                     String?
+  persistenceLeaseOwner     String?              @unique
+  persistenceLeaseExpiresAt DateTime?
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+
+  @@unique([batchId, keywordId])
+  @@index([batchId, state])
+  @@index([keywordId, state])
+  @@map("queued_rank_check_tasks")
+}
+
+model OperationalRun {
+  id           String    @id @default(cuid())
+  /// Initial kind: "traffic_sync".
+  kind         String
+  projectId    String?
+  connectionId String?
+  provider     String?
+  scheduledFor DateTime?
+  startedAt    DateTime
+  finishedAt   DateTime?
+  /// Allowed values: "succeeded_with_data", "succeeded_empty", "deferred_rate_limit", "failed", "not_applicable".
+  status       String
+  error        String?
+  /// Bounded failure class safe for operator/UI display; provider payloads remain redacted.
+  errorClass   String?
+  /// Traffic sync metrics include rowsFetched, rowsMatched, and rowsUpserted.
+  meta         Json?
+
+  @@index([kind, startedAt])
+  @@index([projectId, provider, startedAt])
+  @@map("operational_runs")
+}
+
+model OpsEvent {
+  id          String    @id @default(cuid())
+  kind        String
+  /// Allowed values: "info", "warning", "error".
+  severity    String
+  title       String
+  fields      Json?
+  dedupeKey   String?
+  createdAt   DateTime  @default(now())
+  deliveredAt DateTime?
+  attempts    Int       @default(0)
+  lastError   String?
+
+  @@index([deliveredAt, createdAt])
+  @@map("ops_events")
+}
+
+model EmailDailyStat {
+  id                   String    @id @default(cuid())
+  day                  DateTime  @db.Date
+  category             String
+  count                Int       @default(0)
+  exhaustionNotifiedAt DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([day, category])
+  @@map("email_daily_stats")
+}
+
+model DailySendCounter {
+  day       DateTime @id @db.Date
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("daily_send_counters")
+}
+
+model InstanceSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("instance_settings")
+}
+
+model InstanceMailConfig {
+  id                 String   @id
+  provider           String
+  sender             String
+  credentialsCipher  String
+  updatedAt          DateTime @updatedAt
+
+  @@map("instance_mail_config")
+}
+
+model BacklinkSnapshot {
+  id                 String        @id @default(cuid())
+  projectId          String
+  project            Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  target             String
+  targetScope        String
+  includeSubdomains  Boolean       @default(true)
+  summary            Json
+  history            Json
+  fetchedRowCount    Int
+  totalRowsAvailable Int
+  costCents          Int
+  fetchedAt          DateTime
+  expiresAt          DateTime
+  rows               BacklinkRow[]
+
+  @@index([projectId, target, targetScope, includeSubdomains, fetchedAt])
+  @@map("backlink_snapshots")
+}
+
+model KeywordResearchSnapshot {
+  id                 String   @id @default(cuid())
+  projectId          String
+  project            Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requestKey         String
+  seed               String
+  normalizedSeed     String
+  countryCode        String
+  languageCode       String
+  mode               String
+  includeClickstream Boolean
+  resultLimit        Int
+  provider           String
+  rows               Json
+  sources            Json
+  fetchedAt          DateTime
+  freshUntil         DateTime
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([projectId, requestKey])
+  @@map("keyword_research_snapshots")
+}
+
+model BacklinkRow {
+  id              String           @id @default(cuid())
+  snapshotId      String
+  snapshot        BacklinkSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  sourceDomain    String
+  sourceUrl       String?
+  anchor          String
+  targetUrl       String
+  flags           String[]
+  domainAuthority Int
+  spamScore       Float
+  linksCount      Int              @default(1)
+  firstSeen       DateTime?
+  lostAt          DateTime?
+  status          String
+
+  @@index([snapshotId, sourceDomain])
+  @@map("backlink_rows")
+}
+
+model DomainOverviewSnapshot {
+  id                       String    @id @default(cuid())
+  projectId                String
+  project                  Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  target                   String
+  scope                    String
+  locationCode             Int
+  languageCode             String
+  provider                 String
+  overview                 Json
+  previousOverview         Json?
+  rankedKeywords           Json?
+  relevantPages            Json?
+  history                  Json?
+  fetchedAt                DateTime
+  previousFetchedAt        DateTime?
+  sourceSnapshotAt         DateTime?
+  previousSourceSnapshotAt DateTime?
+  cachedUntil              DateTime
+
+  @@unique([projectId, target, scope, locationCode, languageCode], map: "domain_overview_snapshot_market_key")
+  @@index([projectId, fetchedAt])
+  @@map("domain_overview_snapshots")
+}
+
+model KeywordTrafficSnapshot {
+  id          String   @id @default(cuid())
+  keywordId   String
+  keyword     Keyword  @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  provider    String
+  date        DateTime @db.Date
+  windowDays  Int      @default(28)
+  clicks      Int
+  impressions Int
+  ctr         Float
+  position    Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([keywordId, provider, date, windowDays], map: "keyword_traffic_snapshots_keyword_provider_date_window_key")
+  @@index([keywordId, date])
+  @@map("keyword_traffic_snapshots")
+}
+
+model ProviderConnection {
+  providerUiRevision                         BigInt                   @default(0)
+  id                                          String                   @id @default(cuid())
+  publicId                                    String                   @unique
+  projectId                                   String
+  project                                     Project                  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  kind                                        ProviderKind
+  provider                                    String
+  status                                      ProviderStatus
+  priority                                    Int                      @default(100)
+  enabled                                     Boolean                  @default(true)
+  credentialsEncrypted                        String?
+  credentialSource                            ProviderCredentialSource @default(own)
+  /// Own-keys budget for the app surface (app and schedules), in the provider catalog unit.
+  /// Credits budget for the app surface, in cents of charged credits price. Null = no budget.
+  /// Credits budget for the programmatic surface, in cents of charged credits price. Null = no budget.
+  rates                                       ProviderConnectionRate[]
+  queuedRankCheckBatches                      QueuedRankCheckBatch[]
+  lastUsedAt                                  DateTime?
+  firstSyncRequestedAt                        DateTime?
+  firstSyncStartedAt                          DateTime?
+  firstSyncFinishedAt                         DateTime?
+  createdAt                                   DateTime                 @default(now())
+  updatedAt                                   DateTime                 @updatedAt
+
+  @@unique([projectId, provider])
+  @@index([projectId])
+  @@index([projectId, kind, priority])
+  @@index([kind, firstSyncFinishedAt, firstSyncStartedAt, firstSyncRequestedAt], map: "provider_connections_first_sync_intent_idx")
+  // Migration-only partial index: firstSyncStartedAt for pending worker intents.
+  @@map("provider_connections")
+
+  @@unique([projectId, id], map: "provider_connections_project_id_local_unique")
+  local_measurement_run_items LocalMeasurementRunItem[]
+}
+
+model ProviderConnectionRate {
+  id           String              @id @default(cuid())
+  connectionId String
+  connection   ProviderConnection  @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  feature      ProviderCostFeature
+  amountCents  Decimal             @db.Decimal(10, 4)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@unique([connectionId, feature])
+  @@index([connectionId])
+  @@map("provider_connection_rates")
+}
+
+model PageTrafficSnapshot {
+  id                   String   @id @default(cuid())
+  projectId            String
+  project              Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  provider             String
+  path                 String
+  date                 DateTime @db.Date
+  windowDays           Int      @default(28)
+  sessions             Int
+  visitors             Int?
+  engagementRate       Float?
+  bounceRate           Float?
+  visitDurationSeconds Float?
+  keyEvents            Float?
+  scrollDepth          Float?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([projectId, provider, path, date, windowDays], map: "page_traffic_snapshots_project_provider_path_date_window_key")
+  @@index([projectId, path, date])
+  @@map("page_traffic_snapshots")
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  publicId   String    @unique
+  projectId  String
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name       String
+  hashedKey  String    @unique
+  prefix     String
+  scopes     String[]  @default(["read", "write", "admin"])
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([projectId])
+  @@index([prefix])
+  @@map("api_keys")
+}
+
+// Mobile push token for one device of one user. A token belongs to exactly
+// one user: registering it again from another account moves it. Tokens are
+// deleted with the user and when the push service reports them unregistered.
+model DevicePushToken {
+  id          String    @id @default(cuid())
+  publicId    String    @unique
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token       String    @unique
+  /// "sandbox" | "production" push environment of the app build.
+  environment String
+  bundleId    String
+  lastSeenAt  DateTime  @default(now())
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, revokedAt])
+  @@map("device_push_tokens")
+}
+
+// User-scoped bearer credential (bsb_pat_live_*) that acts as the user across all
+// their project memberships, unlike project-scoped api_keys. Effective access
+// per project is the intersection of the token scope tier and the membership
+// role, computed at request time.
+model PersonalAccessToken {
+  id         String    @id @default(cuid())
+  publicId   String    @unique
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  hashedKey  String    @unique
+  prefix     String
+  scopes     String[]  @default(["read"])
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([prefix])
+  @@map("personal_access_tokens")
+}
+
+model IngestHook {
+  id          String    @id @default(cuid())
+  publicId    String    @unique
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  label       String
+  tokenHash   String    @unique
+  disabled    Boolean   @default(false)
+  lastUsedAt  DateTime?
+  createdById String?
+  createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([projectId])
+  @@map("ingest_hooks")
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  publicId       String   @unique
+  actorId        String?
+  actor          User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  projectId      String?
+  project        Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  action         String
+  targetType     String
+  targetId       String
+  before         Json?
+  after          Json?
+  sourceIpHash   String?
+  sourceIpMasked String?
+  userAgent      String?
+  correlationId  String?
+  appVersion     String?
+  status         String   @default("success")
+  statusReason   String?
+  createdAt      DateTime @default(now())
+
+  @@index([actorId])
+  @@index([projectId])
+  @@index([createdAt])
+  @@index([action, createdAt])
+  @@index([targetType, targetId])
+  @@map("audit_logs")
+}
+
+model Signal {
+  id          String         @id @default(cuid())
+  publicId    String         @unique
+  projectId   String
+  project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  keywordId   String?
+  keyword     Keyword?       @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  source      SignalSource
+  type        String
+  severity    SignalSeverity @default(info)
+  url         String?
+  payload     Json?
+  happenedAt  DateTime       @default(now())
+  createdById String?
+  createdBy   User?          @relation("SignalCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime       @default(now())
+
+  @@index([projectId, happenedAt(sort: Desc)])
+  @@index([projectId, source, happenedAt])
+  @@index([keywordId, happenedAt])
+  @@map("signals")
+}
+
+model SitemapSnapshot {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sitemapUrl  String
+  urlCount    Int
+  entries     Json
+  contentHash String
+  fetchedAt   DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([projectId, fetchedAt(sort: Desc)])
+  @@map("sitemap_snapshots")
+}
+
+model UrlPresence {
+  id            String    @id @default(cuid())
+  projectId     String
+  project       Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  url           String
+  verdict       String?
+  coverageState String?
+  lastCrawlAt   DateTime?
+  canonicalOk   Boolean?
+  checkedAt     DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([projectId, url])
+  @@index([projectId, checkedAt])
+  @@map("url_presences")
+}
+
+model AlertRule {
+  id                String               @id @default(cuid())
+  publicId          String               @unique
+  projectId         String
+  project           Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name              String
+  conditionType     AlertConditionType
+  severity          AlertSeverity
+  enabled           Boolean              @default(true)
+  targetType        AlertTargetType      @default(all)
+  thresholdPosition Int?
+  changePct         Decimal?
+  dropPositions     Int?
+  topN              Int?
+  serpFeature       String?
+  competitorDomain  String?
+  channels          AlertChannel[]
+  targets           AlertRuleTarget[]
+  markets           AlertRuleMarket[]
+  recipients        AlertRuleRecipient[]
+  triggered         TriggeredAlert[]
+  dailyStats        AlertRuleDailyStat[]
+  createdById       String?
+  createdBy         User?                @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@index([projectId])
+  @@index([projectId, enabled])
+  @@map("alert_rules")
+}
+
+model AlertRuleMarket {
+  id              String        @id @default(cuid())
+  ruleId          String
+  projectMarketId String
+  rule            AlertRule     @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  projectMarket   ProjectMarket @relation(fields: [projectMarketId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now())
+
+  @@unique([ruleId, projectMarketId])
+  @@index([projectMarketId])
+  @@map("alert_rule_markets")
+}
+
+model AlertRuleTarget {
+  id        String    @id @default(cuid())
+  ruleId    String
+  rule      AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  keywordId String?
+  keyword   Keyword?  @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  tagId     String?
+  tag       Tag?      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([ruleId])
+  @@index([keywordId])
+  @@index([tagId])
+  @@map("alert_rule_targets")
+}
+
+model AlertRuleRecipient {
+  id        String    @id @default(cuid())
+  ruleId    String
+  rule      AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([ruleId, userId])
+  @@index([userId])
+  @@map("alert_rule_recipients")
+}
+
+model TriggeredAlert {
+  id                       String               @id @default(cuid())
+  publicId                 String               @unique
+  ruleId                   String
+  rule                     AlertRule            @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  keywordId                String
+  keyword                  Keyword              @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  rankCheckId              String?
+  rankCheck                RankCheck?           @relation(fields: [rankCheckId], references: [id], onDelete: SetNull)
+  firedAt                  DateTime             @default(now())
+  beforePosition           Int?
+  afterPosition            Int?
+  status                   TriggeredAlertStatus @default(firing)
+  snoozedUntil             DateTime?
+  resolvedAt               DateTime?
+  payload                  Json?
+  deliveredAt              DateTime?
+  deliveryState            AlertDeliveryState   @default(pending)
+  deliveryClaimedAt        DateTime?
+  deliveryClaimToken       String?
+  deliveryBudgetReservedAt DateTime?
+  deliveryAttempts         DeliveryAttempt[]
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
+
+  @@unique([ruleId, keywordId, rankCheckId])
+  @@index([ruleId])
+  @@index([keywordId, firedAt])
+  @@index([status])
+  @@index([snoozedUntil])
+  @@index([deliveryState, firedAt])
+  @@index([firedAt])
+  @@map("triggered_alerts")
+}
+
+model AlertRuleDailyStat {
+  id                 String    @id @default(cuid())
+  ruleId             String
+  rule               AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  day                DateTime  @db.Date
+  sentCount          Int       @default(0)
+  suppressedCount    Int       @default(0)
+  overflowNotifiedAt DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([ruleId, day])
+  @@map("alert_rule_daily_stats")
+}
+
+model DeliveryAttempt {
+  id                String           @id @default(cuid())
+  triggeredAlertId  String
+  triggeredAlert    TriggeredAlert   @relation(fields: [triggeredAlertId], references: [id], onDelete: Cascade)
+  webhookEndpointId String?
+  webhookEndpoint   WebhookEndpoint? @relation(fields: [webhookEndpointId], references: [id], onDelete: SetNull)
+  channel           AlertChannel
+  status            String
+  error             String?
+  attemptedAt       DateTime         @default(now())
+
+  @@index([triggeredAlertId])
+  @@index([webhookEndpointId])
+  @@index([attemptedAt])
+  @@map("delivery_attempts")
+}
+
+model WebhookEndpoint {
+  id               String            @id @default(cuid())
+  publicId         String            @unique
+  projectId        String
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  url              String
+  hmacSecret       String
+  enabled          Boolean           @default(true)
+  description      String?
+  lastDeliveryAt   DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  deliveryAttempts DeliveryAttempt[]
+
+  @@index([projectId])
+  @@map("webhook_endpoints")
+}
+
+model SlackConnection {
+  id              String   @id @default(cuid())
+  projectId       String   @unique
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  teamId          String
+  teamName        String?
+  channelId       String?
+  channelName     String?
+  accessTokenHash String
+  scope           String?
+  enabled         Boolean  @default(true)
+  installedById   String?
+  installedBy     User?    @relation(fields: [installedById], references: [id], onDelete: SetNull)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("slack_connections")
+}
+
+model SavedView {
+  id          String   @id @default(cuid())
+  publicId    String   @unique
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdById String?
+  createdBy   User?    @relation("SavedViewCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  visibility  SavedViewVisibility @default(project)
+  ownerId     String?
+  owner       User?    @relation("SavedViewOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  revision    Int      @default(1)
+  name        String
+  /// Product surface that owns this view. Existing rows default to keyword views.
+  surface     String   @default("keywords")
+  config      Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  personalDefaults UserProjectSurfacePreference[]
+  creationRequests SavedViewCreationRequest[]
+
+  @@index([projectId, surface])
+  @@index([projectId, surface, visibility, ownerId])
+  @@map("saved_views")
+}
+
+model UserProjectSurfacePreference {
+  id                 String    @id @default(cuid())
+  userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId          String
+  project            Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  surface            String
+  revision           Int       @default(1)
+  schemaVersion      Int       @default(1)
+  defaultSavedViewId  String?
+  defaultSavedViewPublicId String?
+  defaultSavedView    SavedView? @relation(fields: [defaultSavedViewId], references: [id], onDelete: SetNull)
+  defaultPresetId    String    @default("general")
+  presentation       Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([userId, projectId, surface])
+  @@index([projectId])
+  @@index([defaultSavedViewId])
+  @@map("user_project_surface_preferences")
+}
+
+model SavedViewCreationRequest {
+  id                 String    @id @default(cuid())
+  userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId          String
+  project            Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requestId          String
+  inputHash          String
+  savedViewPublicId  String
+  savedViewId        String?
+  savedView          SavedView? @relation(fields: [savedViewId], references: [id], onDelete: SetNull)
+  createdAt          DateTime  @default(now())
+
+  @@unique([userId, projectId, requestId])
+  @@index([projectId])
+  @@index([savedViewId])
+  @@map("saved_view_creation_requests")
+}
+
+model Notification {
+  id             String           @id @default(cuid())
+  publicId       String           @unique
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId      String?
+  project        Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  type           NotificationType
+  title          String
+  body           String?
+  payload        Json?
+  idempotencyKey String?
+  readAt         DateTime?
+  createdAt      DateTime         @default(now())
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+  @@index([projectId])
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  alertEmail  Boolean  @default(true)
+  alertInApp  Boolean  @default(true)
+  /// Mobile push for fired alerts, on the member's registered devices.
+  alertPush   Boolean  @default(true)
+  checkEmail  Boolean  @default(false)
+  checkInApp  Boolean  @default(false)
+  inviteEmail Boolean  @default(true)
+  inviteInApp Boolean  @default(true)
+  importEmail Boolean  @default(true)
+  importInApp Boolean  @default(true)
+  reportEmail Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, projectId])
+  @@index([projectId])
+  @@map("notification_preferences")
+}
+
+model Invite {
+  id          String    @id @default(cuid())
+  publicId    String    @unique
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  email       String
+  role        Role      @default(member)
+  token       String    @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  invitedById String
+  invitedBy   User      @relation(fields: [invitedById], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@unique([projectId, email])
+  @@index([projectId])
+  @@index([email])
+  @@map("invites")
+}
+
+model MigrationToken {
+  id          String           @id @default(cuid())
+  publicId    String           @unique
+  projectId   String
+  project     Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  hash        String           @unique
+  scope       MigrationScope   @default(full)
+  expiresAt   DateTime
+  singleUse   Boolean          @default(true)
+  consumedAt  DateTime?
+  createdById String
+  createdBy   User             @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  importJobs  CloudImportJob[]
+  createdAt   DateTime         @default(now())
+
+  @@index([projectId])
+  @@map("migration_tokens")
+}
+
+model CloudImportJob {
+  id             String                 @id @default(cuid())
+  publicId       String                 @unique
+  projectId      String
+  project        Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tokenId        String?
+  token          MigrationToken?        @relation(fields: [tokenId], references: [id], onDelete: SetNull)
+  state          CloudImportState       @default(idle)
+  progress       Int                    @default(0)
+  counts         Json?
+  error          String?
+  chunkCount     Int?
+  chunksReceived Int                    @default(0)
+  chunksImported Int                    @default(0)
+  manifest       Json?
+  chunks         MigrationImportChunk[]
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  @@index([projectId])
+  @@index([state])
+  @@index([state, updatedAt])
+  @@index([finishedAt])
+  @@map("cloud_import_jobs")
+}
+
+model MigrationImportChunk {
+  id         String         @id @default(cuid())
+  jobId      String
+  job        CloudImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  index      Int
+  checksum   String
+  bytes      Int
+  kind       String
+  payload    Json
+  receivedAt DateTime       @default(now())
+  importedAt DateTime?
+
+  @@unique([jobId, index])
+  @@index([jobId])
+  @@map("migration_import_chunks")
+}
+
+/// Durable execution ledger for ordered repository data migrations.
+model DataMigration {
+  id                   String    @id
+  checksum             String
+  attempts             Int       @default(0)
+  startedAt            DateTime
+  runCompletedAt       DateTime?
+  finishedAt           DateTime?
+  failedAt             DateTime?
+  error                String?
+  finalizationAttempts Int       @default(0)
+  finalizationFailedAt DateTime?
+  finalizationError    String?
+
+  @@map("data_migrations")
+}
+
+model OnboardingQuizResponse {
+  id          String                 @id @default(cuid())
+  userId      String
+  quizVersion Int
+  status      OnboardingQuizStatus   @default(IN_PROGRESS)
+  startedAt   DateTime               @default(now())
+  finishedAt  DateTime?
+  updatedAt   DateTime               @updatedAt
+  user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answers     OnboardingQuizAnswer[]
+
+  @@unique([userId, quizVersion])
+  @@index([userId])
+  @@map("onboarding_quiz_responses")
+}
+
+model OnboardingQuizAnswer {
+  id         String                 @id @default(cuid())
+  responseId String
+  questionId String
+  answerIds  String[]
+  createdAt  DateTime               @default(now())
+  updatedAt  DateTime               @updatedAt
+  response   OnboardingQuizResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+
+  @@unique([responseId, questionId])
+  @@index([responseId])
+  @@map("onboarding_quiz_answers")
+}
+
+/// Aggregate daily totals from Search Console requests with dimensions ["date"] only.
+/// Totals are never rebuilt by summing the dimensional tables below.
+model SearchAnalyticsDaily {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// The normalized property key produced by searchInsightsPropertyKey, e.g. "sc-domain:example.com".
+  /// Every read filters on it, so a raw connection value written here stores rows nothing finds.
+  property    String
+  /// Allowed values: "web".
+  searchType  String   @default("web")
+  date        DateTime @db.Date
+  clicks      Int
+  impressions Int
+  ctr         Float
+  position    Float
+  fetchedAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([projectId, property, searchType, date], map: "search_analytics_daily_partition_key")
+  @@map("search_analytics_daily")
+}
+
+/// Dimensional daily rows from requests with dimensions ["date", "query"]. Privacy-filtered and
+/// row-capped by the provider, so these never reconcile to SearchAnalyticsDaily.
+model SearchAnalyticsQueryDaily {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// The normalized property key produced by searchInsightsPropertyKey, e.g. "sc-domain:example.com".
+  /// Every read filters on it, so a raw connection value written here stores rows nothing finds.
+  property    String
+  /// Allowed values: "web".
+  searchType  String   @default("web")
+  date        DateTime @db.Date
+  query       String
+  /// sha256 hex of the query, used as the unique key so long text never exceeds the btree row limit.
+  keyHash     String
+  clicks      Int
+  impressions Int
+  ctr         Float
+  position    Float
+  fetchedAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([projectId, property, searchType, date, keyHash], map: "search_analytics_query_daily_partition_key")
+  @@index([projectId, property, searchType, keyHash, date], map: "search_analytics_query_daily_drawer_idx")
+  @@map("search_analytics_query_daily")
+}
+
+/// Dimensional daily rows from requests with dimensions ["date", "page"].
+model SearchAnalyticsPageDaily {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// The normalized property key produced by searchInsightsPropertyKey, e.g. "sc-domain:example.com".
+  /// Every read filters on it, so a raw connection value written here stores rows nothing finds.
+  property    String
+  /// Allowed values: "web".
+  searchType  String   @default("web")
+  date        DateTime @db.Date
+  /// The absolute URL exactly as the provider returns it.
+  page        String
+  /// sha256 hex of the page URL, used as the unique key so long text never exceeds the btree row limit.
+  keyHash     String
+  clicks      Int
+  impressions Int
+  ctr         Float
+  position    Float
+  fetchedAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([projectId, property, searchType, date, keyHash], map: "search_analytics_page_daily_partition_key")
+  @@index([projectId, property, searchType, keyHash, date], map: "search_analytics_page_daily_drawer_idx")
+  @@map("search_analytics_page_daily")
+}
+
+/// Dimensional daily rows from requests with dimensions ["date", "query", "page"]. Feeds the
+/// query-by-page pivot and the page-overlap chip.
+model SearchAnalyticsQueryPageDaily {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// The normalized property key produced by searchInsightsPropertyKey, e.g. "sc-domain:example.com".
+  /// Every read filters on it, so a raw connection value written here stores rows nothing finds.
+  property    String
+  /// Allowed values: "web".
+  searchType  String   @default("web")
+  date        DateTime @db.Date
+  query       String
+  /// The absolute URL exactly as the provider returns it.
+  page        String
+  /// sha256 hex of the query and the page joined by a NUL byte.
+  keyHash     String
+  clicks      Int
+  impressions Int
+  ctr         Float
+  position    Float
+  fetchedAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([projectId, property, searchType, date, keyHash], map: "search_analytics_query_page_daily_partition_key")
+  @@map("search_analytics_query_page_daily")
+}
+
+/// Organic-search sessions per day, total for the property.
+model OrganicSessionsDaily {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// The analytics numeric property id.
+  property  String
+  date      DateTime @db.Date
+  sessions  Int
+  fetchedAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, property, date], map: "organic_sessions_daily_partition_key")
+  @@map("organic_sessions_daily")
+}
+
+/// Organic-search sessions per day and landing page, joined to page rows by path.
+model OrganicSessionsPageDaily {
+  id              String   @id @default(cuid())
+  projectId       String
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// The analytics numeric property id.
+  property        String
+  date            DateTime @db.Date
+  /// Landing page path as reported, leading slash and no origin.
+  path            String
+  /// sha256 hex of the path, used as the unique key so long text never exceeds the btree row limit.
+  keyHash         String
+  sessions        Int
+  /// Null means the day was imported before these metrics were read, never zero engaged sessions.
+  engagedSessions Int?
+  /// Null means the day was imported before these metrics were read, never zero key events.
+  keyEvents       Int?
+  fetchedAt       DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([projectId, property, date, keyHash], map: "organic_sessions_page_daily_partition_key")
+  @@index([projectId, property, keyHash, date], map: "organic_sessions_page_daily_drawer_idx")
+  @@map("organic_sessions_page_daily")
+}
+
+/// Window aggregates computed once by the import instead of on every render.
+///
+/// Measured on a container shaped like the production instance class (1 GiB, 2 vCPU,
+/// `work_mem` 4 MB) over 12.96M query-page rows, cold: at the 90 day window the overlap count is
+/// 4,202 ms, the distinct counts 2,617 ms, the top-query read 1,494 ms and coverage 1,657 ms.
+/// The evidence is in the run directory as `t1b-micro-benchmark/timings-micro.md`.
+///
+/// ONE WRITER. The import writes these rows at the end of a batch. A render only reads; on a miss
+/// it computes live and records the miss, and never writes. Two writers on one table is a defect
+/// class being closed elsewhere in this module, not one to open here.
+///
+/// STALENESS IS A FLAG, NOT A CLEVER KEY. Moving `finalizedThrough` forward is not the only event
+/// that changes these numbers: a backfill filling a GAP INSIDE an already-computed window changes
+/// them while the boundary stands still. So any write to daily rows inside a covered span marks
+/// the affected rows stale, and the import recomputes every window in one transaction.
+///
+/// The compared window is its own row, same `windowDays`, `finalizedThrough` one day before this
+/// row's window starts. A delta is then two reads and the history accumulates by itself.
+///
+/// A row exists only for a window the readiness gate already calls ready. The selector owns
+/// readiness; this table must never outrun it.
+///
+/// Scalars and small vectors only. Top pages stay live: measured 364 ms cold at 90 days, inside
+/// budget, so storing them would buy a staleness surface for nothing. Top queries are the one
+/// exception, at 1,494 ms cold, and only the top hundred by clicks for the default sort, which is
+/// why the column says lens: it is not the pager's source.
+model SearchInsightsWindowFacts {
+  id                 String   @id @default(cuid())
+  projectId          String
+  project            Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// The normalized property key produced by searchInsightsPropertyKey.
+  property           String
+  /// Allowed values: "web".
+  searchType         String   @default("web")
+  /// Window length in days, matching a window preset.
+  windowDays         Int
+  /// Newest finalized day inside this window.
+  finalizedThrough   DateTime @db.Date
+  /// Which import produced the row.
+  importId           String
+  /// How many days of the window actually carried data when it was computed.
+  coveredDays        Int
+  /// Set when a daily row inside the covered span changed. A stale row is never served.
+  stale              Boolean  @default(false)
+  /// Verbatim `getQueryCoverage` output.
+  coverage           Json
+  /// Verbatim grouped query count for the window.
+  counts             Json
+  /// Verbatim `getSearchInsightsSignals` output.
+  signals            Json
+  /// Verbatim window totals for the KPI row.
+  totals             Json
+  /// Top hundred queries by clicks under the default sort only.
+  defaultLensQueries Json
+  computedAt         DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([projectId, property, searchType, windowDays, finalizedThrough], map: "search_insights_window_facts_key")
+  @@index([projectId, property, finalizedThrough], map: "search_insights_window_facts_sweep_idx")
+  @@index([projectId, property, stale], map: "search_insights_window_facts_stale_idx")
+  @@map("search_insights_window_facts")
+}
+
+/// One durable entry per normalized GSC property used by a project. Archived rows preserve
+/// historical data keys after the selected property changes or the connection is removed.
+model SearchInsightsPropertyRegistry {
+  projectId     String
+  project       Project                      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  propertyKey   String
+  status        SearchInsightsPropertyStatus
+  ga4PropertyId String?
+  activatedAt   DateTime                     @default(now())
+  archivedAt    DateTime?
+
+  @@id([projectId, propertyKey])
+  @@index([projectId, status])
+  @@map("gsc_property_registry")
+}
+
+/// One row per property and source describing the import job and the freshness facts the trust
+/// strip reads. Deliberately unrelated to ProviderConnection: disconnecting must not delete history.
+model SearchAnalyticsImport {
+  id                         String    @id @default(cuid())
+  projectId                  String
+  project                    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// The normalized property key produced by searchInsightsPropertyKey, e.g. "sc-domain:example.com".
+  /// The daily tables are keyed by the same string; the two must never drift apart.
+  property                   String
+  /// Allowed values: "gsc", "ga4".
+  source                     String
+  /// Allowed values: "web".
+  searchType                 String    @default("web")
+  /// Allowed values: "queued", "running", "waiting_for_first_data", "paused", "completed", "failed".
+  state                      String
+  /// Allowed values: "rate_limited", "needs_reauth", "error", "user".
+  pausedReason               String?
+  pauseStartedAt             DateTime?
+  pausedById                 String?
+  pausedBy                   User?     @relation("SearchImportPausedBy", fields: [pausedById], references: [id], onDelete: SetNull)
+  /// Sixteen months before the newest finalized day known at import start.
+  earliestTargetDate         DateTime? @db.Date
+  /// Next day the backfill will fetch, walking backward.
+  cursorDate                 DateTime? @db.Date
+  /// Provider availability boundary used to plan reads. Usually firstIncompleteDate - 1; metadata-free probes use a conservative fallback.
+  newestFinalizedDate        DateTime? @db.Date
+  /// Provenance for newestFinalizedDate: "metadata" or "fallback"; null means legacy/unknown.
+  availabilityBoundarySource String?
+  /// Whether GA4 has configured key events; null means legacy/unknown.
+  keyEventsConfigured        Boolean?
+  keyEventsCheckedAt         DateTime?
+  /// Latest day whose partitions are fully stored.
+  finalizedThroughDate       DateTime? @db.Date
+  /// First aggregate day observed with impressions.
+  firstDataDate              DateTime? @db.Date
+  /// When the first dimensional day was durably stored.
+  firstDataDetectedAt        DateTime?
+  /// Planning decision source: "first_data", "retention", or "no_data".
+  historyBoundarySource      String?
+  /// When an empty successful aggregate read moved the import into its waiting state.
+  waitingForFirstDataAt      DateTime?
+  daysTotal                  Int       @default(0)
+  plannedRetentionMonths     Int?
+  daysDone                   Int       @default(0)
+  capHitDays                 Int       @default(0)
+  lastSyncStartedAt          DateTime?
+  lastSyncFinishedAt         DateTime?
+  /// Manual incremental-sync intent written by the app and consumed by the worker.
+  syncRequestedAt            DateTime?
+  /// Worker-side claim timestamp for the current manual incremental-sync intent.
+  syncStartedAt              DateTime?
+  /// When the provider was last asked with dataState "all"; shown as "Fresh through".
+  lastProbeAt                DateTime?
+  lastQuotaPausedAt          DateTime?
+  lastError                  String?
+  lastErrorClass             String?
+  workflowId                 String?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  @@unique([projectId, property, source], map: "search_analytics_imports_partition_key")
+  @@index([projectId, source])
+  @@index([pausedById])
+  @@index([syncRequestedAt, syncStartedAt], map: "search_analytics_imports_sync_intent_idx")
+  // Migration-only partial index: syncRequestedAt for pending worker intents.
+  @@map("search_analytics_imports")
+}
+
+model SearchAnalyticsRequestUsage {
+  id           String    @id @default(cuid())
+  projectId    String
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  property     String
+  operation    String
+  dimensions   String
+  dataState    String
+  searchType   String
+  source       String
+  startDate    DateTime  @db.Date
+  endDate      DateTime  @db.Date
+  startRow     Int
+  rowLimit     Int
+  returnedRows Int?
+  capHit       Boolean?
+  /// Stable classification for a failed provider attempt; null means success or legacy/unknown.
+  failureClass String?
+  attemptedAt  DateTime  @default(now())
+  persistedAt  DateTime?
+
+  @@index([projectId, property, attemptedAt], map: "search_analytics_request_usage_quota_idx")
+  @@map("search_analytics_request_usage")
+}
+
+/// Per-request-set provenance: what was asked for versus what came back. Requesting 25k rows is
+/// not the same as receiving 25k rows, and the trust strip says so.
+model SearchAnalyticsSyncPartition {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  property      String
+  /// Allowed values: "gsc", "ga4".
+  source        String
+  /// Allowed values: "web".
+  searchType    String   @default("web")
+  date          DateTime @db.Date
+  /// Comma-joined request dimensions, e.g. "date", "query", "page", "query,page", "date,landingPage".
+  dimensions    String
+  /// Allowed values: "final", "all".
+  dataState     String
+  /// Row limit multiplied by the number of paginated requests.
+  requestedRows Int
+  returnedRows  Int
+  /// Number of paginated requests issued for this partition.
+  pages         Int
+  capHit        Boolean  @default(false)
+  fetchedAt     DateTime
+  durationMs    Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([projectId, property, source, searchType, date, dimensions, dataState], map: "search_analytics_sync_partition_key")
+  @@index([projectId, property, date], map: "search_analytics_sync_partitions_property_date_idx")
+  @@map("search_analytics_sync_partitions")
+}
+
+enum RoadmapSubscriptionState {
+  pending
+  confirmed
+  unsubscribed
+  suppressed
+}
+
+enum RoadmapTokenPurpose {
+  confirm
+  unsubscribe
+}
+
+enum RoadmapAnnouncementState {
+  draft
+  approved
+  published
+  cancelled
+}
+
+enum RoadmapDeliveryKind {
+  confirmation
+  availability
+}
+
+enum RoadmapDeliveryState {
+  pending
+  sending
+  accepted
+  delivered
+  delivery_unknown
+  failed
+  skipped
+}
+
+/// Interest in ONE future milestone of ONE roadmap feature. Consent, transport and
+/// delivery are separate states on purpose: confirmed is not delivered, and a
+/// provider that accepted a message has not yet delivered it.
+model RoadmapSubscription {
+  id                     String                   @id @default(cuid())
+  /// Keyed HMAC of the normalized address, for deduplication and rate limiting.
+  emailHmac              String
+  /// Key version the HMAC was written with, so the secret can be rotated.
+  emailHmacVersion       Int                      @default(0)
+  email                  String
+  featureId              String
+  milestoneId            String
+  consentVersion         String
+  state                  RoadmapSubscriptionState @default(pending)
+  suppressionReason      String?
+  requestedAt            DateTime                 @default(now())
+  confirmedAt            DateTime?
+  unsubscribedAt         DateTime?
+  lastConfirmationSentAt DateTime?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+  deliveries             RoadmapDelivery[]
+  tokens                 RoadmapToken[]
+
+  @@unique([emailHmac, featureId, milestoneId])
+  @@index([milestoneId, state])
+  @@index([state, requestedAt])
+  @@map("roadmap_subscriptions")
+}
+
+/// Purpose-scoped, single-use link secret. Only the hash is stored.
+model RoadmapToken {
+  id             String              @id @default(cuid())
+  tokenHash      String              @unique
+  subscriptionId String
+  subscription   RoadmapSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  purpose        RoadmapTokenPurpose
+  expiresAt      DateTime
+  usedAt         DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime            @default(now())
+
+  @@index([subscriptionId, purpose])
+  @@index([expiresAt])
+  @@map("roadmap_tokens")
+}
+
+/// An operator-approved availability announcement. Publishing is an explicit act:
+/// a copy edit, a build, or a stage change never sends one.
+model RoadmapAnnouncement {
+  id                String                   @id @default(cuid())
+  featureId         String
+  milestoneId       String
+  headline          String
+  body              String
+  availabilityScope String
+  ctaHref           String
+  state             RoadmapAnnouncementState @default(draft)
+  approvedBy        String?
+  approvedAt        DateTime?
+  publishedAt       DateTime?
+  cancelledAt       DateTime?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  deliveries        RoadmapDelivery[]
+
+  @@index([milestoneId, state])
+  @@map("roadmap_announcements")
+}
+
+/// Transactional outbox row for one message to one subscriber. Availability rows
+/// carry an announcement and are unique per (announcement, subscription);
+/// confirmation rows carry none and are bounded by the subscription cooldown.
+model RoadmapDelivery {
+  id                String               @id @default(cuid())
+  kind              RoadmapDeliveryKind
+  announcementId    String?
+  announcement      RoadmapAnnouncement? @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  subscriptionId    String
+  subscription      RoadmapSubscription  @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  tokenId           String?
+  state             RoadmapDeliveryState @default(pending)
+  attempts          Int                  @default(0)
+  nextAttemptAt     DateTime?
+  claimedAt         DateTime?
+  claimToken        String?
+  providerMessageId String?
+  acceptedAt        DateTime?
+  deliveredAt       DateTime?
+  lastErrorCode     String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@unique([announcementId, subscriptionId])
+  @@index([state, nextAttemptAt])
+  @@index([subscriptionId, kind])
+  @@map("roadmap_deliveries")
+}
+
+/// Private feedback from the roadmap. Never listed publicly and never mirrored to
+/// a public tracker automatically.
+model RoadmapFeedback {
+  id           String   @id @default(cuid())
+  featureId    String?
+  body         String
+  email        String?
+  language     String?
+  reviewStatus String   @default("new")
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([featureId, createdAt])
+  @@map("roadmap_feedback")
+}
+
+model ProjectContext {
+  projectId  String   @id
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  business   String   @default("") @db.VarChar(4000)
+  audience   String   @default("") @db.VarChar(4000)
+  products   String   @default("") @db.VarChar(4000)
+  goals      String   @default("") @db.VarChar(4000)
+  agentRules String   @default("") @db.VarChar(4000)
+  updatedAt  DateTime @updatedAt
+
+  @@map("project_contexts")
+}
+
+model AgentReport {
+  cacheReuseUntil DateTime?
+  id          String   @id @default(cuid())
+  publicId    String   @unique
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  kind        String   @db.VarChar(64)
+  title       String   @db.VarChar(160)
+  body        Json
+  provenance  Json
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([projectId, createdAt, id])
+  @@index([projectId, kind, createdAt, id])
+  @@map("agent_reports")
+}
+
+model AchievementState {
+  userId String @id
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  enabled Boolean @default(true)
+  showHeader Boolean @default(true)
+  emailEnabled Boolean @default(true)
+  timeZone String @default("UTC")
+  epoch Int @default(1)
+  revision Int @default(0)
+  presenceCurrent Int @default(0)
+  presenceLongest Int @default(0)
+  presenceLastDay String?
+  practiceCurrent Int @default(0)
+  practiceLongest Int @default(0)
+  practiceLastDay String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@map("achievement_states")
+}
+model AchievementDay {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  epoch Int
+  kind String
+  localDay String
+  timeZone String
+  acceptedAt DateTime @default(now())
+  processedAt DateTime?
+  @@unique([userId, epoch, kind, localDay])
+  @@index([processedAt, userId])
+  @@index([userId, epoch, localDay])
+  @@map("achievement_days")
+}
+model AchievementAward {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  kind String
+  epoch Int
+  definitionVersion Int @default(1)
+  earnedDay String
+  earnedAt DateTime @default(now())
+  timeZone String
+  shareTokenHash String? @unique
+  @@unique([userId,kind,definitionVersion])
+  @@map("achievement_awards")
+}
+model AchievementMail {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
+  epoch Int
+  awardDay String
+  timeZone String
+  dueAt DateTime
+  status String @default("queued")
+  claimedAt DateTime?
+  finishedAt DateTime?
+  reason String?
+  @@unique([userId,epoch,awardDay])
+  @@index([status,dueAt])
+  @@map("achievement_mails")
+}

@@ -1,0 +1,337 @@
+import { MenuSelect, type MenuSelectOptionGroup } from "@/components/ui/MenuSelect";
+import { renderWithSharedMessages } from "@/i18n/test-support/render-with-feature-messages";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+
+const groupedOptions: MenuSelectOptionGroup[] = [
+  {
+    id: "tracked",
+    label: "Tracked markets",
+    options: [
+      { label: "United States / English", value: "US" },
+      { label: "Spain / Spanish", value: "ES" },
+    ],
+  },
+  {
+    id: "catalog",
+    label: "Catalog",
+    searchOnly: true,
+    options: [
+      { label: "United Kingdom / English", value: "GB" },
+      {
+        label: "Poland / Polish",
+        value: "PL",
+        disabled: true,
+        secondary: "unavailable",
+        tooltip: "Outside catalog",
+      },
+    ],
+  },
+];
+
+const render = renderWithSharedMessages;
+
+describe("MenuSelect grouped", () => {
+  it("renders non-sticky opaque full-bleed group headers", async () => {
+    const user = userEvent.setup();
+    render(
+      <MenuSelect
+        ariaLabel="Market"
+        groups={groupedOptions}
+        onChange={() => undefined}
+        searchable
+        value="US"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Market" }));
+    const header = screen.getByText("Tracked markets");
+    expect(header).toHaveAttribute("data-slot", "menu-group-header");
+    expect(header).toHaveAttribute("role", "presentation");
+    expect(header).toHaveClass("uppercase");
+    expect(header).not.toHaveClass("font-mono");
+    expect(header.style.position).not.toBe("sticky");
+    expect(header).toHaveStyle({
+      backgroundColor: "var(--bg-sunken)",
+      marginBottom: "4px",
+      marginInline: "-6px",
+      paddingInline: "15px",
+      width: "calc(100% + 12px)",
+      zIndex: "1",
+    });
+  });
+
+  it("uses the live trigger as a minimum menu width with the shared six-pixel gap", async () => {
+    const user = userEvent.setup();
+    render(
+      <MenuSelect
+        ariaLabel="Market"
+        groups={groupedOptions}
+        onChange={() => undefined}
+        value="US"
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "Market" });
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      bottom: 100,
+      height: 32,
+      left: 20,
+      right: 463,
+      top: 68,
+      width: 443,
+      x: 20,
+      y: 68,
+      toJSON: () => ({}),
+    });
+
+    await user.click(trigger);
+
+    const paper = screen.getByRole("menu");
+    expect(paper).not.toBeNull();
+    expect(paper).toHaveStyle({
+      marginTop: "6px",
+      maxWidth: "calc(100vw - 32px)",
+      minWidth: "min(443px, calc(100vw - 32px))",
+      width: "max-content",
+    });
+  });
+
+  it("adds spacing only before rendered groups after the first", async () => {
+    const user = userEvent.setup();
+    const groupsWithHiddenEntries: MenuSelectOptionGroup[] = [
+      { id: "empty", label: "Empty", options: [] },
+      {
+        id: "search-only",
+        label: "Search only",
+        options: [{ label: "Hidden until search", value: "hidden" }],
+        searchOnly: true,
+      },
+      groupedOptions[0],
+      { ...groupedOptions[1], searchOnly: false },
+    ];
+    render(
+      <MenuSelect
+        ariaLabel="Market"
+        groups={groupsWithHiddenEntries}
+        onChange={() => undefined}
+        searchable
+        value="US"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Market" }));
+    expect(screen.getByText("Tracked markets")).toHaveStyle({
+      marginBottom: "4px",
+      marginTop: "0px",
+    });
+    expect(screen.getByText("Catalog")).toHaveStyle({
+      marginBottom: "4px",
+      marginTop: "4px",
+    });
+  });
+
+  it("shows tracked group and hides searchOnly catalog without a query", async () => {
+    const user = userEvent.setup();
+    render(
+      <MenuSelect
+        ariaLabel="Market"
+        groups={groupedOptions}
+        onChange={() => undefined}
+        searchable
+        value="US"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Market" }));
+    expect(screen.getByText("Tracked markets")).toBeInTheDocument();
+    expect(screen.queryByText("Catalog")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Search..." })).toHaveAccessibleDescription(
+      "More options available. Type to search.",
+    );
+    expect(screen.getByRole("menuitem", { name: /United States/ })).toBeInTheDocument();
+  });
+
+  it("reveals and filters catalog when searching", async () => {
+    const user = userEvent.setup();
+    render(
+      <MenuSelect
+        ariaLabel="Market"
+        groups={groupedOptions}
+        onChange={() => undefined}
+        searchable
+        value="US"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Market" }));
+    await user.type(screen.getByRole("textbox", { name: "Search..." }), "poland");
+    expect(screen.getByText("Catalog")).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Poland/ })).toBeInTheDocument();
+    expect(screen.queryByText("More options available. Type to search.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tracked markets")).not.toBeInTheDocument();
+  });
+
+  it("shows no-results message when search yields nothing", async () => {
+    const user = userEvent.setup();
+    render(
+      <MenuSelect
+        ariaLabel="Market"
+        groups={groupedOptions}
+        noResultsMessage="No market matches this search."
+        onChange={() => undefined}
+        searchable
+        value="US"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Market" }));
+    await user.type(screen.getByRole("textbox", { name: "Search..." }), "xyz");
+    expect(screen.getByText("No market matches this search.")).toBeInTheDocument();
+  });
+
+  it("shows empty message when no search and no visible groups", async () => {
+    const user = userEvent.setup();
+    const searchOnlyGroups: MenuSelectOptionGroup[] = [
+      {
+        id: "catalog",
+        label: "Catalog",
+        options: [{ label: "Poland / Polish", value: "PL" }],
+        searchOnly: true,
+      },
+    ];
+    render(
+      <MenuSelect
+        ariaLabel="Market"
+        emptyMessage="Type to search the catalog."
+        groups={searchOnlyGroups}
+        onChange={() => undefined}
+        searchable
+        value="ZZ"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Market" }));
+    expect(screen.getByText("Type to search the catalog.")).toBeInTheDocument();
+  });
+
+  it("does not render empty non-search groups", async () => {
+    const user = userEvent.setup();
+    render(
+      <MenuSelect
+        ariaLabel="Market"
+        emptyMessage="No tracked markets."
+        groups={[{ id: "empty", label: "Tracked markets", options: [] }]}
+        onChange={() => undefined}
+        searchable
+        value="ZZ"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Market" }));
+    expect(screen.queryByText("Tracked markets")).not.toBeInTheDocument();
+    expect(screen.getByText("No tracked markets.")).toBeInTheDocument();
+  });
+
+  it("resolves selected option across hidden searchOnly groups", () => {
+    render(
+      <MenuSelect
+        ariaLabel="Market"
+        groups={groupedOptions}
+        onChange={() => undefined}
+        value="GB"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Market" })).toHaveTextContent(
+      "United Kingdom / English",
+    );
+  });
+
+  it("selects with ArrowDown and Enter, closes, and returns focus on Escape", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <MenuSelect
+        ariaLabel="Market"
+        groups={groupedOptions}
+        onChange={onChange}
+        searchable
+        value="ZZ"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Market" }));
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: /United States/ })).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(onChange).toHaveBeenCalledWith("US");
+    await waitFor(() => expect(screen.queryByText("Tracked markets")).not.toBeInTheDocument());
+
+    rerender(
+      <MenuSelect
+        ariaLabel="Market"
+        groups={groupedOptions}
+        onChange={onChange}
+        searchable
+        value="US"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Market" }));
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Market" })).toHaveFocus());
+  });
+
+  it("shows a disabled option reason via aria-describedby and never selects it", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <MenuSelect
+        ariaLabel="Market"
+        groups={groupedOptions}
+        onChange={onChange}
+        searchable
+        value="US"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Market" }));
+    await user.type(screen.getByRole("textbox", { name: "Search..." }), "poland");
+    const item = screen.getByRole("menuitem", { name: /Poland/ });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(item).not.toHaveAttribute("title");
+    const describedBy = item.getAttribute("aria-describedby");
+    expect(describedBy).not.toBeNull();
+    const desc = document.getElementById(describedBy ?? "");
+    expect(desc).toHaveTextContent("Outside catalog");
+
+    fireEvent.click(item);
+    expect(onChange).not.toHaveBeenCalled();
+
+    await user.keyboard("{Enter}");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("opens a visual tooltip on hover of a disabled grouped option without selecting it", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <MenuSelect
+        ariaLabel="Market"
+        groups={groupedOptions}
+        onChange={onChange}
+        searchable
+        value="US"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Market" }));
+    await user.type(screen.getByRole("textbox", { name: "Search..." }), "poland");
+    const item = screen.getByRole("menuitem", { name: /Poland/ });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+
+    await user.hover(item);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Outside catalog");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});

@@ -1,0 +1,196 @@
+{
+  "projectRuns": {
+    "navigation": {
+      "runs": "Przebiegi",
+      "runsSections": "Sekcje przebiegów",
+      "schedules": "Harmonogramy"
+    },
+    "filters": {
+      "active": "Aktywne",
+      "all": "Wszystkie",
+      "allSources": "Wszystkie źródła",
+      "allStatuses": "Wszystkie statusy",
+      "finished": "Zakończone",
+      "needsAttention": "Wymaga reakcji",
+      "rankChecks": "Sprawdzenia pozycji",
+      "runSource": "Źródło przebiegu",
+      "runStatus": "Status przebiegu",
+      "searchConsole": "Search Console",
+      "source": "Źródło:",
+      "status": "Status:",
+      "aiTracking": "AI Tracking"
+    },
+    "content": {
+      "activeDescription": "Sprawdź historię przebiegów lub wybierz inny status, aby znaleźć zakończone przebiegi.",
+      "activeTitle": "Brak przebiegów w toku",
+      "clearFilters": "Wyczyść filtry",
+      "filteredDescription": "Zmień lub wyczyść filtry, aby zobaczyć inne przebiegi.",
+      "filteredTitle": "Brak pasujących przebiegów",
+      "historyDescription": "Tutaj pojawią się sprawdzenia pozycji, uruchomienia śledzenia AI i importy Search Console.",
+      "historyTitle": "Brak przebiegów",
+      "loadError": "Nie udało się wczytać przebiegów",
+      "manageSchedules": "Zarządzaj harmonogramami",
+      "nextPage": "Następna strona",
+      "openSearchConsole": "Otwórz Search Console",
+      "plannedDescription": "Zaplanowane sprawdzenia pozycji pojawiają się tutaj przed uruchomieniem.",
+      "plannedSearchConsoleDescription": "Importy z Search Console nie mają harmonogramów.",
+      "plannedSearchConsoleTitle": "Brak nadchodzących przebiegów Search Console",
+      "plannedTitle": "Brak nadchodzących przebiegów",
+      "returnToFirstPage": "Wróć na pierwszą stronę",
+      "runCount": "{count, plural, one {# przebieg} few {# przebiegi} many {# przebiegów} other {# przebiegu}}",
+      "runs": "Przebiegi",
+      "searchConsoleDescription": "Zaimportuj dane z Search Console, aby mieć tutaj historię przebiegów.",
+      "searchConsoleTitle": "Brak przebiegów Search Console",
+      "staleDescription": "Kursor nie pasuje już do tych filtrów. Wróć na pierwszą stronę, aby kontynuować.",
+      "staleTitle": "Ta strona przebiegów jest nieaktualna",
+      "tryAgainDescription": "Spróbuj ponownie. Jeśli problem się powtarza, wróć na pierwszą stronę.",
+      "upcomingRuns": "Nadchodzące przebiegi",
+      "viewHistory": "Zobacz historię przebiegów"
+    },
+    "table": {
+      "actions": "Akcje",
+      "actual": "rzeczywisty",
+      "cost": "Koszt",
+      "finalizedDays": "Dni ostateczne",
+      "notAvailable": "Niedostępne",
+      "notStarted": "Nie rozpoczęto",
+      "operation": "Zadanie",
+      "plannedUpdateFailed": "Nie udało się zaktualizować zaplanowanego przebiegu. Spróbuj ponownie.",
+      "progress": "Postęp",
+      "progressValue": "{completed, number} / {total, number}",
+      "projectRuns": "Przebiegi projektu",
+      "rankCheck": "Sprawdzenie pozycji",
+      "rankCheckApi": "Sprawdzenie pozycji przez API",
+      "rankCheckManual": "Ręczne sprawdzenie pozycji",
+      "rankCheckRetry": "Ponowne sprawdzenie pozycji",
+      "rankCheckScheduled": "Zaplanowane sprawdzenie pozycji",
+      "scope": "Zakres",
+      "searchConsole": "Search Console",
+      "searchConsoleImport": "Import z Search Console",
+      "started": "Rozpoczęto",
+      "status": "Status",
+      "statusLegend": "Znaczenie statusów",
+      "submitted": "Zgłoszono",
+      "targets": "Cele",
+      "type": "Typ",
+      "unit": "Jednostka",
+      "updatingPlannedRun": "Aktualizowanie zaplanowanego przebiegu",
+      "keywordCount": "{count, plural, one {# słowo kluczowe} few {# słowa kluczowe} many {# słów kluczowych} other {# słowa kluczowego}}",
+      "reviewIssue": "Sprawdź problem",
+      "reviewUsage": "Sprawdź budżet i zużycie",
+      "usageUnconfirmed": "Zużycie wymaga potwierdzenia",
+      "connectProvider": "Podłącz obsługiwanego dostawcę",
+      "providerUnavailable": "Dostawca jest niedostępny",
+      "workerUnavailable": "Worker jest niedostępny",
+      "marketPaused": "Rynek jest wstrzymany",
+      "noActiveKeywords": "Brak aktywnych fraz",
+      "reviewBlocker": "Sprawdź przyczynę blokady",
+      "targetProgress": "{completed, number} / {total, number} {total, plural, one {cel} few {cele} many {celów} other {celu}}",
+      "dayProgress": "{completed, number} / {total, number} {total, plural, one {dzień z ostatecznymi danymi} few {dni z ostatecznymi danymi} many {dni z ostatecznymi danymi} other {dnia z ostatecznymi danymi}}",
+      "aiTrackingRun": "Pomiar widoczności AI",
+      "sampleCount": "Próbki: {count, number}",
+      "sampleProgress": "{completed, number} / {total, number} próbek",
+      "costUnknown": "Koszt niepotwierdzony",
+      "knownCost": "Potwierdzony koszt {cost} + niepotwierdzony",
+      "actualCost": "Koszt {cost}"
+    },
+    "actions": {
+      "actionsFor": "Akcje – {title}",
+      "deleteRun": "Usuń przebieg",
+      "plannedUpdateFailed": "Nie udało się zaktualizować zaplanowanego przebiegu. Spróbuj ponownie.",
+      "runNow": "Uruchom teraz",
+      "skipOnce": "Pomiń raz",
+      "viewDetails": "Zobacz szczegóły"
+    },
+    "timeline": {
+      "all": "Wszystkie",
+      "active": "W toku",
+      "upcoming": "Czekają na start",
+      "history": "Historia",
+      "sections": "Etapy wykonania",
+      "activeHint": "Od najwcześniej rozpoczętego",
+      "upcomingHint": "Najbliższe najpierw.",
+      "historyHint": "Ostatnio zakończone pierwsze",
+      "noActiveKeywords": "Brak aktywnych słów kluczowych",
+      "when": "Kiedy",
+      "finishedAt": "Zakończono",
+      "plannedFor": "Zaplanowano na",
+      "retryFrom": "Ponowienie od",
+      "readyFrom": "Gotowe od",
+      "parallelWorkers": "Workery mogą działać równolegle.",
+      "oldestFirst": "Najstarsze najpierw",
+      "newestFirst": "Najnowsze najpierw",
+      "waiting": "Czekają na start",
+      "waitingHint": "Oczekujące wykonania. Daty zgodne z zapisanym terminem.",
+      "due": "Termin już minął",
+      "dueHint": "Zadania czekające po zapisanym terminie startu lub ponowienia.",
+      "later": "Zaplanowane na później",
+      "laterHint": "Czekają na przyszły termin wykonania.",
+      "pastFailuresHint": "Dawne wykonania zakończone problemem. Nie są obecnie oczekującymi zadaniami.",
+      "attention": "Wymaga uwagi",
+      "pastScheduled": "Po zaplanowanym terminie",
+      "pastScheduledDays": "Nie uruchomiono · {count, plural, one {# dzień po terminie} few {# dni po terminie} many {# dni po terminie} other {# dnia po terminie}}"
+    },
+    "aiStatuses": {
+      "planned": {
+        "label": "Zaplanowane",
+        "description": "Pomiar AI czeka na rozpoczęcie."
+      },
+      "running": {
+        "label": "W toku",
+        "description": "Przetwarzanie próbek pomiaru AI."
+      },
+      "completed": {
+        "label": "Zakończone",
+        "description": "Pomiar AI został zakończony."
+      },
+      "partial": {
+        "label": "Częściowe",
+        "description": "Tylko część pomiaru AI zakończyła się powodzeniem."
+      },
+      "blocked": {
+        "label": "Zablokowane",
+        "description": "Pomiar AI nie mógł być kontynuowany."
+      },
+      "failed": {
+        "label": "Nieudane",
+        "description": "Pomiar AI zakończył się błędem."
+      },
+      "cancelled": {
+        "label": "Anulowane",
+        "description": "Pomiar AI został anulowany."
+      },
+      "skipped": {
+        "label": "Pominięte",
+        "description": "Pomiar AI został pominięty. Sprawdź przyczynę."
+      },
+      "cost_limit_exceeded": {
+        "label": "Przekroczono limit kosztu",
+        "description": "Pomiar AI pominięto z powodu przekroczenia limitu kosztu."
+      },
+      "status_unavailable": {
+        "label": "Stan niedostępny",
+        "description": "Nie udało się ustalić stanu pomiaru AI."
+      }
+    },
+    "aiResults": {
+      "title": "Wyniki pomiaru AI",
+      "back": "Wróć do wykonań",
+      "next": "Kolejne próbki",
+      "empty": "Dla tego wykonania nie zapisano próbek.",
+      "answer": "Zapisana odpowiedź",
+      "citations": "Cytowane strony",
+      "observed": "Czas obserwacji",
+      "model": "Model",
+      "measurement": "Pomiar",
+      "measurements": {
+        "answer_present": "Odpowiedź dostępna",
+        "aio_not_present": "Brak przeglądu AI",
+        "partial": "Częściowy wynik",
+        "unavailable": "Niedostępny",
+        "failed": "Błąd",
+        "unknown": "Nieznany"
+      }
+    }
+  }
+}

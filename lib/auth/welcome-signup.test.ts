@@ -1,0 +1,119 @@
+import { readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  handleCreatedUser,
+  sendCloudWelcomeSequence,
+  signupMethodFromContext,
+  wakeCloudWelcomeSequenceWorker,
+} from "./welcome-signup";
+
+const mocks = vi.hoisted(() => ({
+  publishWorkerIntent: vi.fn(),
+  readConsentFromCookies: vi.fn(),
+  trackServerEvent: vi.fn(),
+  onAccountCreated: vi.fn(),
+}));
+
+vi.mock("./account-created-extension", () => ({ onAccountCreated: mocks.onAccountCreated }));
+
+vi.mock("@/lib/analytics/server", () => ({
+  readConsentFromCookies: mocks.readConsentFromCookies,
+  trackServerEvent: mocks.trackServerEvent,
+}));
+
+vi.mock("@/lib/worker-intents/realtime", () => ({
+  publishWorkerIntent: mocks.publishWorkerIntent,
+}));
+
+const user = { email: "ada@example.com", id: "user_1", name: "Ada" };
+
+describe("signup welcome sequence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.publishWorkerIntent.mockResolvedValue({ mode: "redis", ok: true });
+    mocks.readConsentFromCookies.mockResolvedValue({
+      analytics: true,
+      decidedAt: 1,
+      replay: false,
+      status: "decided",
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("adds a durable intent to the Cloud user create payload", async () => {
+    vi.stubEnv("DEPLOYMENT_MODE", "cloud");
+
+    const result = await sendCloudWelcomeSequence(user);
+
+    expect(result).toEqual({
+      data: { ...user, welcomeFollowupRequestedAt: expect.any(Date) },
+    });
+    expect(mocks.publishWorkerIntent).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for self-hosted signups", async () => {
+    vi.stubEnv("DEPLOYMENT_MODE", "self-host");
+
+    await expect(sendCloudWelcomeSequence(user)).resolves.toBeUndefined();
+
+    expect(mocks.publishWorkerIntent).not.toHaveBeenCalled();
+  });
+
+  it("wakes the worker without extending the transaction hook", async () => {
+    vi.stubEnv("DEPLOYMENT_MODE", "cloud");
+    mocks.publishWorkerIntent.mockImplementation(() => new Promise(() => undefined));
+
+    await expect(wakeCloudWelcomeSequenceWorker()).resolves.toBeUndefined();
+    expect(mocks.publishWorkerIntent).toHaveBeenCalledWith("welcome_followup");
+  });
+
+  it("falls back to polling when the wake publish fails", async () => {
+    vi.stubEnv("DEPLOYMENT_MODE", "cloud");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.publishWorkerIntent.mockResolvedValue({ mode: "redis", ok: false });
+
+    await wakeCloudWelcomeSequenceWorker();
+
+    await vi.waitFor(() => expect(console.error).toHaveBeenCalledOnce());
+  });
+
+  it("keeps the signup hook free from engine clients", () => {
+    const source = readFileSync("lib/auth/welcome-signup.ts", "utf8");
+
+    expect(source).not.toMatch(/lib\/temporal\/.+-client/);
+  });
+
+  it("emits a consented signup event from the request-scoped auth hook", async () => {
+    vi.stubEnv("DEPLOYMENT_MODE", "self-host");
+
+    await handleCreatedUser({ id: "user_1" }, { path: "/sign-in/email-otp" });
+
+    expect(mocks.onAccountCreated).toHaveBeenCalledWith("user_1");
+
+    expect(mocks.readConsentFromCookies).toHaveBeenCalledOnce();
+    expect(mocks.trackServerEvent).toHaveBeenCalledWith("user_signed_up", {
+      consent: { analytics: true, decidedAt: 1, replay: false, status: "decided" },
+      userId: "user_1",
+      properties: { method: "otp" },
+    });
+  });
+
+  it("initializes the account even without a recognized analytics signup method", async () => {
+    await handleCreatedUser({ id: "new_account" }, null);
+    expect(mocks.onAccountCreated).toHaveBeenCalledWith("new_account");
+    expect(mocks.trackServerEvent).not.toHaveBeenCalled();
+  });
+
+  it("derives only supported signup methods from auth request context", () => {
+    expect(signupMethodFromContext({ params: { id: "github" }, path: "/callback/github" })).toBe(
+      "github",
+    );
+    expect(signupMethodFromContext({ path: "/callback/google" })).toBe("google");
+    expect(signupMethodFromContext({ path: "/ios/apple" })).toBe("apple");
+    expect(signupMethodFromContext({ path: "/sign-up/email" })).toBeNull();
+  });
+});

@@ -1,0 +1,155 @@
+---
+title: "Self-hosting operations"
+description: "Operate instance administration, observability, routine checks, and database retention."
+---
+
+[Production checklist](/self-hosting#production-checklist)
+
+## Client IP behind a proxy
+
+The app trusts a client-IP header only when `BISIBILITY_CLIENT_IP_HEADER` is set, and only from your
+proxy or CDN. See the canonical contract at [Trusted client IP](/self-hosting/security#trusted-client-ip)
+for the `BISIBILITY_CLIENT_IP_XFF_DEPTH` rule, spoofing warning, and shared anonymous bucket behavior
+when the header is unset.
+
+## Operator observability (optional)
+
+Set `OPS_SLACK_WEBHOOK_URL` to enable instance-level worker and schedule observability. It stays off
+when unset, uses no `SlackConnection`, project OAuth token, or alert rule, and is separate from tenant
+Slack alerts. Payloads carry identifiers and counts only; names are excluded by design. Set
+`OPS_SLACK_INCLUDE_NAMES=1` only when the operator explicitly opts in to include keyword text, project
+names, and Search Console property names for a self-hosted instance.
+
+Configure matching `OPS_*` values on web and worker. Web health uses the same feature gate. Both
+services must share Redis for worker liveness. Give the worker `SITE_URL` for digest links and
+footers, and optionally set worker-only `TEMPORAL_UI_URL` to link the digest to Temporal UI. On
+managed platforms, attach one shared environment group to both services. See
+[Configuration / Operator observability](/self-hosting/configuration#operator-observability) for the
+exact variable names, defaults, and modes.
+
+> **Upgrade note:** The default `OPS_HEARTBEAT_TZ` for installations that do not set it explicitly
+> changed from `Europe/Warsaw` to `Etc/UTC`. Set `OPS_HEARTBEAT_TZ=Europe/Warsaw` before upgrading to
+> preserve the previous schedule.
+
+Failure events cover rank checks, deferrals, traffic syncs, and schedule bootstrap. URL Inspection
+exhaustion uses a stable property hash and affected project IDs; the raw property name requires
+`OPS_SLACK_INCLUDE_NAMES=1`. Startup events count ensured schedules. Events first enter an outbox.
+The next heartbeat retries Slack failures. Payloads redact credentials, tokens, and URL queries.
+Repeats inside the throttle window become one counted summary.
+
+The daily digest covers the previous 24 hours: rank-check outcomes and lag, top failures, Temporal
+missed-catchup and skipped-overlap signals, GSC/GA4/Plausible freshness and rows per project,
+undelivered and suppressed events, worker uptime, release, and environment. Set `TEMPORAL_UI_URL` to
+add Temporal UI beside the checks link. Records remain for 30 days.
+
+After configuring the webhook, send a direct formatting and delivery test from the worker environment:
+
+```bash
+node --experimental-transform-types scripts/ops/send-test-notification.ts
+```
+
+Authenticated `GET /api/v1/health` reports `services.worker` as `ok`, `stale`, or `unknown`.
+Request details with an API credential or `INTERNAL_PROBE_TOKEN`. A marker older than
+26 hours is stale and returns HTTP 503. Slack cannot report its own missing heartbeat, so
+for process or host outages also ping an external dead-man monitor such as healthchecks.io.
+
+## Instance admin
+
+An empty installation redirects marketing, sign-in, onboarding, and application pages to `/setup`.
+Enter a name and email, then verify the code. Account creation, administrator assignment, and the
+audit commit together. Only one setup submission can complete. `/setup` stays open only while no
+account exists. Without email delivery, the first code appears in server logs. Production codes never
+use logs afterward. Setup never offers another account, and non-admins receive not-found at
+`/app/admin`.
+
+> **Upgrade note:** Existing installations with user accounts do not enter the setup flow, even if no
+> administrator is assigned. Use the seed command below to choose an administrator after upgrading.
+
+`/app/admin` provides cross-instance operations without extending project permissions. It shows
+worker identity and liveness, check totals and lag, recent failures, analytics freshness, Temporal signals, the event outbox, instance counts, and monthly rank-check cost. Rate-limited actions test
+Slack and retry undelivered events. Existing deployments can grant the role by email after migrations:
+
+```bash
+node --experimental-transform-types scripts/admin/seed-instance-admin.ts --email operator@example.com
+```
+
+Run it inside the deployed app container, such as `docker compose exec app node --experimental-transform-types scripts/admin/seed-instance-admin.ts --email operator@example.com`.
+Equivalent platform shells include `fly ssh console` and `railway ssh`. A checkout also works when `DATABASE_URL` targets the instance; hosted databases need its public connection string.
+
+The seed is idempotent for an existing instance admin. It refuses another grant while an admin exists.
+Pass `--force` to add the named admin without revoking others. `INSTANCE_ADMIN_EMAIL` can provide the
+email. If an account has lost its authenticator and all backup codes, see
+[Admin recovery](/self-hosting/security#admin-recovery) for the audited emergency two-factor reset
+procedure.
+
+Cross-tenant lists contain only identifiers, counts, statuses, durations and categorized errors, excluding keyword text, project names, email addresses, tenant domains and account data.
+Instance administration grants no tenant project access. Normal authorization still protects every project link.
+Without operator Slack, Redis still supplies worker liveness and instance stats remain available; Slack-specific controls report that Slack is not configured.
+
+Metering separates monthly recorded usage, current-cycle budgets and operations needing attention. Unknown amounts stay unknown; short IDs copy in full.
+Project names require existing ownership or membership. Other scopes show public IDs; administrator status grants no extra project access.
+Recovery actions remain separate from ordinary usage and require review.
+Unavailable budgets do not hide confirmed usage or operations needing attention. Paging reads and replaces only the selected usage or attention page, keeping the other page and budget snapshot unchanged. Failed or forbidden page reads retain previous rows and cursor for retry. Refresh for new budgets.
+Task recovery retries a rolled-back database transaction at most twice, after 10 and 20 seconds, without provider requests or paid replay. Persistent failures remain visible; missing authority and changed business state are not retried.
+
+## Routine operational checks
+
+Run these source-checked checks at a cadence suitable to your deployment.
+
+- **Probes and health:** Confirm `/api/v1/liveness` and `/api/v1/readiness` respond, and request
+  authenticated `GET /api/v1/health` for worker state. A marker older than 26 hours is stale (HTTP 503).
+- **Worker revision:** When scheduled work is used, verify the worker is running and that the app and
+  worker share the exact release revision.
+- **Operator notification delivery:** Check the event outbox and suppression state in `/app/admin`.
+  Confirm the last digest arrived, and pair the channel with an external dead-man monitor for process
+  or host failures.
+- **Backup freshness and restore rehearsal:** Confirm recent backups exist and perform a restore
+  rehearsal through the canonical [Backup and restore](/self-hosting/backup-restore) owner. A backup
+  that has never been restored is unverified.
+- **Retention and database growth:** Watch maintenance progress and unexpected database growth; see
+  [Database growth](#database-growth) below. Confirm raw purge and queued-task cleanup ran at their
+  scheduled times.
+- **Repair owners:** For failures, use [Troubleshooting](/self-hosting/troubleshooting) for diagnosis
+  and [Upgrades](/self-hosting/upgrades) for version repair.
+
+## Paid-call accounting maintenance
+
+Meter and its PostgreSQL Store enforce project and connection budgets in both builds. Keep the migration runner,
+app and worker on the same release, database, schema and `METERING_NAMESPACE` (default `default`). Enable `SCHEDULED_MAINTENANCE_ENABLED=1`
+on the worker; disabling it pauses recovery without disabling admission.
+
+- `maintenance-metering-reservations` runs every minute, expiring unsent reservations in bounded batches.
+  Pending or dispatched work needs proof recovery; it cannot expire as zero. Failed expiry is a retryable error.
+- `maintenance-provider-usage-reconciliation` runs every five minutes, recovering retained native/queued proof.
+  It preserves the original billing month and never sends another paid request. Retention protects unresolved proof.
+
+Check failed activities, unconfirmed/overdue counts and the completed `provider_usage_reconciled_at` watermark.
+A page with `hasMore` is incomplete; unknown evidence older than 15 minutes raises a warning and keeps its scope blocked.
+Never clear gates or change namespaces to bypass uncertainty. See [Accounting migration](/self-hosting/upgrades#accounting-migration).
+
+For imported legacy operations without a modern paid-request context, use the evidence-based [historical accounting recovery](/self-hosting/historical-accounting) preview and operator command.
+
+## Back up and restore PostgreSQL
+
+Back up and restore the application database, secrets, and Temporal persistence on the canonical page: [Backup and restore](/self-hosting/backup-restore).
+
+## Database growth
+
+Maintenance preserves every `rank_checks` row and `organicRanks` history. It can null the larger
+`raw` response after a window. Set `RANK_CHECK_RAW_RETENTION_DAYS` to 1-3650 days or `unlimited`;
+self-host defaults to `unlimited` (no raw removed without opt-in), hosted to 90 days.
+
+The worker purges daily at 03:29 UTC (override with `RANK_CHECK_RAW_PURGE_CRON`). Each statement
+updates at most 1,000 eligible rows, bounding locks and dead-tuple bursts, until no eligible rows
+remain. Rows, `organicRanks`, attempts, and other columns stay unchanged. Vacuum reclaims reusable
+space without necessarily shrinking the physical table.
+
+Terminal queued-task evidence remains for 30 days. The worker deletes it at 03:41 UTC, even with
+submissions disabled. Override the schedule with `QUEUED_RANK_CHECK_RETENTION_CRON`. Each activity
+deletes at most 100 batches; more expired pages continue in a new workflow run.
+
+Each completed purge keeps a content-free retry fence. Results are scrubbed promptly; daily maintenance catches missed completed rows. Fences stay closed for
+`RANK_CHECK_RAW_PROGRESS_FENCE_RETENTION_DAYS`. An indexed sweeper deletes at most four 500-row
+pages per phase and invocation, so daily runs converge without one large transaction. Fences store
+no raw provider content, URL, domain, or keyword text. See
+[Configuration](/self-hosting/configuration) for the exact retention variable names and defaults.

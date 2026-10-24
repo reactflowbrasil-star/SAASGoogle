@@ -1,0 +1,240 @@
+"use client";
+
+import { AdminAccountActions } from "@/components/admin/AdminAccountActions";
+import { displayTime, statusLabel } from "@/components/admin/AdminPrimitives";
+import { presentAdminActionError } from "@/components/admin/admin-action-error";
+import { useDateDisplay } from "@/components/dates/DateFormatProvider";
+import { useSharedErrorMessages } from "@/components/i18n/useSharedErrorMessages";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { IdChip } from "@/components/ui/IdChip";
+import { SectionTitle } from "@/components/ui/SectionTitle";
+import { lookupInstanceAdminAccount } from "@/lib/actions/instance-admin-account";
+import { zodResolver } from "@/lib/forms/zod-resolver";
+import { ClockCounterClockwiseIcon as ClockCounterClockwise } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
+import { MagnifyingGlassIcon as MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+import { UserIcon as User } from "@phosphor-icons/react/dist/csr/User";
+import { useFormatter, useTranslations } from "next-intl";
+import { useState, useTransition } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+
+const emailSchema = z.string().email();
+
+function createLookupSchema(validationMessage: string) {
+  return z.object({
+    identifier: z
+      .string()
+      .trim()
+      .min(1, validationMessage)
+      .max(320, validationMessage)
+      .refine(
+        (value) => emailSchema.safeParse(value).success || /^[^\s@]+$/.test(value),
+        validationMessage,
+      ),
+  });
+}
+
+type LookupForm = { identifier: string };
+type LookupResult = Awaited<ReturnType<typeof lookupInstanceAdminAccount>>;
+type FoundAccount = Extract<LookupResult, { status: "found" }>["account"];
+
+function MetadataTile({ label, value }: Readonly<{ label: string; value: React.ReactNode }>) {
+  return (
+    <div className="flex min-w-0 flex-col rounded-card border border-border bg-bg-elev px-3 py-2.5">
+      <div className="text-[9.5px] uppercase tracking-[0.4px] text-fg-muted">{label}</div>
+      <div className="mt-auto pt-1 text-[13px] font-semibold tabular-nums text-fg">{value}</div>
+    </div>
+  );
+}
+
+function AccountMetadata({
+  account,
+  onStatusChange,
+}: Readonly<{
+  account: FoundAccount;
+  onStatusChange: (status: FoundAccount["status"]) => void;
+}>) {
+  const context = useDateDisplay();
+  const format = useFormatter();
+  const t = useTranslations("instanceAdmin.account");
+  const admin = useTranslations("instanceAdmin");
+
+  return (
+    <div className="mt-4 rounded-card border border-border bg-bg-sunken px-4 py-4">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <IdChip size="sm" value={account.id} />
+        <span aria-hidden className="h-3 w-px bg-border" />
+        <span className="text-[11.5px] text-fg-muted">{account.email}</span>
+        <span className="inline-flex rounded-full bg-green/10 px-2.5 py-1 text-[10px] font-bold uppercase text-green-text">
+          {statusLabel(account.status, admin)}
+        </span>
+      </div>
+      <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-2.5">
+        <MetadataTile
+          label={t("created")}
+          value={displayTime(account.createdAt, context, t("unavailable"))}
+        />
+        <MetadataTile
+          label={t("lastActive")}
+          value={displayTime(account.lastActiveAt, context, t("unavailable"))}
+        />
+        <MetadataTile label={t("projects")} value={format.number(account.projectCount)} />
+        <MetadataTile label={t("keywords")} value={format.number(account.keywordCount)} />
+        <MetadataTile
+          label={t("spendThisMonth")}
+          value={format.number(account.monthlySpendCents / 100, {
+            currency: "USD",
+            style: "currency",
+          })}
+        />
+        <MetadataTile
+          label={t("connectionsByKind")}
+          value={
+            account.providerConnectionsByKind.length === 0 ? (
+              format.number(0)
+            ) : (
+              <span className="flex flex-col gap-0.5 text-[11px]">
+                {account.providerConnectionsByKind.map((connection) => (
+                  <span key={connection.kind}>{t("connection", connection)}</span>
+                ))}
+              </span>
+            )
+          }
+        />
+      </div>
+      <AdminAccountActions
+        onStatusChange={onStatusChange}
+        status={account.status}
+        userId={account.id}
+      />
+    </div>
+  );
+}
+
+function LookupOutcome({
+  onStatusChange,
+  result,
+}: Readonly<{
+  onStatusChange: (status: FoundAccount["status"]) => void;
+  result: LookupResult | null;
+}>) {
+  const t = useTranslations("instanceAdmin.account");
+  if (!result) return null;
+  if (result.status === "found") {
+    return <AccountMetadata account={result.account} onStatusChange={onStatusChange} />;
+  }
+
+  if (result.status === "not_found") {
+    return (
+      <div className="mt-4 flex items-center gap-2.5 rounded-card border border-border border-dashed bg-bg-sunken px-4 py-3.5">
+        <User aria-hidden className="text-fg-muted" size={16} weight="regular" />
+        <span className="text-[12.5px] text-fg-muted">{t("notFound")}</span>
+      </div>
+    );
+  }
+
+  const message =
+    result.status === "forbidden"
+      ? t("lookup.forbidden")
+      : result.status === "rate_limited"
+        ? t("lookup.rateLimited")
+        : t("lookup.failed");
+
+  return (
+    <p
+      className={`mt-3 text-xs ${result.status === "rate_limited" ? "text-yellow-text" : "text-red-text"}`}
+      role="alert"
+    >
+      {message}
+    </p>
+  );
+}
+
+export function AdminAccountLookup() {
+  const t = useTranslations("instanceAdmin.account");
+  const controls = useTranslations("instanceAdmin.controls");
+  const sharedErrors = useSharedErrorMessages();
+  const lookupSchema = createLookupSchema(t("validationIdentifier"));
+  const [result, setResult] = useState<LookupResult | null>(null);
+  const [pending, startTransition] = useTransition();
+  const {
+    formState: { errors },
+    handleSubmit,
+    register,
+  } = useForm<LookupForm>({
+    defaultValues: { identifier: "" },
+    resolver: zodResolver(lookupSchema),
+  });
+
+  function onSubmit(values: LookupForm) {
+    setResult(null);
+    startTransition(async () => {
+      try {
+        setResult(await lookupInstanceAdminAccount(values));
+      } catch (error) {
+        const message = presentAdminActionError(error, sharedErrors, t("lookup.failed"));
+        setResult({ message, status: "failed" });
+      }
+    });
+  }
+
+  function updateAccountStatus(status: FoundAccount["status"]) {
+    setResult((current) =>
+      current?.status === "found"
+        ? { ...current, account: { ...current.account, status } }
+        : current,
+    );
+  }
+
+  return (
+    <Card component="section" size="lg" aria-labelledby="admin-account-lookup-heading">
+      <SectionTitle id="admin-account-lookup-heading">{t("title")}</SectionTitle>
+      <p className="mt-1 text-xs text-fg-muted">{t("description")}</p>
+      <form className="mt-3" onSubmit={handleSubmit(onSubmit)}>
+        <label
+          className="text-[10px] uppercase tracking-[0.4px] text-fg-muted"
+          htmlFor="admin-account-identifier"
+        >
+          {t("identifier")}
+        </label>
+        <div className="mt-1.5 flex flex-wrap items-start gap-2.5">
+          <span className="flex min-h-10 min-w-[240px] max-w-[420px] flex-1 items-center gap-2 rounded-control border border-border-control bg-transparent px-3 focus-within:border-accent">
+            <MagnifyingGlass
+              aria-hidden
+              className="shrink-0 text-fg-muted"
+              size={14}
+              weight="regular"
+            />
+            <input
+              aria-invalid={errors.identifier ? "true" : undefined}
+              className="min-w-0 flex-1 border-0 bg-transparent py-2 text-[12.5px] text-fg outline-none"
+              id="admin-account-identifier"
+              placeholder={t("placeholder")}
+              spellCheck={false}
+              {...register("identifier")}
+            />
+          </span>
+          <Button
+            disabled={pending}
+            loading={pending}
+            loadingLabel={controls("lookingUp")}
+            type="submit"
+          >
+            {controls("lookUp")}
+          </Button>
+        </div>
+        {errors.identifier ? (
+          <p className="mt-1.5 text-[11px] text-red-text" role="alert">
+            {errors.identifier.message}
+          </p>
+        ) : null}
+      </form>
+      <p className="mt-2 flex items-center gap-1.5 text-[11.5px] text-fg-muted">
+        <ClockCounterClockwise aria-hidden size={12} weight="regular" />
+        {t("auditNotice")}
+      </p>
+      <LookupOutcome onStatusChange={updateAccountStatus} result={result} />
+    </Card>
+  );
+}

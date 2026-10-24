@@ -1,0 +1,240 @@
+"use client";
+
+import type { KeywordAction } from "@/components/keywords/action-utils";
+import { AddKeywordDrawer } from "@/components/keywords/add/AddKeywordDrawer";
+import { Card } from "@/components/ui/Card";
+import { FloatingSelectionBarSpacer } from "@/components/ui/FloatingSelectionBar";
+import { monthlyNativeUsage } from "@/lib/cost-estimate/project-estimate";
+import type { ProjectCostContext } from "@/lib/queries/cost-calculator";
+import type { ProjectMarketsView } from "@/lib/queries/project-markets";
+import type { SavedKeywordRow } from "@/lib/saved-keywords/model";
+import type { AddKeywordsInput } from "@/lib/schemas/keyword";
+import type { RemoveSavedKeywordsInput } from "@/lib/schemas/saved-keyword";
+import type { SerpDevice } from "@/lib/serp/constants";
+import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { useMemo, useState } from "react";
+import { SavedKeywordsEmptyState } from "./SavedKeywordsEmptyState";
+import {
+  SavedKeywordsBulkBar,
+  SavedKeywordsFooter,
+  SavedKeywordsToolbar,
+} from "./SavedKeywordsTableChrome";
+import { SavedKeywordsTableRows } from "./SavedKeywordsTableRows";
+import type { SavedKeywordsTableRow } from "./saved-keywords-table-columns";
+import { filterSavedKeywords, savedKeywordLocation } from "./saved-keywords-table-model";
+
+export type SavedKeywordsTableProps = {
+  addKeywordsAction: KeywordAction<AddKeywordsInput>;
+  canCreateKeyword: boolean;
+  canDeleteKeyword: boolean;
+  costContext: ProjectCostContext;
+  defaultDevice: SerpDevice;
+  domain?: string;
+  onCountChange?: (count: number) => void;
+  projectId: string;
+  projectMarkets?: ProjectMarketsView;
+  removeSavedKeywordsAction: (input: RemoveSavedKeywordsInput) => Promise<unknown>;
+  rows: SavedKeywordRow[];
+  total: number;
+};
+
+const DEFAULT_PAGE_SIZE = 10;
+
+export function SavedKeywordsTable({
+  addKeywordsAction,
+  canCreateKeyword,
+  canDeleteKeyword,
+  costContext,
+  defaultDevice,
+  domain,
+  onCountChange,
+  projectId,
+  projectMarkets,
+  removeSavedKeywordsAction,
+  rows: initialRows,
+  total,
+}: Readonly<SavedKeywordsTableProps>) {
+  const t = useTranslations("projectRankTracker.keywordImport.management.saved");
+  const router = useRouter();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [rows, setRows] = useState(initialRows);
+  const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [totalCount, setTotalCount] = useState(total);
+  const [trackDraft, setTrackDraft] = useState<SavedKeywordRow[] | null>(null);
+  const filtered = useMemo(() => filterSavedKeywords(rows, search), [rows, search]);
+  const maxPage = Math.max(0, Math.ceil(filtered.length / pageSize) - 1);
+  const activePage = Math.min(page, maxPage);
+  const startIndex = activePage * pageSize;
+  const pageRows = filtered.slice(startIndex, startIndex + pageSize);
+  const dataTableRows = useMemo(
+    () =>
+      pageRows.map<SavedKeywordsTableRow>((row) => ({
+        ...row,
+        id: row.publicId,
+        keyword: row.text,
+      })),
+    [pageRows],
+  );
+  const selectedSet = new Set(selectedIds);
+  const selectedRows = rows.filter((row) => selectedSet.has(row.publicId));
+  const trackingUsage = monthlyNativeUsage(
+    {
+      cronExpression: costContext.cronExpression,
+      depth: costContext.depth,
+      deviceCount: 1,
+      keywordCount: selectedRows.length,
+      locationCount: 1,
+      frequency: "daily",
+    },
+    { overrideCents: costContext.costPerCheckCents, providerId: costContext.providerId },
+  );
+
+  function updateRows(removedIds: readonly string[]) {
+    const removed = new Set(removedIds);
+    const nextRows = rows.filter((row) => !removed.has(row.publicId));
+    const nextTotal = Math.max(0, totalCount - removed.size);
+    setRows(nextRows);
+    setSelectedIds((current) => current.filter((id) => !removed.has(id)));
+    setTotalCount(nextTotal);
+    onCountChange?.(nextTotal);
+  }
+
+  async function removeRows(targetRows: readonly SavedKeywordRow[]) {
+    if (targetRows.length === 0) return;
+    setActionError(null);
+    const publicIds = targetRows.map((row) => row.publicId);
+    try {
+      await removeSavedKeywordsAction({ projectId, publicIds });
+      updateRows(publicIds);
+      router.refresh();
+    } catch {
+      setActionError(t("removeFailed"));
+    }
+  }
+
+  function toggleRow(row: SavedKeywordRow) {
+    setSelectedIds((current) =>
+      current.includes(row.publicId)
+        ? current.filter((id) => id !== row.publicId)
+        : [...current, row.publicId],
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <SavedKeywordsEmptyState
+        copy={{
+          browseResearch: t("browseResearch"),
+          cpc: t("cpc"),
+          difficulty: t("difficulty"),
+          emptyDescription: t("emptyDescription"),
+          emptyTitle: t("emptyTitle"),
+          intent: t("intent"),
+          keyword: t("keyword"),
+          volume: t("volume"),
+        }}
+        projectRef={projectId}
+      />
+    );
+  }
+
+  return (
+    <>
+      <Card className="overflow-hidden p-0" size="md">
+        <SavedKeywordsToolbar
+          onSearchChange={(value) => {
+            setSearch(value);
+            setPage(0);
+          }}
+          projectRef={projectId}
+          rows={filtered}
+          search={search}
+          separated={selectedRows.length > 0 || Boolean(actionError) || filtered.length === 0}
+        />
+        {actionError ? (
+          <p
+            className={`m-0 bg-red/10 px-4 py-2 text-[12px] text-red-text ${filtered.length === 0 ? "border-b border-red/30" : ""}`}
+          >
+            {actionError}
+          </p>
+        ) : null}
+        {filtered.length > 0 ? (
+          <SavedKeywordsTableRows
+            canDelete={canDeleteKeyword}
+            canTrack={canCreateKeyword}
+            onRemove={(row) => void removeRows([row])}
+            onSelectionChange={(selection) => setSelectedIds([...selection])}
+            onToggle={toggleRow}
+            onTrack={(row) => setTrackDraft([row])}
+            projectRef={projectId}
+            rows={dataTableRows}
+            selectedIds={selectedSet}
+          />
+        ) : (
+          <div className="px-6 py-16 text-center">
+            <h2 className="m-0 text-[15px] font-semibold">{t("noMatchTitle")}</h2>
+            <p className="mb-0 mt-1 text-[12.5px] text-fg-muted">{t("noMatchDescription")}</p>
+          </div>
+        )}
+        <SavedKeywordsFooter
+          end={Math.min(startIndex + pageRows.length, filtered.length)}
+          onPageChange={setPage}
+          onPageSizeChange={(value) => {
+            setPageSize(value);
+            setPage(0);
+          }}
+          page={activePage}
+          pageSize={pageSize}
+          start={filtered.length === 0 ? 0 : startIndex + 1}
+          total={filtered.length}
+        />
+      </Card>
+      <SavedKeywordsBulkBar
+        canDelete={canDeleteKeyword}
+        canTrack={canCreateKeyword}
+        count={selectedRows.length}
+        nativeUsage={trackingUsage}
+        onClear={() => setSelectedIds([])}
+        onRemove={() => void removeRows(selectedRows)}
+        onTrack={() => setTrackDraft(selectedRows)}
+        projectRef={projectId}
+        selectedRows={selectedRows}
+      />
+      {selectedRows.length > 0 ? <FloatingSelectionBarSpacer /> : null}
+      <AddKeywordDrawer
+        addKeywordsAction={addKeywordsAction}
+        consumeSavedIds={trackDraft?.map((row) => row.publicId)}
+        costContext={costContext}
+        defaultDevice={defaultDevice}
+        defaultLocationSelection={
+          trackDraft?.[0] ? (savedKeywordLocation(trackDraft[0].location) ?? undefined) : undefined
+        }
+        domain={domain}
+        initialKeyword={trackDraft?.map((row) => row.text).join("\n")}
+        initialMarketKeys={[...new Set(trackDraft?.map((row) => row.location) ?? [])]}
+        initialScheduleFrequency="project_default"
+        key={trackDraft?.map((row) => row.publicId).join(":") ?? "closed"}
+        onAdded={(_, context) => {
+          if (trackDraft) {
+            const promotedMarkets = new Set(context.locationKeys);
+            updateRows(
+              trackDraft
+                .filter((row) => promotedMarkets.has(row.location))
+                .map((row) => row.publicId),
+            );
+          }
+          setTrackDraft(null);
+        }}
+        onClose={() => setTrackDraft(null)}
+        open={Boolean(trackDraft)}
+        projectId={projectId}
+        projectMarkets={projectMarkets}
+        showSchedule
+      />
+    </>
+  );
+}

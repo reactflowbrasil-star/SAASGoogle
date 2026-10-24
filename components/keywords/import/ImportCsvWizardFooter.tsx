@@ -1,0 +1,85 @@
+import { Button } from "@/components/ui/Button";
+import { ArrowLeftIcon as ArrowLeft } from "@phosphor-icons/react/dist/csr/ArrowLeft";
+import { ArrowRightIcon as ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
+import { useTranslations } from "next-intl";
+
+type ImportCsvWizardFooterProps = {
+  hasMarkets?: boolean;
+  canImport: boolean;
+  confirmImport: () => Promise<void>;
+  isReviewing: boolean;
+  isSubmitting: boolean;
+  next: () => Promise<void>;
+  startOver: () => void;
+  setStep: (updater: (value: number) => number) => void;
+  step: number;
+};
+
+export function ImportCsvWizardFooter({
+  hasMarkets = true,
+  canImport,
+  confirmImport,
+  isReviewing,
+  isSubmitting,
+  next,
+  startOver,
+  setStep,
+  step,
+}: Readonly<ImportCsvWizardFooterProps>) {
+  const t = useTranslations("projectRankTracker.keywordImport.csvWizard");
+  if (step === 5) {
+    return (
+      <div className="flex items-center gap-2.5">
+        <Button disabled={isSubmitting} onClick={startOver} type="button" variant="secondary">
+          {t("startOver")}
+        </Button>
+        <Button
+          disabled={isSubmitting}
+          onClick={() => void next()}
+          style={{ flex: 1 }}
+          type="button"
+        >
+          {t("steps.done")}
+        </Button>
+      </div>
+    );
+  }
+  const primaryLabel = step === 4 ? t("importKeywords") : t("continue");
+  return (
+    <div className="flex items-center gap-2.5">
+      {step > 1 && step < 5 ? (
+        <Button
+          disabled={isSubmitting || isReviewing}
+          onClick={() => setStep((value) => Math.max(1, value - 1))}
+          startIcon={<ArrowLeft size={14} weight="regular" />}
+          type="button"
+          variant="secondary"
+        >
+          {t("back")}
+        </Button>
+      ) : null}
+      {step === 4 ? (
+        <Button
+          disabled={isSubmitting || isReviewing || !canImport}
+          key="review-confirmation"
+          onClick={() => void confirmImport()}
+          style={{ flex: 1 }}
+          type="button"
+        >
+          {isSubmitting ? t("importing") : primaryLabel}
+        </Button>
+      ) : (
+        <Button
+          disabled={!hasMarkets || isSubmitting || isReviewing || (step === 3 && !canImport)}
+          endIcon={<ArrowRight size={14} weight="regular" />}
+          key="step-navigation"
+          onClick={() => void next()}
+          style={{ flex: 1 }}
+          type="button"
+        >
+          {isReviewing ? t("checking") : isSubmitting ? t("importing") : primaryLabel}
+        </Button>
+      )}
+    </div>
+  );
+}

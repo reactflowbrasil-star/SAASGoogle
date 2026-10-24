@@ -1,0 +1,62 @@
+title = "bisibility gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Location identifiers and masked display values are not credentials"
+condition = "AND"
+regexTarget = "match"
+paths = [
+  '''^app/.+\.test\.[jt]sx?$''',
+  '''^components/.+\.(test|stories)\.[jt]sx?$''',
+  '''^components/.+fixtures[^/]*\.[jt]sx?$''',
+  '''^docs/api/''',
+  '''^docs/openapi\.snapshot\.json$''',
+  '''^lib/.+\.test\.[jt]sx?$''',
+  '''^lib/api/__fixtures__/response-captures/[^/]+\.json$''',
+  '''^lib/mcp/canonical-contract\.json$''',
+  '''^scripts/smoke/''',
+]
+regexes = [
+  '''(?i)(canonical_?key|location_?key|masked_?key)["']?\s*[:=]''',
+  '''rawKey\s*=\s*"bsb_key_test_[a-z0-9_]+"''',
+  '''rawPersonalToken\s*=\s*"bsb_pat_live_[a-z0-9_]+"''',
+]
+
+[[allowlists]]
+description = """The literal `bsb_key_live_...` / `bsb_pat_live_...` stubs, ellipsis included.
+Three dots cannot be a credential, so this matches the placeholder itself rather than
+opening up a path. It exists because the marketing integrations page shows the same curl
+example the app does (components/marketing/content/integrations/ProgrammaticAccess.tsx:120);
+there JSX splits `Bearer` from the token across two source lines and the rule never sees
+them together, while the design source keeps them on one line inside a <pre>, where a break
+would change what renders."""
+regexTarget = "match"
+regexes = [
+  '''bsb_(key|pat)_live_\.\.\.''',
+]
+
+[[allowlists]]
+description = """The Install design page's demo key. `Dashboard - Install.dc.html` renders
+`bsk_live_a71c93ef25d6` plus a four character suffix as sample copy for the read-only API key
+card; `bsk_live_` is not a prefix the app issues (`bsb_key_live_` is), so the literal cannot
+be a credential. The regex pins that one value rather than opening the design-source path."""
+regexTarget = "match"
+regexes = [
+  '''bsk_live_a71c93ef25d6''',
+]
+
+[[allowlists]]
+description = """The synthetic legacy encryption secret in the Apple refresh token storage test.
+It only exercises Better Auth's legacy envelope; the regex pins that one literal in that one
+test file rather than opening the path."""
+condition = "AND"
+regexTarget = "match"
+paths = [
+  '''^lib/auth/apple-code-exchange\.test\.ts$''',
+]
+regexes = [
+  '''legacySecret: "legacy-secret-for-tests-000001"''',
+]
+

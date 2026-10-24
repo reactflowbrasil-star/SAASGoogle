@@ -1,0 +1,143 @@
+import { renderWithOnboardingMessages as render } from "@/i18n/test-support/render-with-feature-messages";
+import { fireEvent, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { OnboardingNav } from "./OnboardingNav";
+import { OnboardingStepper } from "./OnboardingStepper";
+import type { OnboardingStepNumber } from "./onboarding-fixtures";
+
+describe("OnboardingStepper", () => {
+  it("keeps the mobile step title as a level-two heading", () => {
+    render(
+      <OnboardingStepper currentStep={1}>
+        <div>Current panel</div>
+      </OnboardingStepper>,
+    );
+
+    expect(screen.getByRole("heading", { level: 2, name: "Website" })).toBeInTheDocument();
+  });
+
+  it("keeps completed rail steps clickable and does not skip ahead of the current step", () => {
+    render(
+      <OnboardingStepper currentStep={2} flowState={{ projectId: "prj_1" }} maxReachableStep={3}>
+        <div>Current panel</div>
+      </OnboardingStepper>,
+    );
+
+    expect(screen.getByText("Step 2 of 4")).toBeInTheDocument();
+    expect(screen.queryByText("Project setup")).not.toBeInTheDocument();
+    const rail = screen.getByLabelText("Onboarding steps");
+    const links = within(rail).getAllByRole("link");
+
+    expect(links).toHaveLength(2);
+    expect(links.map((link) => link.textContent)).toEqual([
+      "WebsiteName and domain",
+      "2Rank dataRank checks and search insights",
+    ]);
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/onboarding?step=1&projectId=prj_1",
+      "/onboarding?step=2&projectId=prj_1",
+    ]);
+    expect(screen.getAllByRole("link", { name: "Website, completed" })).toHaveLength(1);
+
+    expect(rail.querySelector('[aria-label="Keywords"]')).toHaveAttribute("aria-disabled", "true");
+    expect(rail.querySelector('[aria-label="First check"]')).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(rail.querySelector('[aria-label="First check"]')).toHaveTextContent(
+      "Run it and open your dashboard",
+    );
+    expect(
+      rail.querySelector('[aria-label="First check"] [data-step-dot-state]'),
+    ).toHaveTextContent("4");
+
+    const completedStep = rail.querySelector(
+      '[aria-label="Website, completed"] [data-step-dot-state="past"]',
+    );
+    const currentStep = rail.querySelector(
+      '[aria-label="Rank data"] [data-step-dot-state="current"]',
+    );
+    const nextSteps = rail.querySelectorAll('[data-step-dot-state="upcoming"]');
+
+    expect(completedStep).toHaveClass("bg-accent-soft", "text-accent-solid");
+    expect(completedStep).not.toHaveClass("bg-green-text");
+    expect(currentStep).toHaveClass("bg-accent-solid");
+    expect(nextSteps).toHaveLength(2);
+    for (const nextStep of nextSteps) {
+      expect(nextStep).toHaveClass("border-border", "bg-transparent");
+      expect(nextStep).not.toHaveClass("border-border-control");
+      expect(nextStep).not.toHaveClass("bg-bg-sunken");
+    }
+    const currentRailItem = rail.querySelector('[aria-current="step"]');
+    expect(currentRailItem).toHaveClass("border-0", "bg-transparent", "px-0");
+    expect(currentRailItem).not.toHaveClass("px-3");
+    expect(currentRailItem).not.toHaveClass("bg-bg-band");
+    for (const item of links) {
+      expect(item).toHaveClass("px-0");
+      expect(item).not.toHaveClass("px-3");
+      if (item === currentRailItem) continue;
+      expect(item).not.toHaveClass("bg-bg-band");
+    }
+    const currentCaption = within(rail).getByText("Rank checks and search insights");
+    expect(currentCaption).toHaveClass("font-normal", "text-fg-muted", "leading-snug");
+    expect(currentCaption).not.toHaveClass("font-semibold", "font-medium");
+    expect(currentCaption.parentElement).toHaveClass("gap-1");
+    expect(within(rail).queryByText("Current")).not.toBeInTheDocument();
+    expect(within(rail).queryByText("Next")).not.toBeInTheDocument();
+    expect(within(rail).queryByText("Complete")).not.toBeInTheDocument();
+  });
+
+  it("disables future step buttons and keeps completed steps clickable", () => {
+    const onStepChange = vi.fn();
+    render(
+      <OnboardingStepper currentStep={3} maxReachableStep={3} onStepChange={onStepChange}>
+        <div>Current panel</div>
+      </OnboardingStepper>,
+    );
+
+    const rail = screen.getByLabelText("Onboarding steps");
+    const doneStep = within(rail).getByRole("button", { name: "Website, completed" });
+    expect(doneStep).not.toHaveAttribute("aria-current");
+    fireEvent.click(doneStep);
+    fireEvent.click(within(rail).getByRole("button", { name: "Rank data, completed" }));
+
+    const futureRailButton = within(rail).getByRole("button", { name: "First check" });
+    expect(futureRailButton).toHaveAccessibleName("First check");
+    expect(futureRailButton).toHaveAttribute("data-slot", "button");
+    expect(futureRailButton).toBeDisabled();
+    expect(futureRailButton).toHaveAttribute("aria-disabled", "true");
+    expect(futureRailButton).toHaveClass("bg-transparent", "px-0");
+    expect(getComputedStyle(futureRailButton).paddingLeft).toBe("0px");
+    expect(futureRailButton).not.toHaveClass("bg-bg-band");
+    expect(futureRailButton.querySelector('[data-step-dot-state="upcoming"]')).toHaveTextContent(
+      "4",
+    );
+    fireEvent.click(futureRailButton);
+
+    for (const dot of screen.getAllByRole("button", { name: "First check" })) {
+      expect(dot).toBeDisabled();
+      expect(dot).toHaveAttribute("aria-disabled", "true");
+    }
+    expect(onStepChange).toHaveBeenCalledTimes(2);
+    expect(onStepChange).toHaveBeenNthCalledWith(1, 1);
+    expect(onStepChange).toHaveBeenNthCalledWith(2, 2);
+  });
+
+  it("renders back navigation across the four-step flow", () => {
+    for (const step of [2, 3, 4] satisfies OnboardingStepNumber[]) {
+      const { unmount } = render(
+        <OnboardingNav currentStep={step} flowState={{ projectId: "prj_1" }} />,
+      );
+
+      expect(screen.getByRole("link", { name: "Back" })).toHaveAttribute(
+        "href",
+        `/onboarding?step=${step - 1}&projectId=prj_1`,
+      );
+      unmount();
+    }
+
+    render(<OnboardingNav currentStep={4} />);
+
+    expect(screen.getByRole("button", { name: /View dashboard/ })).toBeInTheDocument();
+  });
+});

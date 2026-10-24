@@ -1,0 +1,113 @@
+import { ProjectWriteModeProvider } from "@/components/shell/ProjectWriteModeProvider";
+import { renderWithProjectRankTrackerMessages as render } from "@/i18n/test-support/render-with-feature-messages";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { buildGoogleSerpUrl, DimensionSwitcher, localeForLocation } from "./DimensionSwitcher";
+
+describe("DimensionSwitcher", () => {
+  it("builds locale metadata and encoded Google result URLs", () => {
+    expect(localeForLocation({ countryCode: "", gl: "pl", hl: "pl" })).toEqual({
+      code: "PL",
+      gl: "pl",
+      hl: "pl",
+    });
+    expect(buildGoogleSerpUrl("rank tracker", { countryCode: "PL", gl: "pl", hl: "pl" })).toContain(
+      "q=rank%20tracker&gl=pl&hl=pl",
+    );
+  });
+
+  it("opens device options and tracks a selected dimension", () => {
+    const onTrack = vi.fn();
+    render(
+      <DimensionSwitcher
+        icon={<span>device</span>}
+        kind="device"
+        label="desktop"
+        onTrack={onTrack}
+        value="desktop"
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: /desktop/i });
+    fireEvent.click(trigger);
+
+    const current = screen.getByRole("menuitem", { name: "Desktop, currently shown" });
+    const addMobile = screen.getByRole("menuitem", { name: "Add Mobile" });
+    expect(current).toHaveAttribute("aria-current", "true");
+    expect(current).toHaveAttribute("data-selected", "true");
+    expect(addMobile.querySelector("svg")).not.toBeNull();
+    expect(addMobile).toHaveTextContent("Mobile+ Track");
+    expect(screen.queryByRole("menuitem", { name: "Add Desktop" })).not.toBeInTheDocument();
+
+    fireEvent.click(addMobile);
+    expect(onTrack).toHaveBeenCalledWith("device", "Mobile");
+  });
+
+  it("uses a bounded menu and returns focus to the chip on Escape", async () => {
+    render(
+      <DimensionSwitcher
+        icon={<span>device</span>}
+        kind="device"
+        label="desktop"
+        onTrack={vi.fn()}
+        value="desktop"
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: /desktop/i });
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    const menu = screen.getByRole("menu");
+    const paper = menu.closest("[data-ui-overlay]");
+    expect(paper).toHaveStyle({ maxWidth: "calc(100vw - 24px)", width: "290px" });
+
+    fireEvent.keyDown(menu, { key: "Escape" });
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("does not invent untracked locations and links to live SERP results", () => {
+    render(
+      <DimensionSwitcher
+        icon={<span>location</span>}
+        kind="location"
+        label="Warsaw"
+        onTrack={vi.fn()}
+        serpHref="https://google.example/search"
+        value="Warsaw"
+      />,
+    );
+    expect(screen.getByRole("link", { name: /Open live Google results/ })).toHaveAttribute(
+      "href",
+      "https://google.example/search",
+    );
+    expect(screen.getByRole("button", { name: /Warsaw/i })).toBeDisabled();
+  });
+
+  it("disables writable dimension changes in read-only mode", () => {
+    render(
+      <ProjectWriteModeProvider projectRef="prj_1" writeMode="migration_hold">
+        <DimensionSwitcher
+          icon={<span>device</span>}
+          kind="device"
+          label="desktop"
+          onTrack={vi.fn()}
+          value="desktop"
+        />
+      </ProjectWriteModeProvider>,
+    );
+    expect(screen.getByRole("button", { name: /desktop/i })).toBeDisabled();
+  });
+
+  it("disables dimension changes when tracking is unavailable", () => {
+    render(
+      <DimensionSwitcher
+        icon={<span>device</span>}
+        kind="device"
+        label="desktop"
+        value="desktop"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /desktop/i })).toBeDisabled();
+  });
+});

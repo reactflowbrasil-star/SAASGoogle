@@ -1,0 +1,87 @@
+import { ProviderCallError } from "@/lib/providers/call-error";
+import type { ProviderCredentials } from "@/lib/providers/types";
+
+export class DataForSeoError extends ProviderCallError {
+  constructor(
+    message: string,
+    readonly retryable = false,
+    readonly httpStatus?: number,
+    costCents: number | null = null,
+  ) {
+    super(message, costCents);
+    this.name = "DataForSeoError";
+  }
+}
+
+export class DataForSeoAccountVerificationError extends DataForSeoError {
+  constructor(costCents: number | null) {
+    super(
+      "Verify your DataForSEO account in the provider dashboard before using the API.",
+      false,
+      undefined,
+      costCents,
+    );
+    this.code = "provider_account_restricted";
+    this.name = "DataForSeoAccountVerificationError";
+  }
+}
+
+export class DataForSeoUnsupportedLocationError extends ProviderCallError {
+  constructor(
+    message = "DataForSEO does not support this target or location.",
+    costCents: number | null = null,
+  ) {
+    super(message, costCents);
+    this.name = "DataForSeoUnsupportedLocationError";
+  }
+}
+
+export class DataForSeoBillingError extends ProviderCallError {
+  constructor(message: string, costCents: number | null = null) {
+    super(message, costCents, "provider_billing");
+    this.name = "DataForSeoBillingError";
+  }
+}
+
+export class DataForSeoValidationError extends ProviderCallError {
+  readonly charged: boolean;
+
+  constructor(message: string, costCents: number | null = null) {
+    super(message, costCents);
+    this.name = "DataForSeoValidationError";
+    this.charged = costCents !== null && costCents > 0;
+  }
+}
+
+export function redactedMessage(message: string, credentials: ProviderCredentials) {
+  const values = [credentials.login, credentials.password, credentials.apiKey]
+    .filter((value): value is string => Boolean(value && value.length >= 3))
+    .sort((a, b) => b.length - a.length);
+  return values.reduce((safe, value) => safe.split(value).join("[redacted]"), message);
+}
+
+export function messageWithSentParameters(
+  message: string,
+  payload: Record<string, unknown>,
+  credentials: ProviderCredentials,
+) {
+  return redactedMessage(`${message} Sent parameters: ${JSON.stringify(payload)}.`, credentials);
+}
+
+export function validationFailure(message: string) {
+  return /invalid field|invalid parameter|validation/i.test(message);
+}
+
+export function noSearchResults(statusCode: number | undefined, message: string) {
+  return (statusCode === 40102 || statusCode === 40501) && /no search results/i.test(message);
+}
+
+export function unsupportedLabsRequest(statusCode: number | undefined, message: string) {
+  const unsupportedLocation =
+    /(?:location|target).*(?:invalid|not found|not supported|unsupported)|(?:invalid field|unsupported).*(?:location|target)/i.test(
+      message,
+    );
+  const unsupportedLanguage =
+    statusCode === 40501 && /invalid field:\s*['"]language_(?:code|name)['"]/i.test(message);
+  return unsupportedLocation || unsupportedLanguage;
+}

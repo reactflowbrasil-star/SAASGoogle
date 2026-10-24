@@ -1,0 +1,117 @@
+import { z } from "zod";
+
+const idSchema = z.string().trim().min(1).max(120);
+
+export const providerIdSchema = z.enum([
+  "dataforseo",
+  "serpapi",
+  "local-sequence",
+  "gsc",
+  "ga4",
+  "plausible",
+]);
+
+export type CredentialValidationMessages = {
+  tooLong: string;
+};
+
+function credentialSchemaWithMessage(messages?: CredentialValidationMessages) {
+  const valueSchema = z.string().trim();
+  return z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    (messages ? valueSchema.max(500, messages.tooLong) : valueSchema.max(500)).optional(),
+  );
+}
+
+/** Builds a request-local credential projection without changing server validation copy. */
+export function credentialSchemaFor(messages: CredentialValidationMessages) {
+  return credentialSchemaWithMessage(messages);
+}
+
+const credentialSchema = credentialSchemaWithMessage();
+
+export const providerCredentialsSchema = z.object({
+  apiKey: credentialSchema,
+  endpoint: credentialSchema,
+  login: credentialSchema,
+  secret: credentialSchema,
+});
+
+// A blank cost field (empty string, or NaN from a numeric input) means "unknown", so it must
+// stay undefined instead of coercing to a zero rate.
+const optionalCostSchema = z.preprocess(
+  (value) =>
+    value === "" || value === null || (typeof value === "number" && Number.isNaN(value))
+      ? undefined
+      : value,
+  z.coerce.number().min(0).max(100).optional(),
+);
+
+export const connectProviderSchema = z.object({
+  costPerCheck: optionalCostSchema,
+  credentials: providerCredentialsSchema.optional(),
+  login: credentialSchema,
+  projectId: idSchema,
+  providerId: providerIdSchema,
+  secret: credentialSchema,
+  expectedConnectionId: idSchema.nullable().optional(),
+  expectedConnectionUpdatedAt: z.iso.datetime().nullable().optional(),
+  expectedCredentialSource: z.enum(["own", "hosted"]).optional(),
+});
+
+export const testProviderConnectionSchema = z.object({
+  credentials: providerCredentialsSchema.optional(),
+  login: credentialSchema,
+  projectId: idSchema,
+  providerId: providerIdSchema,
+  secret: credentialSchema,
+});
+
+export const updateProviderCostSchema = z.object({
+  costPerCheck: z.coerce.number().min(0).max(100),
+  projectId: idSchema,
+  providerId: providerIdSchema,
+});
+
+export const providerRateFeatureSchema = z.enum([
+  "rank_check",
+  "keyword_research",
+  "keyword_metrics",
+  "ranked_keywords",
+]);
+
+export const updateProviderRateSchema = z.object({
+  costPerUnit: z.coerce.number().min(0).max(100).nullable(),
+  feature: providerRateFeatureSchema,
+  projectId: idSchema,
+  providerId: providerIdSchema,
+});
+
+const providerRateCostSchema = updateProviderRateSchema.shape.costPerUnit.unwrap();
+export const PROVIDER_RATE_COST_BOUNDS = {
+  maximum: providerRateCostSchema.maxValue ?? Number.POSITIVE_INFINITY,
+  minimum: providerRateCostSchema.minValue ?? Number.NEGATIVE_INFINITY,
+};
+
+export const providerConnectionRefSchema = z.object({
+  projectId: idSchema,
+  providerId: providerIdSchema,
+});
+
+export const disconnectProviderSchema = providerConnectionRefSchema.extend({
+  expectedConnection: z
+    .object({
+      id: idSchema,
+      updatedAt: z.iso.datetime(),
+      credentialSource: z.literal("own"),
+    })
+    .optional(),
+});
+
+export type ConnectProviderInput = z.infer<typeof connectProviderSchema>;
+export type ProviderCredentialsInput = z.infer<typeof providerCredentialsSchema>;
+export type ProviderConnectionRefInput = z.infer<typeof providerConnectionRefSchema>;
+export type DisconnectProviderInput = z.infer<typeof disconnectProviderSchema>;
+export type TestProviderConnectionInput = z.infer<typeof testProviderConnectionSchema>;
+export type UpdateProviderCostInput = z.infer<typeof updateProviderCostSchema>;
+export type UpdateProviderRateInput = z.infer<typeof updateProviderRateSchema>;

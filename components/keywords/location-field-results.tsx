@@ -1,0 +1,158 @@
+import { CountryFlag } from "@/components/ui/CountryFlag";
+import { MapPinIcon as MapPin } from "@phosphor-icons/react/dist/csr/MapPin";
+import { countryNameForCode, type LocationSuggestion } from "./location-picker-data";
+
+const optionId = (option: LocationSuggestion) => option.id || option.canonicalKey;
+export const locationOptionDomId = (listId: string, index: number) => `${listId}-opt-${index}`;
+
+function cityCaption(option: LocationSuggestion) {
+  return [option.regionName, countryNameForCode(option.countryCode) ?? option.countryCode]
+    .filter(Boolean)
+    .join(", ");
+}
+
+type LocationResultsProps = {
+  activeOption: LocationSuggestion | undefined;
+  places: LocationSuggestion[];
+  countries: LocationSuggestion[];
+  hasOptions: boolean;
+  listId: string;
+  loading: boolean;
+  messages: LocationFieldMessages;
+  onPick: (option: LocationSuggestion) => void;
+  showEmpty: boolean;
+  visible: boolean;
+};
+
+export type LocationFieldMessages = {
+  city: string;
+  clearSearch: string;
+  countries: string;
+  noMatching: string;
+  regionsAndCities: string;
+  region: string;
+  searching: string;
+};
+
+export function LocationResults({
+  activeOption,
+  places,
+  countries,
+  hasOptions,
+  listId,
+  loading,
+  messages,
+  onPick,
+  showEmpty,
+  visible,
+}: Readonly<LocationResultsProps>) {
+  if (!visible) return null;
+  return (
+    <div
+      className="max-h-64 overflow-auto rounded-control border border-border bg-bg-elev py-1 shadow-lg"
+      id={listId}
+      role="listbox"
+      tabIndex={-1}
+    >
+      {countries.length > 0 ? (
+        <LocationGroup
+          activeOption={activeOption}
+          label={messages.countries}
+          listId={listId}
+          messages={messages}
+          onPick={onPick}
+          options={countries}
+          startIndex={0}
+        />
+      ) : null}
+      {places.length > 0 ? (
+        <LocationGroup
+          activeOption={activeOption}
+          label={messages.regionsAndCities}
+          listId={listId}
+          messages={messages}
+          onPick={onPick}
+          options={places}
+          startIndex={countries.length}
+        />
+      ) : null}
+      {loading && !hasOptions ? (
+        <span className="block px-3 py-2 normal-case text-fg-muted">{messages.searching}</span>
+      ) : null}
+      {showEmpty ? (
+        <span className="block px-3 py-2 normal-case text-fg-muted">{messages.noMatching}</span>
+      ) : null}
+    </div>
+  );
+}
+
+type LocationGroupProps = {
+  activeOption: LocationSuggestion | undefined;
+  label: string;
+  listId: string;
+  messages: Pick<LocationFieldMessages, "city" | "region">;
+  onPick: (option: LocationSuggestion) => void;
+  options: LocationSuggestion[];
+  startIndex: number;
+};
+
+function LocationGroup({
+  activeOption,
+  label,
+  listId,
+  messages,
+  onPick,
+  options,
+  startIndex,
+}: Readonly<LocationGroupProps>) {
+  return (
+    <span className="block">
+      <span className="block px-3 pb-1 pt-2 font-sans tabular-nums text-[10px] uppercase tracking-[0.5px] text-fg-muted">
+        {label}
+      </span>
+      {options.map((option, index) => {
+        const selected = activeOption ? optionId(activeOption) === optionId(option) : false;
+        return (
+          <button
+            aria-selected={selected}
+            className={`flex w-full items-start gap-2 px-3 py-2 text-left normal-case tracking-normal ${
+              selected ? "bg-bg-sunken text-fg" : "text-fg hover:bg-bg-sunken"
+            }`}
+            id={locationOptionDomId(listId, startIndex + index)}
+            key={optionId(option)}
+            onClick={() => onPick(option)}
+            onMouseDown={(event) => event.preventDefault()}
+            role="option"
+            type="button"
+          >
+            {option.kind === "country" ? (
+              <CountryFlag
+                className="mt-0.5 h-3 w-4 flex-none rounded-[2px] shadow-sm"
+                code={option.countryCode}
+                fallback="globe"
+              />
+            ) : (
+              <MapPin
+                className="mt-0.5 flex-none text-accent-text"
+                data-city-location-pin
+                size={14}
+                weight="regular"
+              />
+            )}
+            <span className="min-w-0">
+              <span className="block truncate text-[12.5px] font-semibold">
+                {option.kind === "city" ? option.cityName : option.displayName}
+              </span>
+              {option.kind !== "country" ? (
+                <span className="block truncate text-[11.5px] text-fg-muted">
+                  {option.kind === "region" ? messages.region : messages.city} ·{" "}
+                  {cityCaption(option)}
+                </span>
+              ) : null}
+            </span>
+          </button>
+        );
+      })}
+    </span>
+  );
+}

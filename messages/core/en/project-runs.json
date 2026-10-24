@@ -1,0 +1,196 @@
+{
+  "projectRuns": {
+    "navigation": {
+      "runs": "Runs",
+      "runsSections": "Runs sections",
+      "schedules": "Schedules"
+    },
+    "filters": {
+      "active": "Active",
+      "all": "All",
+      "allSources": "All sources",
+      "allStatuses": "All statuses",
+      "finished": "Finished",
+      "needsAttention": "Needs attention",
+      "rankChecks": "Rank checks",
+      "runSource": "Run source",
+      "runStatus": "Run status",
+      "searchConsole": "Search Console",
+      "source": "Source:",
+      "status": "Status:",
+      "aiTracking": "AI Tracking"
+    },
+    "content": {
+      "activeDescription": "Review run history or choose another status to find completed work.",
+      "activeTitle": "No runs in progress",
+      "clearFilters": "Clear filters",
+      "filteredDescription": "Change or clear the filters to see other runs.",
+      "filteredTitle": "No matching runs",
+      "historyDescription": "Rank checks, AI tracking runs and Search Console imports will appear here.",
+      "historyTitle": "No runs yet",
+      "loadError": "Runs could not be loaded",
+      "manageSchedules": "Manage schedules",
+      "nextPage": "Next page",
+      "openSearchConsole": "Open Search Console",
+      "plannedDescription": "Scheduled rank checks appear here before they start.",
+      "plannedSearchConsoleDescription": "Search Console imports do not have schedules.",
+      "plannedSearchConsoleTitle": "No upcoming Search Console runs",
+      "plannedTitle": "No upcoming runs",
+      "returnToFirstPage": "Return to first page",
+      "runCount": "{count, plural, one {# run} other {# runs}}",
+      "runs": "Runs",
+      "searchConsoleDescription": "Import Search Console data to keep its run history here.",
+      "searchConsoleTitle": "No Search Console runs yet",
+      "staleDescription": "The cursor no longer matches these filters. Return to the first page to continue.",
+      "staleTitle": "This Runs page is stale",
+      "tryAgainDescription": "Try again. If the problem continues, return to the first page.",
+      "upcomingRuns": "Upcoming runs",
+      "viewHistory": "View run history"
+    },
+    "table": {
+      "actions": "Actions",
+      "actual": "actual",
+      "cost": "Cost",
+      "finalizedDays": "Finalized days",
+      "notAvailable": "Not available",
+      "notStarted": "Not started",
+      "operation": "Task",
+      "plannedUpdateFailed": "The planned run could not be updated. Try again.",
+      "progress": "Progress",
+      "progressValue": "{completed, number} / {total, number}",
+      "projectRuns": "Project runs",
+      "rankCheck": "Rank check",
+      "rankCheckApi": "API rank check",
+      "rankCheckManual": "Manual rank check",
+      "rankCheckRetry": "Retry rank check",
+      "rankCheckScheduled": "Scheduled rank check",
+      "scope": "Scope",
+      "searchConsole": "Search Console",
+      "searchConsoleImport": "Search Console import",
+      "started": "Started",
+      "status": "Status",
+      "statusLegend": "Status meanings",
+      "submitted": "Submitted",
+      "targets": "Targets",
+      "type": "Type",
+      "unit": "Unit",
+      "updatingPlannedRun": "Updating planned run",
+      "keywordCount": "{count, plural, one {# keyword} other {# keywords}}",
+      "reviewIssue": "Review issue",
+      "reviewUsage": "Review budget and usage",
+      "usageUnconfirmed": "Usage needs confirmation",
+      "connectProvider": "Connect a supporting provider",
+      "providerUnavailable": "Provider unavailable",
+      "workerUnavailable": "Worker unavailable",
+      "marketPaused": "Market is paused",
+      "noActiveKeywords": "No active keywords",
+      "reviewBlocker": "Review what is blocking this run",
+      "targetProgress": "{completed, number} / {total, number} {total, plural, one {target} other {targets}}",
+      "dayProgress": "{completed, number} / {total, number} {total, plural, one {finalized day} other {finalized days}}",
+      "aiTrackingRun": "AI tracking measurement",
+      "sampleCount": "Samples: {count, number}",
+      "sampleProgress": "{completed, number} / {total, number} samples",
+      "costUnknown": "Cost not confirmed",
+      "knownCost": "Known cost {cost} + unconfirmed",
+      "actualCost": "Cost {cost}"
+    },
+    "actions": {
+      "actionsFor": "Actions for {title}",
+      "deleteRun": "Delete run",
+      "plannedUpdateFailed": "The planned run could not be updated. Try again.",
+      "runNow": "Run now",
+      "skipOnce": "Skip once",
+      "viewDetails": "View details"
+    },
+    "timeline": {
+      "all": "All",
+      "active": "In progress",
+      "upcoming": "Waiting to start",
+      "history": "History",
+      "sections": "Run timeline",
+      "activeHint": "Started first",
+      "upcomingHint": "Earliest first.",
+      "historyHint": "Most recently finished first",
+      "noActiveKeywords": "No active keywords",
+      "when": "When",
+      "finishedAt": "Finished",
+      "plannedFor": "Planned for",
+      "retryFrom": "Retry from",
+      "readyFrom": "Ready from",
+      "parallelWorkers": "Workers can run in parallel.",
+      "oldestFirst": "Oldest first",
+      "newestFirst": "Newest first",
+      "waiting": "Waiting to start",
+      "waitingHint": "Waiting runs. Dates are shown as recorded.",
+      "due": "Start time passed",
+      "dueHint": "Waiting work whose recorded start or retry time has passed.",
+      "later": "Scheduled later",
+      "laterHint": "Waiting for a future scheduled time.",
+      "pastFailuresHint": "Past runs that ended with a problem. These are not current waiting runs.",
+      "attention": "Needs attention",
+      "pastScheduled": "Past scheduled time",
+      "pastScheduledDays": "Not started · {count, plural, one {# day past scheduled time} other {# days past scheduled time}}"
+    },
+    "aiStatuses": {
+      "planned": {
+        "label": "Planned",
+        "description": "The AI measurement is waiting to start."
+      },
+      "running": {
+        "label": "Running",
+        "description": "AI measurement samples are being processed."
+      },
+      "completed": {
+        "label": "Completed",
+        "description": "The AI measurement finished."
+      },
+      "partial": {
+        "label": "Partial",
+        "description": "Only part of the AI measurement completed successfully."
+      },
+      "blocked": {
+        "label": "Blocked",
+        "description": "The AI measurement could not proceed."
+      },
+      "failed": {
+        "label": "Failed",
+        "description": "The AI measurement failed."
+      },
+      "cancelled": {
+        "label": "Cancelled",
+        "description": "The AI measurement was cancelled."
+      },
+      "skipped": {
+        "label": "Skipped",
+        "description": "The AI measurement was skipped. Review the reason."
+      },
+      "cost_limit_exceeded": {
+        "label": "Cost limit exceeded",
+        "description": "The AI measurement was skipped because its cost limit was exceeded."
+      },
+      "status_unavailable": {
+        "label": "Status unavailable",
+        "description": "The AI measurement state could not be identified."
+      }
+    },
+    "aiResults": {
+      "title": "AI tracking results",
+      "back": "Back to Runs",
+      "next": "Next samples",
+      "empty": "No samples were retained for this run.",
+      "answer": "Retained answer",
+      "citations": "Cited pages",
+      "observed": "Observed at",
+      "model": "Model",
+      "measurement": "Measurement",
+      "measurements": {
+        "answer_present": "Answer available",
+        "aio_not_present": "AI Overview absent",
+        "partial": "Partial result",
+        "unavailable": "Unavailable",
+        "failed": "Failed",
+        "unknown": "Unknown"
+      }
+    }
+  }
+}

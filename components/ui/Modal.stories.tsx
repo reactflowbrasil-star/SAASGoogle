@@ -1,0 +1,90 @@
+import { Modal } from "@/components/ui/Modal";
+import { withSharedMessages } from "@/i18n/test-support/shared-messages-story-decorator";
+import type { Meta, StoryObj } from "@storybook/react";
+
+const meta = {
+  title: "UI/Modal",
+  component: Modal,
+  decorators: [withSharedMessages],
+  parameters: { layout: "fullscreen" },
+} satisfies Meta<typeof Modal>;
+
+export default meta;
+
+type Story = StoryObj<typeof meta>;
+
+const footer = (
+  <>
+    <button className="p-0 text-[13px] font-semibold text-fg-muted" type="button">
+      Cancel
+    </button>
+    <button
+      className="rounded-control bg-accent-solid px-4.5 py-[11px] text-[13.5px] font-semibold text-accent-on-solid"
+      type="button"
+    >
+      Export CSV
+    </button>
+  </>
+);
+
+export const Open: Story = {
+  args: {
+    children: (
+      <div className="flex flex-col gap-4.5">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.5px] text-fg-muted">Format</div>
+          <div className="mt-[9px] flex flex-col gap-[7px]">
+            {["CSV", "JSON", "Google Sheet"].map((format) => (
+              <button
+                className="flex items-center gap-3 rounded-control border border-border bg-bg-elev px-[13px] py-[11px] text-left text-[13.5px] font-semibold text-fg"
+                key={format}
+                type="button"
+              >
+                {format}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-control border border-border bg-bg px-[13px] py-[11px] text-[11.5px] leading-[1.45] text-fg-muted">
+          Exports honor the current filters and saved view.
+        </div>
+      </div>
+    ),
+    footer,
+    headerDivider: true,
+    onClose: () => undefined,
+    open: true,
+    size: "md",
+    title: "Export keywords",
+  },
+  render: (args) => (
+    <div className="min-h-[560px] bg-bg text-fg">
+      <Modal {...args} />
+    </div>
+  ),
+};
+
+/** The full preset fills the viewport inside the 24px gutter; its body scrolls on its own. */
+export const Full: Story = {
+  args: {
+    children: (
+      <ul className="m-0 flex list-none flex-col gap-2 p-0">
+        {Array.from({ length: 60 }, (_, index) => (
+          <li className="rounded-control border border-border px-3 py-2 text-[13px]" key={index}>
+            Row {index + 1}
+          </li>
+        ))}
+      </ul>
+    ),
+    headerDivider: true,
+    onClose: () => undefined,
+    open: true,
+    size: "full",
+    title: "Top queries",
+  },
+  render: (args) => (
+    <div className="min-h-[560px] bg-bg text-fg">
+      <Modal {...args} />
+    </div>
+  ),
+};

@@ -1,0 +1,47 @@
+import { PageContent } from "@/components/shell/PageContent";
+import { BackLink } from "@/components/ui/BackLink";
+import type { ReactNode } from "react";
+
+type ScheduleObjectFrameProps = {
+  bodyLabel: string;
+  breadcrumbLabel: string;
+  breadcrumb?: { href: string; label: ReactNode };
+  children?: ReactNode;
+  navigation?: ReactNode;
+  pending?: boolean;
+  subtitle?: ReactNode;
+  title: ReactNode;
+};
+
+export function ScheduleObjectFrame({
+  bodyLabel,
+  breadcrumbLabel,
+  breadcrumb,
+  children,
+  navigation,
+  pending = false,
+  subtitle,
+  title,
+}: Readonly<ScheduleObjectFrameProps>) {
+  return (
+    <PageContent aria-busy={pending || undefined} className="grid gap-4">
+      {navigation}
+      {breadcrumb ? (
+        <nav aria-label={breadcrumbLabel} className="w-fit text-[12.5px] text-fg-muted">
+          {pending ? (
+            <span>{breadcrumb.label}</span>
+          ) : (
+            <BackLink href={breadcrumb.href}>{breadcrumb.label}</BackLink>
+          )}
+        </nav>
+      ) : null}
+      <header>
+        <h1 className="m-0 text-[21px] font-semibold tracking-[-0.4px] text-fg">{title}</h1>
+        {subtitle ? <p className="m-0 mt-1 text-[12.5px] text-fg-muted">{subtitle}</p> : null}
+      </header>
+      <section aria-label={bodyLabel} className="min-w-0">
+        {children}
+      </section>
+    </PageContent>
+  );
+}

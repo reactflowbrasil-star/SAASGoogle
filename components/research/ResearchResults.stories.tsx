@@ -1,0 +1,227 @@
+import { type GroupedResearchRow, groupResearchRows } from "@/lib/keyword-research/grouping";
+import type { KeywordResearchSuccess } from "@/lib/keyword-research/types";
+import type { Meta, StoryObj } from "@storybook/react";
+import { useState } from "react";
+import { expect } from "storybook/test";
+import { ResearchResults } from "./ResearchResults";
+import { ResearchResultsTable } from "./ResearchResultsTable";
+
+const meta = {
+  component: ResearchResults,
+  decorators: [
+    (Story) => (
+      <FeatureMessagesProvider locale="en" messages={researchFeatureTestMessages} timeZone="UTC">
+        <div className="min-h-screen bg-bg p-6 text-fg">
+          <Story />
+        </div>
+      </FeatureMessagesProvider>
+    ),
+  ],
+  parameters: { layout: "fullscreen" },
+  title: "Research/Results",
+} satisfies Meta<typeof ResearchResults>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+// Providers report monthly searches newest-first; the UI sorts them chronologically.
+const trend = [1510, 1420, 1350, 1280, 1160, 1190, 1120, 1040, 980, 870, 910, 820].map(
+  (searchVolume, index) => {
+    const date = new Date(Date.UTC(2026, 5 - index, 1));
+    return { month: date.getUTCMonth() + 1, searchVolume, year: date.getUTCFullYear() };
+  },
+);
+
+const result: KeywordResearchSuccess = {
+  cached: true,
+  cachedUntil: new Date(Date.now() + 10 * 60 * 60 * 1000).toISOString(),
+  connections: [
+    { id: "conn_a00000000000000000000000", label: "DataForSEO", provider: "dataforseo" },
+  ],
+  costCents: 0,
+  fetchedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+  ok: true,
+  provider: "DataForSEO",
+  rows: [
+    ["best seo tools", 18_100, 32, 690, "commercial", "related", false],
+    ["seo tool", 14_800, 46, 540, "commercial", "suggestion", false],
+    ["SEO-tool", 14_800, 48, 540, "commercial", "idea", false],
+    ["free seo checker", 9_900, 21, 175, "transactional", "suggestion", false],
+    ["keyword research", 8_100, 57, 420, "informational", "related", true],
+    ["rank tracker", 6_600, 42, 880, "commercial", "idea", false],
+    ["website audit", 5_400, 64, 310, "informational", "related", false],
+    ["seo reporting", 2_900, 36, null, "unknown", "idea", false],
+  ].map(([keyword, searchVolume, difficulty, cpcCents, intent, source, alreadyTracked]) => ({
+    alreadySaved: false,
+    alreadyTracked: alreadyTracked as boolean,
+    competition: 0.54,
+    cpcCents: cpcCents as number | null,
+    difficulty: difficulty as number,
+    intent: intent as "commercial" | "informational" | "transactional" | "unknown",
+    keyword: keyword as string,
+    monthlyTrend: trend,
+    searchVolume: searchVolume as number,
+    source: source as "idea" | "related" | "suggestion",
+  })),
+  sources: [
+    { cached: true, costCents: 0, returned: 3, source: "related", status: "ok" },
+    { cached: true, costCents: 0, returned: 3, source: "suggestion", status: "ok" },
+    {
+      cached: false,
+      costCents: 0,
+      reason: "cost_limit",
+      returned: 2,
+      source: "idea",
+      status: "skipped",
+    },
+  ],
+};
+
+function ResearchResultsTableStory({
+  initialSelected = [],
+  rows,
+}: Readonly<{ initialSelected?: string[]; rows: GroupedResearchRow[] }>) {
+  const [activeKeyword, setActiveKeyword] = useState<string | null>(null);
+  const [selectedKeywords, setSelectedKeywords] = useState(initialSelected);
+  return (
+    <ResearchResultsTable
+      activeKeyword={activeKeyword}
+      cached
+      canRemoveSaved
+      deeper={null}
+      fetchedAt="2026-07-22T10:00:00.000Z"
+      fetchedCount={rows.length}
+      filterCount={rows.length === 0 ? 1 : 0}
+      onActiveChange={(row) => setActiveKeyword(row.keyword)}
+      onAddSelected={() => undefined}
+      onDeeper={() => undefined}
+      onOpenFilters={() => undefined}
+      onSaveSelected={() => undefined}
+      onSelectionChange={setSelectedKeywords}
+      onToggleSave={() => undefined}
+      rows={rows}
+      seed="seo tools"
+      selectedKeywords={selectedKeywords}
+      totalCount={result.rows.length}
+      trackingMarketCount={3}
+    />
+  );
+}
+
+export const CachedPartialResult: Story = {
+  args: {
+    costContext: {
+      capCents: 5000,
+      costPerCheckCents: 0.01,
+      cronExpression: null,
+      depth: 100,
+      deviceCount: 1,
+      devices: ["desktop"],
+      frequency: "daily",
+      keywordCount: 24,
+      locationCount: 1,
+      projectName: "Acme",
+      providerId: "dataforseo",
+      rawFrequency: "daily",
+      spentCents: 1280,
+      timezone: "America/New_York",
+    },
+    defaultTracking: {
+      device: "desktop",
+      location: {
+        canonicalKey: "US",
+        countryCode: "US",
+        displayName: "United States",
+        kind: "country",
+      },
+      scheduleFrequency: "project_default",
+    },
+    onAdd: () => undefined,
+    onDeeper: () => undefined,
+    projectId: "prj_story",
+    requestedLimit: 100,
+    result,
+    seed: "seo tools",
+  },
+};
+
+export const OffCatalogMetricsUnavailable: Story = {
+  args: {
+    ...CachedPartialResult.args,
+    defaultTracking: {
+      device: "desktop",
+      location: {
+        canonicalKey: "ES@en",
+        countryCode: "ES",
+        displayName: "Spain - English",
+        hl: "en",
+        kind: "country",
+        languageLabel: "English",
+      },
+      scheduleFrequency: "project_default",
+    },
+    metricsAvailable: false,
+    trackingMarketCount: 3,
+  },
+};
+
+export const SelectedResults: Story = {
+  args: CachedPartialResult.args,
+  render: () => (
+    <ResearchResultsTableStory
+      initialSelected={["best seo tools", "seo tool"]}
+      rows={groupResearchRows(result.rows)}
+    />
+  ),
+};
+
+export const EmptyFilteredResults: Story = {
+  args: CachedPartialResult.args,
+  render: () => <ResearchResultsTableStory rows={[]} />,
+};
+
+export const StoredResultsToolbar: Story = {
+  args: CachedPartialResult.args,
+  render: () => (
+    <div className="max-w-[680px]">
+      <ResearchResultsTable
+        activeKeyword={null}
+        cached
+        canRemoveSaved={false}
+        deeper={null}
+        fetchedAt={result.fetchedAt}
+        fetchedCount={100}
+        filterCount={0}
+        onActiveChange={() => undefined}
+        onOpenFilters={() => undefined}
+        readOnly
+        rows={Array.from({ length: 100 }, (_, index) => ({
+          ...groupResearchRows(result.rows)[0],
+          keyword: `keyword ${index + 1}`,
+        }))}
+        seed="seo tools"
+        selectedKeywords={[]}
+        storedFreshness={{
+          fetchedAt: result.fetchedAt,
+          freshUntil: result.cachedUntil,
+          stale: false,
+        }}
+        totalCount={100}
+      />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const summary = Array.from(canvasElement.querySelectorAll("p")).find((item) =>
+      item.textContent?.startsWith("Showing"),
+    );
+    if (!summary) throw new Error("Expected the fetched keyword count");
+    const range = document.createRange();
+    range.selectNodeContents(summary);
+    const lineTops = new Set(Array.from(range.getClientRects(), (rect) => Math.round(rect.top)));
+    await expect(lineTops.size).toBe(1);
+    await expect(canvasElement.scrollWidth).toBeLessThanOrEqual(canvasElement.clientWidth);
+  },
+};
+
+import { FeatureMessagesProvider } from "@/components/i18n/FeatureMessagesProvider";
+import { researchFeatureTestMessages } from "@/i18n/test-support/feature-test-messages";

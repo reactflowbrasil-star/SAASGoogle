@@ -1,0 +1,25 @@
+import type { Icon } from "@phosphor-icons/react";
+import { GearSixIcon as GearSix } from "@phosphor-icons/react/dist/ssr/GearSix";
+import { MedalIcon } from "@phosphor-icons/react/dist/ssr/Medal";
+import { ShieldCheckIcon as ShieldCheck } from "@phosphor-icons/react/dist/ssr/ShieldCheck";
+import { UserCircleIcon as UserCircle } from "@phosphor-icons/react/dist/ssr/UserCircle";
+
+export const accountSections = [
+  { href: "/app/account", icon: UserCircle, id: "profile" },
+  { href: "/app/account/preferences", icon: GearSix, id: "preferences" },
+  { href: "/app/account/activity", icon: MedalIcon, id: "activity" },
+  { href: "/app/account/security", icon: ShieldCheck, id: "security" },
+] as const satisfies ReadonlyArray<{ href: string; icon: Icon; id: string }>;
+
+export type AccountSectionId = (typeof accountSections)[number]["id"];
+
+export type AccountSection = (typeof accountSections)[number];
+
+export function getAccountSection(id: string): AccountSection | undefined {
+  return accountSections.find((section) => section.id === id);
+}
+
+export function accountSectionHref(id: AccountSectionId): string {
+  const section = accountSections.find((item) => item.id === id);
+  return section?.href ?? "/app/account";
+}

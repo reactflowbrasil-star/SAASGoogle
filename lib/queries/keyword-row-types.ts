@@ -1,0 +1,141 @@
+import type { PositionObservation } from "@/lib/checks/position-observations";
+import type { ExpectedUrlSource } from "@/lib/expected-url/types";
+import type { ObservationCompleteness } from "@/lib/observation/types";
+import type { KeywordLocation } from "@/lib/queries/keyword-location";
+import type { SerpDepth } from "@/lib/serp/constants";
+
+export type KeywordSchedule = {
+  cron_expression: string | null;
+  frequency: "custom_cron" | "daily" | "manual" | "monthly" | "paused" | "weekly";
+  jitter_minutes: number;
+  last_checked_at: string | null;
+  next_check_at: string | null;
+  serp_depth?: SerpDepth | null;
+  timezone: string;
+};
+export type KeywordCheckSchedule = {
+  name: string;
+  nextCheckAt: string | null;
+  publicId: string;
+};
+/** Every keyword row loader selects this, so an assigned schedule always owns the row's depth. */
+export const keywordCheckScheduleSelect = {
+  archivedAt: true,
+  cronExpression: true,
+  enabled: true,
+  frequency: true,
+  jitterMinutes: true,
+  timeOfDay: true,
+  timezone: true,
+  name: true,
+  publicId: true,
+  serpDepth: true,
+} as const;
+export type PositionPoint = {
+  checkedAt: string;
+  degradedToCountry?: boolean;
+  label: string;
+  position: number;
+  rankingUrl?: string | null;
+};
+export type CompletedComparableCheck = {
+  observationCompleteness?: ObservationCompleteness | null;
+  checkedAt: string;
+  position: number | null;
+  rankingUrl: string | null;
+};
+export type RankingUrlEvent = {
+  endAt: string;
+  isCurrent: boolean;
+  note: "Current" | "First seen ranking" | "URL switched" | null;
+  position: number | null;
+  requestedDepth: number | null;
+  startAt: string;
+  url: string;
+};
+export type LastCheckStatus = "completed" | "failed" | "running" | null;
+export type LatestAttemptHealth = "failed" | "ok" | "running";
+export type KeywordCheckState =
+  | "failed"
+  | "never_checked"
+  | "not_ranked"
+  | "ranked"
+  | "running"
+  | "unknown";
+type ScheduleOrigin = "fallback" | "keyword" | "project";
+export type KeywordTrafficSummary = {
+  clicks: number;
+  ctr: number;
+  date: Date;
+  impressions: number;
+  provider: string;
+};
+export type UrlPresenceView = {
+  canonicalOk: boolean | null;
+  checkedAt: string;
+  coverageState: string | null;
+  indexed: boolean;
+  lastCrawlAt: string | null;
+  url: string;
+  verdict: string | null;
+};
+export type KeywordRow = {
+  bestPosition: number | null;
+  clicks: number | null;
+  cpc: string;
+  cpcKnown?: boolean;
+  createdAt: string;
+  dataAsOfAt: string | null;
+  dataProvider: string | null;
+  ctr: number | null;
+  device: string;
+  difficulty: number;
+  difficultyKnown?: boolean;
+  engine: string;
+  /** Current editable target; expectedUrl may retain the value captured by the last check. */
+  currentExpectedUrl?: string | null;
+  expectedUrl?: string | null;
+  expectedUrlFallbackCurrent?: boolean;
+  expectedUrlSource?: ExpectedUrlSource | null;
+  checkState?: KeywordCheckState;
+  observationCompleteness?: ObservationCompleteness | null;
+  checkSchedule?: KeywordCheckSchedule | null;
+  completedComparableChecks?: CompletedComparableCheck[];
+  hasRankData: boolean;
+  hasTag?: boolean;
+  id: string;
+  impressions: number | null;
+  keyword: string;
+  lastCheckAt: string | null;
+  lastCheckErrorCode: string | null;
+  lastCheckStatus: LastCheckStatus;
+  latestAttemptHealth: LatestAttemptHealth;
+  location: KeywordLocation;
+  locationName: string;
+  position: number;
+  positionBaseline: number | null;
+  positionHistoryBoundaryAt: string | null;
+  positionHistory: PositionPoint[];
+  positionObservations?: PositionObservation[];
+  projectSerpDepth?: SerpDepth;
+  projectTimezone?: string;
+  previousPosition: number | null;
+  rankingPages: number;
+  rankingPath: string | null;
+  rankingUrl: string | null;
+  rankingUrlHistory: RankingUrlEvent[];
+  schedule: KeywordSchedule;
+  scheduleSource?: ScheduleOrigin;
+  trackedDepth?: SerpDepth;
+  serpFeatures: string[];
+  sparkline: number[];
+  tags: string[];
+  targetPosition?: number | null;
+  targetUrl: string | null;
+  urlPresence?: UrlPresenceView | null;
+  topic: string | null;
+  trafficDate?: Date | string;
+  intent: string | null;
+  volume: number;
+  volumeKnown?: boolean;
+};

@@ -1,0 +1,459 @@
+import {
+  buildCompetitorMarket,
+  emptyCompetitorFilter,
+} from "@/lib/competitors/competitor-market-model";
+import { cloneSavedViewConfig } from "@/lib/keywords/saved-view-model";
+import { mapSavedViewRecord } from "@/lib/saved-views/model";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { handleApiRequest } from "./router";
+
+const mocks = vi.hoisted(() => ({
+  actions: {
+    addManagedCompetitor: vi.fn(),
+    connectProvider: vi.fn(),
+    createSavedView: vi.fn(),
+    deleteSavedView: vi.fn(),
+    disconnectProvider: vi.fn(),
+    inviteMember: vi.fn(),
+    mintMigrationToken: vi.fn(),
+    removeManagedCompetitor: vi.fn(),
+    revokeInvite: vi.fn(),
+    revokeMigrationToken: vi.fn(),
+    updateProviderSettings: vi.fn(),
+    testConnection: vi.fn(),
+    updateNotificationPreferences: vi.fn(),
+  },
+  authenticateBearer: vi.fn(),
+  queries: {
+    getCloudImportView: vi.fn(),
+    getCompetitorsApiView: vi.fn(),
+    getIntegrationCategories: vi.fn(),
+    readNotificationPreferencesFor: vi.fn(),
+    getTeamAccess: vi.fn(),
+    listSavedViews: vi.fn(),
+  },
+  tokenService: {
+    assertMintRateLimit: vi.fn(),
+    mint: vi.fn(),
+    revoke: vi.fn(),
+  },
+}));
+
+// Competitor, saved-view deletion, notification and migration-token mutations return generic
+// stubs here, so only the routes backed by real resource builders are recorded.
+vi.mock("./router", async (importOriginal) =>
+  (await import("./response-capture.test-support")).captureRouter(await importOriginal(), {
+    skip: [
+      "addCompetitor",
+      "deleteProjectSavedView",
+      "listMigrationTokens",
+      "removeProjectCompetitor",
+      "revokeProjectMigrationToken",
+      "updateNotificationPreferences",
+    ],
+  }),
+);
+vi.mock("./auth", () => ({
+  ApiAuthError: class ApiAuthError extends Error {},
+  authenticateBearer: mocks.authenticateBearer,
+}));
+vi.mock("./ratelimit", () => ({
+  checkRateLimit: vi.fn(() => Promise.resolve({ headers: new Headers(), success: true })),
+  rateLimitExceeded: vi.fn(),
+}));
+vi.mock("@/lib/actions/_shared", () => ({
+  makePublicId: vi.fn((prefix: string) => `${prefix}_generated`),
+  parseActionInput: vi.fn((schema, input) => schema.parse(input)),
+}));
+vi.mock("@/lib/actions/team", () => ({
+  inviteMember: mocks.actions.inviteMember,
+  revokeInvite: mocks.actions.revokeInvite,
+}));
+vi.mock("@/lib/team/service", () => ({
+  changeTeamMemberRole: vi.fn(),
+  inviteTeamMember: mocks.actions.inviteMember,
+  removeTeamMember: vi.fn(),
+  resendTeamInvite: vi.fn(),
+  revokeTeamInvite: mocks.actions.revokeInvite,
+}));
+vi.mock("@/lib/queries/team", () => ({ getTeamAccessFor: mocks.queries.getTeamAccess }));
+vi.mock("@/lib/actions/providers", () => ({
+  connectProvider: mocks.actions.connectProvider,
+  disconnectProvider: mocks.actions.disconnectProvider,
+  updateProviderSettings: mocks.actions.updateProviderSettings,
+  testConnection: mocks.actions.testConnection,
+}));
+vi.mock("@/lib/queries/integrations", () => ({
+  getIntegrationCategories: mocks.queries.getIntegrationCategories,
+}));
+vi.mock("@/lib/saved-views/service", () => ({
+  createSavedViewFor: mocks.actions.createSavedView,
+  deleteSavedViewFor: mocks.actions.deleteSavedView,
+}));
+vi.mock("@/lib/queries/saved-views", () => ({ listSavedViewsFor: mocks.queries.listSavedViews }));
+vi.mock("@/lib/competitors/service", () => ({
+  addManagedCompetitorFor: mocks.actions.addManagedCompetitor,
+  removeManagedCompetitorFor: mocks.actions.removeManagedCompetitor,
+}));
+vi.mock("@/lib/queries/competitors", () => ({
+  getCompetitorsApiViewFor: mocks.queries.getCompetitorsApiView,
+}));
+vi.mock("@/lib/notifications/preferences-update", () => ({
+  applyNotificationPreferences: mocks.actions.updateNotificationPreferences,
+}));
+vi.mock("@/lib/queries/notification-prefs", () => ({
+  readNotificationPreferencesFor: mocks.queries.readNotificationPreferencesFor,
+}));
+vi.mock("@/lib/actions/cloud", () => ({
+  mintMigrationToken: mocks.actions.mintMigrationToken,
+  revokeMigrationToken: mocks.actions.revokeMigrationToken,
+}));
+vi.mock("@/lib/migration/token-service", () => ({
+  assertMigrationTokenMintRateLimit: mocks.tokenService.assertMintRateLimit,
+  mintMigrationTokenForProject: mocks.tokenService.mint,
+  revokeMigrationTokenForProject: mocks.tokenService.revoke,
+}));
+vi.mock("@/lib/queries/cloud", () => ({ getCloudImportViewFor: mocks.queries.getCloudImportView }));
+
+const ids = {
+  competitor: "cmp_aaaaaaaaaaaaaaaaaaaaaaaa",
+  job: "imp_aaaaaaaaaaaaaaaaaaaaaaaa",
+  keyword: "kw_aaaaaaaaaaaaaaaaaaaaaaaa",
+  migrationToken: "ferry_aaaaaaaaaaaaaaaaaaaaaaaa",
+  project: "prj_aaaaaaaaaaaaaaaaaaaaaaaa",
+  savedView: "viw_aaaaaaaaaaaaaaaaaaaaaaaa",
+} as const;
+
+const project = {
+  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  domain: "example.com",
+  id: "project_1",
+  name: "Example",
+  ownerId: "owner_1",
+  publicId: ids.project,
+  updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+};
+
+function savedViewResource(
+  name: string,
+  surface: "keywords" | "competitors" = "keywords",
+  config: unknown = surface === "keywords"
+    ? cloneSavedViewConfig()
+    : {
+        version: 1,
+        surface: "competitors",
+        scope: { device: "desktop", engine: "google", locationId: "location_us" },
+      },
+) {
+  const view = mapSavedViewRecord(
+    {
+      config,
+      createdAt: project.createdAt,
+      createdById: "user_db_1",
+      id: "view_db_1",
+      publicId: ids.savedView,
+      name,
+      surface,
+      revision: 1,
+      visibility: "project",
+      ownerId: null,
+    },
+    true,
+  );
+  if (!view) throw new Error("Invalid saved-view resource fixture.");
+  return view;
+}
+
+const apiActor = { id: project.ownerId, memberships: [{ projectId: project.id, role: "admin" }] };
+const mutationContext = { actor: apiActor, auditActorId: null };
+
+function request(method: string, path: string, body?: unknown) {
+  return new Request(`https://example.com/api/v1${path}`, {
+    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: {
+      authorization: "Bearer bsb_key_live_test_key",
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    method,
+  });
+}
+
+async function call(method: string, path: string, body?: unknown) {
+  return handleApiRequest(
+    request(method, path, body),
+    path.split("?")[0].split("/").filter(Boolean),
+  );
+}
+
+describe("public API remaining app surface routes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.authenticateBearer.mockResolvedValue({
+      kind: "project_key",
+      apiKey: {
+        id: "key_1",
+        name: "Key",
+        prefix: "bsb_key_live_",
+        projectId: project.id,
+        scopes: ["admin"],
+      },
+      project,
+    });
+    mocks.queries.listSavedViews.mockImplementation(async (_actor, _project, surface) => [
+      savedViewResource("All", surface),
+    ]);
+    mocks.queries.getCompetitorsApiView.mockResolvedValue({
+      managedCompetitors: [
+        {
+          domain: "competitor.example.com",
+          id: ids.competitor,
+          label: "Competitor",
+        },
+      ],
+      markets: [
+        buildCompetitorMarket(
+          {
+            allColumns: [
+              { domain: "example.com", kind: "You", label: "You" },
+              {
+                domain: "competitor.example.com",
+                id: ids.competitor,
+                kind: "Managed",
+                label: "Competitor",
+              },
+            ],
+            competitorCount: 1,
+            device: "desktop",
+            engine: "google",
+            key: "location_us::desktop::google",
+            languageLabel: "English",
+            location: "United States",
+            locationId: "location_us",
+            locationKind: "country",
+            observations: [
+              {
+                checkedAt: "2026-09-10T08:00:00.000Z",
+                completed: true,
+                id: ids.keyword,
+                keyword: "rank tracker",
+                ranked: true,
+                quality: {
+                  "example.com": { evidence: "positive", freshness: "fresh", reason: null },
+                  "competitor.example.com": {
+                    evidence: "positive",
+                    freshness: "fresh",
+                    reason: null,
+                  },
+                },
+                ranks: { "competitor.example.com": 1, "example.com": 3 },
+                tags: [],
+                volume: 1_000,
+              },
+            ],
+            tags: [],
+            trackedKeywordCount: 1,
+          },
+          emptyCompetitorFilter,
+        ),
+      ],
+      suggestions: [],
+    });
+    mocks.queries.readNotificationPreferencesFor.mockResolvedValue({
+      alertEmail: true,
+      alertInApp: true,
+      alertPush: true,
+      alertSlack: false,
+      alertWebhook: false,
+      checkEmail: false,
+      checkInApp: true,
+      email: "owner@example.com",
+      emailVerification: "verified",
+      importEmail: true,
+      importInApp: true,
+      inviteEmail: true,
+      inviteInApp: true,
+      projectId: ids.project,
+      reportEmail: true,
+      slackAvailable: false,
+      webhookAvailable: false,
+    });
+    mocks.queries.getCloudImportView.mockResolvedValue({
+      activeToken: { createdAt: "2026-01-01", id: ids.migrationToken, scope: "full" },
+      importJob: { id: ids.job, state: "idle" },
+    });
+    for (const fn of Object.values(mocks.actions)) fn.mockResolvedValue({ id: "ok_1" });
+    mocks.actions.createSavedView.mockImplementation(async ({ surface, name, config }) =>
+      savedViewResource(name, surface, config),
+    );
+    mocks.tokenService.assertMintRateLimit.mockResolvedValue(undefined);
+    mocks.tokenService.mint.mockResolvedValue({
+      createdAt: "2026-01-01T00:00:00.000Z",
+      expiresAt: "2026-01-01T01:00:00.000Z",
+      id: ids.migrationToken,
+      importJob: { id: ids.job, state: "idle" },
+      scope: "keywords",
+      singleUse: true,
+      token: "mig_secret",
+    });
+    mocks.tokenService.revoke.mockResolvedValue({
+      id: ids.migrationToken,
+      revokedAt: "2026-01-01T00:30:00.000Z",
+    });
+  });
+
+  it("serves saved views and competitors", async () => {
+    const views = await call("GET", `/projects/${ids.project}/saved-views`);
+    const createView = await call("POST", `/projects/${ids.project}/saved-views`, {
+      config: {},
+      name: "Mine",
+    });
+    const deleteView = await call(
+      "DELETE",
+      `/projects/${ids.project}/saved-views/${ids.savedView}`,
+    );
+    const competitors = await call("GET", `/projects/${ids.project}/competitors`);
+    const addCompetitor = await call("POST", `/projects/${ids.project}/competitors`, {
+      domain: "competitor.example.com",
+    });
+    const removeCompetitor = await call(
+      "DELETE",
+      `/projects/${ids.project}/competitors/${ids.competitor}`,
+    );
+
+    expect([
+      views.status,
+      createView.status,
+      deleteView.status,
+      competitors.status,
+      addCompetitor.status,
+      removeCompetitor.status,
+    ]).toEqual([200, 201, 200, 200, 201, 200]);
+    expect(mocks.actions.createSavedView).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Mine", projectId: ids.project }),
+      mutationContext,
+    );
+    expect(mocks.actions.deleteSavedView).toHaveBeenCalledWith(
+      {
+        projectId: ids.project,
+        viewId: ids.savedView,
+      },
+      mutationContext,
+    );
+    expect(mocks.actions.addManagedCompetitor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        domain: "competitor.example.com",
+        projectId: ids.project,
+      }),
+      mutationContext,
+    );
+    expect(mocks.actions.removeManagedCompetitor).toHaveBeenCalledWith(
+      {
+        competitorId: ids.competitor,
+        projectId: ids.project,
+      },
+      mutationContext,
+    );
+    expect(JSON.stringify(await views.json())).not.toContain("user_db_1");
+    await expect(competitors.json()).resolves.toMatchObject({
+      meta: {
+        markets: [
+          {
+            country: "United States",
+            data_state: "ranked",
+            device: "Desktop",
+            domains: expect.arrayContaining([{ domain: "example.com", managed: false }]),
+            engine: "Google",
+            id: "location_us::desktop::google",
+            observations: [{ id: ids.keyword, checked_at: "2026-09-10T08:00:00.000Z" }],
+            shares: expect.arrayContaining([
+              expect.objectContaining({
+                domain: "example.com",
+                share_of_voice: expect.any(Number),
+              }),
+            ]),
+          },
+        ],
+      },
+    });
+  });
+
+  it("rejects saved view creation without a config", async () => {
+    const response = await call("POST", `/projects/${ids.project}/saved-views`, {
+      name: "Missing",
+    });
+
+    expect(response.status).toBe(400);
+    expect(mocks.actions.createSavedView).not.toHaveBeenCalled();
+  });
+
+  it("lists and creates competitor saved views through the public API", async () => {
+    const listResponse = await call(
+      "GET",
+      `/projects/${ids.project}/saved-views?surface=competitors`,
+    );
+    const createResponse = await call("POST", `/projects/${ids.project}/saved-views`, {
+      config: {
+        filters: { excluded_keyword_ids: [ids.keyword], position: "all", tag: null },
+        scope: { device: "desktop", engine: "google", location_id: "location_us" },
+      },
+      name: "US desktop",
+      surface: "competitors",
+    });
+
+    expect([listResponse.status, createResponse.status]).toEqual([200, 201]);
+    expect(mocks.queries.listSavedViews).toHaveBeenCalledWith(apiActor, ids.project, "competitors");
+    expect(mocks.actions.createSavedView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ surface: "competitors", version: 1 }),
+        name: "US desktop",
+      }),
+      mutationContext,
+    );
+  });
+
+  it("serves notification preferences and migration tokens", async () => {
+    const prefs = await call("GET", `/projects/${ids.project}/notification-preferences`);
+    const updatePrefs = await call("PATCH", `/projects/${ids.project}/notification-preferences`, {
+      check_email: true,
+    });
+    const tokens = await call("GET", `/projects/${ids.project}/migration-tokens`);
+    expect(mocks.queries.getCloudImportView).toHaveBeenCalledWith(apiActor, ids.project);
+    const mint = await call("POST", `/projects/${ids.project}/migration-tokens`, {
+      scope: "keywords",
+    });
+    const revoke = await call(
+      "DELETE",
+      `/projects/${ids.project}/migration-tokens/${ids.migrationToken}`,
+    );
+
+    expect([prefs.status, updatePrefs.status, tokens.status, mint.status, revoke.status]).toEqual([
+      200, 200, 200, 201, 200,
+    ]);
+    expect(mocks.actions.updateNotificationPreferences).toHaveBeenCalledWith(
+      expect.objectContaining({ memberships: expect.any(Array) }),
+      expect.objectContaining({ checkEmail: true, projectId: ids.project }),
+    );
+    expect(mocks.tokenService.mint).toHaveBeenCalledWith({
+      action: "migration_token.mint",
+      actorId: "owner_1",
+      projectId: "project_1",
+      scope: "keywords",
+    });
+    expect(mocks.tokenService.revoke).toHaveBeenCalledWith({
+      actorId: "owner_1",
+      projectId: "project_1",
+      tokenId: ids.migrationToken,
+    });
+  });
+
+  it("lists the new route surface in openapi", async () => {
+    const body = await (await call("GET", "/openapi.json")).json();
+
+    expect(body.paths).toMatchObject({
+      "/projects/{project_id}/alert-rules": expect.any(Object),
+      "/projects/{project_id}/migration-tokens": expect.any(Object),
+      "/projects/{project_id}/providers/{provider_id}/connect": expect.any(Object),
+      "/projects/{project_id}/team/members": expect.any(Object),
+    });
+  });
+});

@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "artifacts": [
+    {
+      "id": "typescript",
+      "label": "TypeScript SDK",
+      "package": "@bisibility/sdk",
+      "version": "0.14.1",
+      "url": "https://registry.npmjs.org/@bisibility/sdk/-/sdk-0.14.1.tgz",
+      "sha256": "cfe50ace36fe8d550b9b0d23d3c1d0fa66b6830f6344abd0a703fc1ffedf2509",
+      "file": "package/dist/client.d.ts",
+      "operations": ["analyzeDomainOverview", "loadDomainOverviewHistory", "loadDomainOverviewKeywords", "loadDomainOverviewPages"],
+      "declaration": "typescript"
+    },
+    {
+      "id": "python",
+      "label": "Python SDK",
+      "package": "bisibility",
+      "version": "0.11.1",
+      "url": "https://files.pythonhosted.org/packages/bc/88/7576e6cf05469f1f18abc5e08aef503bd26aa819c7e04c9eab8903a732e2/bisibility-0.11.1.tar.gz",
+      "sha256": "bc11c1b77877d0aa27ce2e0684ee06fdcb0a59b3ecb6bab91d24a8c06de4744f",
+      "file": "bisibility-0.11.1/src/bisibility/client.py",
+      "operations": ["analyze_domain_overview", "load_domain_overview_history", "load_domain_overview_keywords", "load_domain_overview_pages", "create_project"],
+      "declaration": "python"
+    },
+    {
+      "id": "go",
+      "label": "Go SDK",
+      "package": "bisibility.com/sdk-go",
+      "version": "v0.12.0",
+      "url": "https://proxy.golang.org/bisibility.com/sdk-go/@v/v0.12.0.zip",
+      "sha256": "abefd7b88bac1de6e2ae6ab5995aa9be8c3f3df2191a656e4906cab8abfd2eed",
+      "file": "bisibility.com/sdk-go@v0.12.0/domain_overview.go",
+      "operations": ["AnalyzeDomainOverview", "LoadDomainOverviewHistory", "LoadDomainOverviewKeywords", "LoadDomainOverviewPages"],
+      "declaration": "go"
+    },
+    {
+      "id": "cli",
+      "label": "CLI",
+      "package": "@bisibility/cli",
+      "version": "0.7.0",
+      "url": "https://registry.npmjs.org/@bisibility/cli/-/cli-0.7.0.tgz",
+      "sha256": "fac7c572f1dd67e4bccfeaccccc7c154413d924664dbeb320cdb1d90a5b3da88",
+      "file": "package/dist/chunk-QQUDPBBF.js.map",
+      "source": "../src/help.ts",
+      "operations": ["domain-overview analyze", "domain-overview history", "domain-overview keywords", "domain-overview pages"],
+      "declaration": "cli"
+    },
+    {
+      "id": "mcp",
+      "label": "MCP package",
+      "package": "@bisibility/mcp",
+      "version": "0.10.0",
+      "url": "https://registry.npmjs.org/@bisibility/mcp/-/mcp-0.10.0.tgz",
+      "sha256": "29589519142b3285b9de14ff6de9ca50f0a44c8fe69daca65bc8a61bd219c720",
+      "file": "package/dist/chunk-EP6A2KR3.js",
+      "operations": ["analyze_domain_overview", "load_domain_overview_history", "load_domain_overview_keywords", "load_domain_overview_pages"],
+      "declaration": "mcp"
+    }
+  ]
+}

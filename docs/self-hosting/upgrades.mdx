@@ -1,0 +1,278 @@
+---
+title: "Self-hosted upgrades"
+description: "Upgrade a self-hosted bisibility installation with the versioned distribution manifest."
+---
+
+[Production checklist](/self-hosting#production-checklist)
+
+## Upgrade with a distribution manifest
+
+Releases whose `distribution-manifest.json` lists the `upgradeScript` artifact
+ship `upgrade.sh` as a versioned release asset alongside the manifest.
+`distribution-manifest.json` is also included in the tagged source (see
+[Production Compose](/self-hosting/docker#production-compose)). Older releases
+without that manifest entry do not ship `upgrade.sh` as a release asset; obtain
+the script from the matching tagged source tree instead. The distribution
+manifest checksums `upgrade.sh` and the other listed release assets; the
+manifest plus its listed assets are verified before publication.
+
+`upgrade.sh` also needs `verify.mjs` and `manifest.mjs` from the same GitHub
+release. Those two helpers are not listed in the manifest artifact contract;
+download them next to `upgrade.sh`, or keep a repository checkout so they remain
+at `scripts/distribution/`. A directory that has only `upgrade.sh` and the
+manifest cannot run the documented command.
+
+The procedure below is the canonical current upgrade path. Migrations are
+forward-only; there is no automatic rollback. Retired baseline-reset and
+source-tree upgrades live under [Legacy upgrades](/self-hosting/legacy-upgrades).
+
+### Prerequisites
+
+Before starting, gather the exact target release assets and plan a maintenance
+window:
+
+- Download `distribution-manifest.json`, `upgrade.sh`, `verify.mjs`, and
+  `manifest.mjs` from the GitHub release assets for the matching tag. Place the
+  two helpers next to `upgrade.sh` in the directory that already has your
+  Compose files.
+- Install Docker Compose v2 and Node.js on the operator host.
+- Read the changelog for the target release and note schema or environment
+  changes. Review `.env.example` against the current `.env` and update
+  deliberately.
+- Schedule a maintenance window or stop writes before touching the database.
+- Never enable demo OTP or demo seeding on a production deployment.
+
+### Backup as rollback
+
+A tested application PostgreSQL backup, matching application secrets, and
+applicable Temporal persistence are the rollback mechanism. Create the backup
+before starting the upgrade; see
+[Backup and restore](/self-hosting/backup-restore). Migrations are forward-only;
+an image rollback does not reverse Prisma migrations.
+
+### Rank request compiler upgrade
+
+Migration `20261021194000_measurement_request_compiler_v2` adds support for a
+versioned rank-check request. New Top 20 checks collect the full requested
+depth instead of stopping at the first domain match. Existing requests retain
+their original collection policy, provider evidence and accounting identity.
+
+Use a coordinated maintenance window when crossing this migration. Apply it
+before starting new code, then replace both web and worker processes with the
+same release before reopening traffic. Stop old processes and prevent their
+automatic restart; older readers cannot parse the new request version.
+
+After a new-version request has been created, do not roll back to an older
+reader. A rollback build must retain both request readers. The migration does
+not rewrite historical requests or authorize another provider submission.
+
+### Accounting migration
+
+When upgrading from the legacy usage ledger to Meter accounting, rehearse the
+complete target release against a restored backup before the maintenance window.
+Measure snapshot/import time and verify the backup is restorable. A fresh empty
+installation does not need a legacy-history drain.
+
+Before invoking the upgrade, close paid entry points and budget/rate changes,
+pause paid scheduling, and drain old work while its original code and credentials
+can still retrieve and settle it. Release provably unsent work; finish accepted
+queued tasks. Ambiguous live sends stop the upgrade. Stop old processes and
+prevent their supervisors from restarting. Stopping containers alone does not
+prove that an accepted provider task has settled.
+
+From `20261011040000_retire_accounting` until the upgraded web is promoted,
+requests that read dropped project or connection columns fail because the old
+Prisma client still selects them. Keep `app` stopped as described below; for split
+deployments, scale old web instances to zero for this interval or these pages
+return errors.
+
+The nonempty legacy snapshot requires the PostgreSQL session setting
+`bisibility.accounting_quiesced=on`. After proving the drain, configure that
+startup setting on the actual migration connections using the PostgreSQL
+connection `options` value `-c bisibility.accounting_quiesced=on`. Rehearse this
+with your migration service. A setting in a separate SQL session is insufficient;
+it must reach the Prisma migration connection. Keep database credentials in the
+service's secret configuration. The setting asserts quiescence; it does not stop
+paid work. Remove it after migration.
+
+The migration snapshots history before retiring the old ledger, then imports
+all historical months with original identities, receipts, budgets and references.
+Unknown historical costs remain unknown and block affected scopes. Imported
+operations cannot dispatch provider requests. `npm run db:migrate` runs both
+schema and blocking data work; Prisma schema migration alone is insufficient.
+The migration runner, web and worker must use the same database, schema and
+`METERING_NAMESPACE` (default `default`).
+
+Any failure of `20261011050000_drop_project_spending_cap`, including its guard,
+a lock timeout, conflicting provenance or an inconsistent Store budget, rolls back
+the transaction but leaves a failed `_prisma_migrations` row; every later
+`npm run db:migrate` stops with P3009 before data migrations.
+Direct `prisma migrate deploy` reports only `current transaction is aborted`
+without a P-code; inspect the PostgreSQL log for the real cause.
+
+Fix the cause first, then run
+`npx prisma migrate resolve --rolled-back 20261011050000_drop_project_spending_cap`
+and `npm run db:migrate`, in that order.
+Resolving the failed row without fixing the cause fails again.
+Exception: if the history guard failed only because direct `prisma migrate deploy`
+skipped the data migrations, resolving the failed row and then running
+`npm run db:migrate` is itself the fix, importing and verifying history before
+the cap drop.
+
+Keep paid entry points closed if the import fails. After resolving a cap-drop
+failure as above, retry from the same release, database, schema
+and accounting namespace: the history importer resumes committed batches and
+rejects changed source or target mappings. Do not delete its progress or mark it
+complete by hand. Require successful verification, migration readiness, matching
+web/worker releases and functioning
+[accounting maintenance](/self-hosting/operations#paid-call-accounting-maintenance)
+before reopening. There is no shadow phase or runtime switch back to the old ledger.
+
+A pre-upgrade restore is safe only before any new paid attempt and with all
+writers stopped. After new paid work, prefer repair in place: an old backup would
+erase new charges and provider evidence. Returning to old code then requires a
+rehearsed reconstruction that preserves new receipts, native request IDs and
+budget settings, with exact totals reconciled. Unknown new evidence blocks it.
+
+### Verify release assets
+
+When the manifest contains `upgradeScript`, the script verifies the manifest,
+target version, and listed images before it touches services or the database.
+Run the canonical invocation with the exact target version:
+
+```bash
+./upgrade.sh --version vX.Y.Z
+```
+
+Without `--compose-file`, the script uses `compose.yaml` next to it. To layer
+overlays, pass the base file first and repeat `--compose-file` for
+`compose.worker.yaml` and `compose.temporal.yaml` in order:
+
+```bash
+./upgrade.sh --version vX.Y.Z \
+  --compose-file compose.yaml \
+  --compose-file compose.worker.yaml \
+  --compose-file compose.temporal.yaml
+```
+
+A manifest, version, or image mismatch returns nonzero and stops the upgrade
+before any service or database change.
+
+### Stop services
+
+After verification succeeds, the script pulls the selected release images and
+stops `app` and `worker` when the rendered Compose configuration includes them.
+It detects the service set from `compose config --services` rather than
+assuming a worker service always exists.
+
+### Run migrations
+
+The script runs the one-shot `db-migrations` service with
+`prisma migrate deploy` in stages: schema migrations before guarded contracts,
+then all blocking data migrations, then the guarded schema contracts before
+the web app. The migration container's exit code is
+propagated: a failed verification or migration returns nonzero and prevents
+app/worker restart.
+
+The migration ledger distinguishes completed data work from final completion.
+If optional finalization fails, the command exits nonzero and records the
+finalization error while leaving the migration unfinished. Rerun
+`npm run db:migrate`; it retries finalization without repeating completed data
+work. Existing rows already marked `finishedAt` remain final after upgrading.
+
+After an upgrade that adds competitor organic snapshots, optionally compact the
+latest completed SERP for each keyword into the new query-friendly column:
+
+```bash
+npm run db:backfill:competitor-organics
+```
+
+Run the command with `DATABASE_URL` available. It is batched and idempotent,
+and leaves checks without a usable historical organic payload unchanged. The
+app continues to read those legacy payloads directly, so the backfill does not
+need to block the web deployment.
+
+### Restart
+
+After a successful migration, the script starts the selected `app` and
+`worker` services from the matched release images. It does not perform the
+operator's post-start readiness checks; those are the next step.
+
+Project spending limits are imported and verified in the accounting Store before
+the obsolete project-cap column is removed. The upgrade command runs schema
+preparation, data migration and the guarded schema cleanup in that order. A failed
+import leaves the column in place and stops the upgrade. New projects receive a
+5000-cent monthly Store cap when created.
+
+The cap drop backfills missing Store project budgets from the current column,
+mapping caps of 0 or less to unlimited (`limit: null`) and null caps to 5000 cents.
+For an imported project, it writes version 2 from the current column only when the
+latest Store budget is version 1, a project snapshot exists and the column differs
+from that snapshot; a newer Store version is preserved.
+Backfills retain immutable provenance, and the migration verifies every project's
+latest Store budget before removing the column.
+
+### Validate readiness
+
+After the script returns success, confirm the deployment is healthy:
+
+- Call authenticated `GET /api/v1/health` with an API credential or the
+  deployment's `INTERNAL_PROBE_TOKEN` Bearer header. Confirm
+  `services.migrations` is `ready`; the endpoint returns 503 when a bundled
+  Prisma migration has not been applied, an active data migration is
+  incomplete, has a checksum mismatch, or cannot be read, or the public ID
+  database contract is not ready.
+- Sign in and read one project to confirm the app serves authenticated
+  requests.
+- Check Prisma status in Docker Compose:
+
+  ```bash
+  docker compose exec app npx prisma migrate status
+  ```
+
+- Confirm the web and worker report the same release. For split deployments,
+  deploy the web app so migrations apply, then immediately deploy the worker
+  from the same release tag. Version skew commonly appears as "The column ...
+  does not exist" errors in worker logs or as failing scheduled checks while
+  the web app works.
+- When scheduled work is enabled, confirm the Temporal worker reports ready
+  and its maintenance schedules are created or already exist.
+
+`/api/v1/readiness` is the public traffic-admission (readiness) probe; it does
+not replace the authenticated health checks above. Use `/api/v1/liveness` for
+restart probes and authenticated `GET /api/v1/health` for the deeper
+service/migration contract. See
+[Backup and restore](/self-hosting/backup-restore) for its role in restore
+validation.
+
+### Failure paths
+
+A failed verification or migration returns nonzero and prevents app/worker
+restart. No success is reported. The script does not perform automatic rollback.
+Inspect the migration output before retrying or restoring. If a migration left
+the database in an intermediate state, a database restore may be required; see
+[Restore from backup](#restore-from-backup) below.
+
+### Restore from backup
+
+If the upgrade cannot complete before any new paid attempt, restore the pre-upgrade database backup with
+the matching previous release. Restoring must use the same bisibility release
+that created the dump; an image rollback alone does not reverse Prisma
+migrations. See [Backup and restore](/self-hosting/backup-restore) for the
+full restore procedure, including stopping writers, running migrations after
+restore, and readiness validation.
+
+### Legacy upgrades
+
+<span id="upgrade-from-v010-to-v020"></span>
+<span id="1-back-up-postgresql"></span>
+<span id="2-check-the-port-change"></span>
+<span id="3-fetch-v020"></span>
+<span id="4-keep-deliberate-host-local-database-access"></span>
+<span id="5-build-and-start-the-release"></span>
+<span id="6-verify-the-upgrade"></span>
+<span id="7-roll-back"></span>
+
+Historical procedures and retired upgrade limits live under
+[Legacy upgrades](/self-hosting/legacy-upgrades), including the one-time
+[v0.1.0 to v0.2.0](/self-hosting/legacy-upgrades/v0-1-to-v0-2) source upgrade.

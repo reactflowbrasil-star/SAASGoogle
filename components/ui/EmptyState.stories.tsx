@@ -1,0 +1,60 @@
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { withSharedMessages } from "@/i18n/test-support/shared-messages-story-decorator";
+import { MagnifyingGlassIcon as MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+import type { Meta, StoryObj } from "@storybook/react";
+
+const meta = {
+  title: "UI/EmptyState",
+  component: EmptyState,
+  decorators: [
+    withSharedMessages,
+    (Story) => (
+      <div className="min-h-[320px] bg-bg p-6 text-fg">
+        <Story />
+      </div>
+    ),
+  ],
+} satisfies Meta<typeof EmptyState>;
+
+export default meta;
+
+type Story = StoryObj<typeof meta>;
+
+export const Default: Story = {
+  args: {
+    action: <Button variant="primary">Add keyword</Button>,
+    description: "Connect a SERP provider, then add keywords for acme.dev.",
+    icon: <MagnifyingGlass size={28} weight="regular" />,
+    title: "No keywords tracked yet",
+  },
+};
+
+export const RichDescription: Story = {
+  args: {
+    ...Default.args,
+    description: (
+      <ul className="grid gap-1 text-left">
+        <li>Compare related terms</li>
+        <li>Review provider metrics</li>
+        <li>Add only the keywords you choose</li>
+      </ul>
+    ),
+  },
+};
+
+export const WithFootnote: Story = {
+  args: {
+    ...Default.args,
+    footnote: "Activates once you have tracked keywords",
+  },
+};
+
+export const PositiveTone: Story = {
+  args: {
+    description: "No alerts have fired in the last 48 hours.",
+    icon: <MagnifyingGlass size={27} weight="regular" />,
+    title: "All clear",
+    tone: "positive",
+  },
+};

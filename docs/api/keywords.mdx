@@ -1,0 +1,182 @@
+---
+title: "Keywords"
+description: "Markets, identity fields, matching, and bulk mutation rules for tracked keywords."
+---
+
+A keyword belongs to a project and identifies a search phrase, market, device,
+and target URL. A market is a location and language pair. Exact request and
+response schemas live in the **API Reference** tab.
+
+`device` is `desktop` or `mobile`. `frequency` is `paused`, `manual`, `daily`,
+`weekly`, `monthly`, or `custom_cron`. Every keyword resource reports
+`language_code` and `language_label` alongside the canonical `location_key`.
+
+`location_key` accepts an optional `@language` qualifier such as
+`ES/Andalusia/Malaga@en`. An unqualified key uses the country's default
+language. Supplying the default explicitly is an alias of the unqualified key,
+so `ES` and `ES@es` resolve to the same canonical market. Use the codes listed
+under [Markets and languages](/markets).
+
+## Read the latest check
+
+Keyword resources include `latest_check`, the most recent executed check of any
+status, and `latest_successful_check`, the most recent check with status
+`completed`. Either object is `null` when no corresponding check exists.
+Successful execution does not require a positive position or complete coverage.
+`latest_position` comes from the latest executed check; a null value alone does
+not distinguish no completed data, a failed or running check, or a completed
+check without a matching position.
+
+Both check objects expose `observation_completeness`: `complete`,
+`truncated_by_stop_on_match`, `unknown`, or `null` for absent recognized metadata,
+including legacy checks. Read `latest_check.status` separately from coverage.
+Only a completed no-match with `complete` coverage supports absence within the
+requested scope and depth. Unknown or truncated coverage does not establish
+absence; a valid positive rank within the tracked depth remains valid. Legacy
+`null` metadata is not evidence of complete coverage and is not backfilled.
+
+For example, this projection of a keyword resource records completed execution
+with unknown coverage:
+
+```json
+{
+  "latest_position": null,
+  "latest_check": {
+    "id": "check_a00000000000000000000000",
+    "checked_at": "2026-06-28T10:00:00.000Z",
+    "status": "completed",
+    "position": null,
+    "observation_completeness": "unknown",
+    "run_id": "rcr_a00000000000000000000000",
+    "error": null,
+    "error_code": null
+  },
+  "latest_successful_check": {
+    "id": "check_a00000000000000000000000",
+    "checked_at": "2026-06-28T10:00:00.000Z",
+    "position": null,
+    "observation_completeness": "unknown",
+    "ranking_url": null,
+    "run_id": "rcr_a00000000000000000000000"
+  }
+}
+```
+
+MCP `list_keywords` and `get_keyword` return the same check objects in their
+JSON results. In the app, a completed no-position observation with unknown or
+truncated coverage shows **Coverage unknown** rather than **Not in top N**.
+Checks missing completeness metadata retain the legacy no-match label for
+compatibility. See [SERP positions and observations](/serp-observations) and
+[Rank history](/api/rank-history).
+
+## List filters
+
+`listKeywords` pages with `limit` (default `50`, maximum `200`) and `cursor`.
+`search` or `q` is a case-insensitive text search.
+
+| Query | Description |
+| - | - |
+| `filter[device]` or `device` | `desktop` or `mobile`. |
+| `filter[location_key]` or `location_key` | Exact canonical location key, optionally qualified with `@language`. |
+| `filter[country]` or `country` | Canonical country names and aliases, case-insensitive. Deprecated: send `location_key` instead. Still accepted for compatibility; no removal version is scheduled. |
+| `filter[tag]` or `tag` | Case-insensitive exact tag match. |
+| `filter[topic]` or `topic` | Case-insensitive exact topic match. |
+| `filter[intent]` or `intent` | Case-insensitive exact intent match. |
+| `filter[position_gt]` or `position_gt` | Rank-check position greater than this number. |
+| `filter[position_lt]` or `position_lt` | Rank-check position less than this number. |
+| `sort` | `created_at`, `-created_at`, `keyword`, `-keyword`, `text`, `-text`, `updated_at`, `-updated_at`. |
+
+## Match texts across markets
+
+`matchProjectKeywords` looks up up to 50 exact tracked texts across their
+markets. Each request text is trimmed and lowercased before matching.
+`matched_text` contains that normalized value, so use it to join each response
+row to the normalized request. `text` remains the stored keyword text and can
+differ in case and whitespace.
+
+At most 100 market rows are returned for each `matched_text`. The response
+always includes `meta.truncated_texts`; a normalized text listed there has more
+matching markets and its returned rows are partial.
+
+## Create keywords
+
+`addKeywords` accepts one keyword object, an array of keyword objects, or an
+object with a `keywords` array. String entries in `keywords` are converted to
+`{ "keyword": "..." }`.
+
+`keyword` is required (1 to 180 characters). `location_key` is the primary
+location reference and takes precedence over the deprecated `country`,
+`language`, `location`, and `city` fields. Those legacy selectors remain
+accepted for backward compatibility and no removal version is scheduled; new
+code should send `location_key`. Unresolved cities fall back to country-level
+tracking with a warning.
+
+`tags` accepts up to 12 tags, each 1 to 48 characters. Within `schedule`,
+`jitter_minutes` must be a whole number from `0` to `120`. Omitting it uses
+`60`; `0` disables jitter. Use `cron_expression` with `frequency: "custom_cron"`.
+Custom cron uses five numeric fields, with lists, ranges, and steps on `*` or
+explicit ranges. Named days, suffixes such as `L` or `#`, and `value/step` are
+not supported. The expression must have a future occurrence.
+Omitting both `frequency` and `schedule` creates a Manual keyword: project
+defaults are suggestions and do not enroll it. An explicit scheduled frequency
+joins an enabled project schedule with the same cadence, timezone, jitter and
+depth, or creates one if none matches. Existing timed or provider-specific
+schedules are not changed or silently selected. Cadence-only changes preserve
+the current depth and assigned provider policy; an explicit depth choice can
+change the depth. Removing membership keeps its effective depth for manual
+checks. Manual has no scheduled provider policy. An explicit `manual` removes
+membership; `paused` pauses only the selected keywords.
+
+Every response reports the actual membership. Without membership, or when its
+schedule is archived, `schedule.frequency` is `manual` and `next_check_at` is
+`null`. Disabled membership reports `paused` with no next check. `source` keeps
+the compatibility value `keyword`; project defaults are never reported as an
+active schedule. MCP `add_keywords` accepts the same explicit cadence through
+`schedule: { "frequency": "daily" }`. `next_check_at` is the next cadence slot, not a promise that
+provider, credit or budget admission will succeed.
+
+The response status is `201` when at least one keyword is created. Duplicate
+keyword, location, and device combinations are skipped. Re-adding an archived
+keyword starts it in Manual unless this request explicitly chooses a schedule;
+it does not resume its old recurring assignment. If location resolution
+degrades, the response includes per-result `warning` values and a top-level
+`warnings` array with unique warning messages.
+
+## Update and identity
+
+`getKeyword` returns one keyword or `404`. `setKeywordTargetUrl` patches
+optional fields. Identity fields (`keyword`, `device`, `location_key`, and the
+deprecated `country` / `city` / `location`) are accepted only when they match
+the stored term, market, and device. A differing identity value returns `409`.
+To track a different term, market, or device, add it as its own keyword and
+archive the old keyword.
+
+`tags` replaces the full tag set. `frequency` explicitly selects a cadence with
+timezone `UTC`, jitter `60`, and no cron expression. `schedule` overrides
+`frequency` when both are sent.
+
+`deleteKeyword` deletes the keyword and returns the deleted resource.
+
+## Bulk mutate
+
+`bulkUpdateKeywords` supports:
+
+| Operation | Required fields |
+| - | - |
+| `add_tags` | `keyword_ids`, `tags` |
+| `remove_tags` | `keyword_ids`, `tags` |
+| `set_target_url` | `keyword_ids`, `target_url` |
+| `set_frequency` | `keyword_ids`, `frequency` or `schedule` |
+| `delete` | `keyword_ids` |
+
+## Related operations
+
+- [`GET /projects/{project_id}/keywords`](/api-reference/keywords/list-project-keywords) (`listKeywords`)
+- [`POST /projects/{project_id}/keywords`](/api-reference/keywords/add-one-or-more-keywords) (`addKeywords`)
+- [`GET /keywords/{keyword_id}`](/api-reference/keywords/get-one-keyword) (`getKeyword`)
+- [`PATCH /keywords/{keyword_id}`](/api-reference/keywords/set-keyword-target-url-or-metadata) (`setKeywordTargetUrl`)
+- [`DELETE /keywords/{keyword_id}`](/api-reference/keywords/delete-one-keyword) (`deleteKeyword`)
+- [`POST /keywords/bulk`](/api-reference/keywords/bulk-mutate-keywords) (`bulkUpdateKeywords`)
+- [`POST /projects/{project_id}/keyword-matches`](/api-reference/keywords/match-tracked-keywords) (`matchProjectKeywords`)
+
+Exact request and response schemas live in the generated API Reference.

@@ -1,0 +1,48 @@
+---
+title: "Documentation"
+description: "Choose how to run bisibility: evaluate locally, use the hosted Cloud, self-host in production, or build against the API."
+---
+
+bisibility is a self-hostable SEO research and search visibility application
+with bring-your-own SERP and analytics providers and a REST API under `/api/v1`.
+Pick one of the four paths below, then follow its dedicated guide.
+
+<CardGroup cols={2}>
+  <Card title="Evaluate locally" icon="rocket" href="/quickstart">
+    Run a throwaway local demo with synthetic seeded data. The demo uses a
+    fixed sign-in code that is intentionally insecure, and it is not a
+    production installation. Start here to try the product in minutes without
+    a provider account.
+  </Card>
+  <Card title="Use the hosted Cloud" icon="cloud" href="/hosted-quickstart">
+    Let the platform operate the runtime for you. You connect your own
+    provider credentials and pay the provider directly. Start with the
+    [Hosted quickstart](/hosted-quickstart), then read
+    [Deployment options](/deployment-options) to compare the hosted Cloud with
+    the local demo and production self-hosting.
+  </Card>
+  <Card title="Self-host in production" icon="server" href="/self-hosting">
+    Operate the full stack yourself. You own PostgreSQL, Valkey, secrets,
+    backups, upgrades, and provider billing. Scheduled work requires the
+    worker and Temporal; manual checks do not require Temporal.
+  </Card>
+  <Card title="Build with the API, SDK, CLI, or MCP" icon="code" href="/api/quickstart">
+    Authenticate and make your first REST request with the
+    [API quickstart](/api/quickstart). For typed clients and tooling, see the
+    [SDK overview](/sdks/overview), the [CLI](/cli), the
+    [MCP server](/sdks/mcp), and the [AI agents](/agents) guide.
+  </Card>
+</CardGroup>
+
+## Where to go next
+
+- After you have a project, [Use Bisibility](/integrations) covers markets,
+  keywords, rank checks, research, and Search Console in the app.
+- The exact HTTP contract lives in the generated [API Reference][api-reference-index], not on this page.
+- To compare the hosted Cloud, the local demo, and production self-hosting in
+  one place, read [Deployment options](/deployment-options).
+- To authenticate API requests, read [Authentication](/authentication).
+- Instance administrators configure OAuth, workers, and upgrades under
+  [Self-hosting](/self-hosting).
+
+[api-reference-index]: /api-reference/discovery/get-api-capabilities

@@ -1,0 +1,50 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "es2022"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/app/(auth)/*": ["./app/(regional)/(auth)/*"],
+      "@/app/(marketing)/*": ["./app/(static)/(marketing)/*"],
+      "@/app/app/*": ["./app/(regional)/app/*"],
+      "@/app/cloud/*": ["./app/(regional)/cloud/*"],
+      "@/components/content/*": ["./components/marketing/content/*"],
+      "@/app/email/*": ["./app/(regional)/email/*"],
+      "@/app/invite/*": ["./app/(regional)/invite/*"],
+      "@/app/onboarding/*": ["./app/(regional)/onboarding/*"],
+      "@/app/setup/*": ["./app/(regional)/setup/*"],
+      "@/*": ["./*"]
+    },
+    "types": ["node", "@testing-library/jest-dom"]
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".next",
+    "storybook-static",
+    "examples",
+    "scripts/checks/ui-consistency/fixtures"
+  ]
+}

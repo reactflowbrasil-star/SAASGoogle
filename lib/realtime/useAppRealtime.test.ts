@@ -1,0 +1,263 @@
+import type { RankCheckOperation } from "@/lib/rank-check/runs/contract";
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useAppRealtimeState } from "./useAppRealtime";
+
+class MockEventSource {
+  static CLOSED = 2;
+  static CONNECTING = 0;
+  static instances: MockEventSource[] = [];
+
+  listeners = new Map<string, EventListener>();
+  onerror: EventListener | null = null;
+  onopen: EventListener | null = null;
+  readyState = MockEventSource.CONNECTING;
+  close = vi.fn();
+
+  constructor(readonly url: string) {
+    MockEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: EventListener) {
+    this.listeners.set(type, listener);
+  }
+
+  emit(type: string, data: unknown) {
+    this.listeners.get(type)?.(
+      new MessageEvent(type, { data: typeof data === "string" ? data : JSON.stringify(data) }),
+    );
+  }
+}
+
+const activeOperations = [
+  {
+    capabilities: { pause: true, resume: false, retry: false },
+    id: "import_1",
+    kind: "gsc_import",
+    presentation: { action: "pause", supportingText: "Import is running.", title: "Importing" },
+    property: "sc-domain:example.com",
+    progress: { done: 2, total: 4 },
+    state: "running",
+  },
+] as const;
+
+const rankRun: RankCheckOperation = {
+  id: "rcr_abcdefghijklmnopqrstuvwx",
+  kind: "rank_check",
+  status: "running",
+  outcome: null,
+  trigger: "manual",
+  selectionKind: "single",
+  counts: {
+    requested: 1,
+    total: 1,
+    skipped: 0,
+    completed: 0,
+    failed: 0,
+    deferred: 0,
+    cancelled: 0,
+  },
+  keywordCount: 1,
+  targetCount: 1,
+  estimatedCostCents: 0,
+  costCents: null,
+  blockedReason: null,
+  plannedFor: null,
+  nextCheckAt: null,
+  startedAt: "2026-09-27T12:00:00.000Z",
+  finishedAt: null,
+  parentRunId: null,
+};
+
+describe("useAppRealtimeState", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("EventSource", MockEventSource);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ operations: activeOperations }))),
+    );
+  });
+
+  afterEach(() => {
+    MockEventSource.instances = [];
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("refreshes persisted rank data for changed results and completion, not heartbeats", async () => {
+    const refresh = vi.fn();
+    renderHook(() => useAppRealtimeState("prj_1", refresh));
+    const source = MockEventSource.instances[0];
+    act(() => source.emit("operations", { operations: [rankRun] }));
+    expect(refresh).not.toHaveBeenCalled();
+    act(() => source.emit("operations", { operations: [{ ...rankRun, etaSeconds: 5 }] }));
+    expect(refresh).not.toHaveBeenCalled();
+    const partial = { ...rankRun, counts: { ...rankRun.counts, completed: 1 } };
+    act(() => source.emit("operations", { operations: [partial] }));
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(refresh).toHaveBeenCalledOnce();
+    act(() => source.emit("operations", { operations: [partial] }));
+    expect(refresh).toHaveBeenCalledOnce();
+    act(() => source.emit("operations", { operations: [] }));
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(refresh).toHaveBeenCalledTimes(2);
+    act(() => source.emit("operations", { operations: [] }));
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("coalesces bursts of completed targets into one data refresh", async () => {
+    const refresh = vi.fn();
+    renderHook(() => useAppRealtimeState("prj_1", refresh));
+    const source = MockEventSource.instances[0];
+    act(() => source.emit("operations", { operations: [rankRun] }));
+    for (const completed of [1, 2, 3]) {
+      act(() =>
+        source.emit("operations", {
+          operations: [{ ...rankRun, counts: { ...rankRun.counts, completed } }],
+        }),
+      );
+    }
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes on completion through the HTTP fallback", async () => {
+    const refresh = vi.fn();
+    renderHook(() => useAppRealtimeState("prj_1", refresh));
+    const source = MockEventSource.instances[0];
+    act(() => source.emit("operations", { operations: [rankRun] }));
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ operations: [] })));
+    source.readyState = MockEventSource.CLOSED;
+    act(() => source.onerror?.(new Event("error")));
+    await act(async () => vi.advanceTimersByTimeAsync(6_000));
+    expect(refresh).toHaveBeenCalledOnce();
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("does not refresh rank data for imports or callbacks from a previous project", async () => {
+    const refresh = vi.fn();
+    const { rerender } = renderHook(({ project }) => useAppRealtimeState(project, refresh), {
+      initialProps: { project: "prj_1" },
+    });
+    const firstSource = MockEventSource.instances[0];
+    act(() => firstSource.emit("operations", { operations: activeOperations }));
+    act(() => firstSource.emit("operations", { operations: [] }));
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(refresh).not.toHaveBeenCalled();
+    act(() => firstSource.emit("operations", { operations: [rankRun] }));
+    refresh.mockClear();
+    rerender({ project: "prj_2" });
+    act(() => firstSource.emit("operations", { operations: [] }));
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  function renderRealtime() {
+    const hook = renderHook(() => useAppRealtimeState("prj_1"));
+    const source = MockEventSource.instances[0];
+    act(() => source.emit("operations", { operations: activeOperations }));
+    return { ...hook, source };
+  }
+
+  it("reports server-side polling without starting the HTTP fallback", async () => {
+    const { result, source } = renderRealtime();
+
+    act(() => {
+      source.onopen?.(new Event("open"));
+      source.emit("degraded", { mode: "polling", retrying: true });
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+
+    expect(source.url).toBe("/api/realtime/stream?project=prj_1");
+    expect(result.current.status).toBe("live-polling");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("polls operations within five seconds after the stream closes", async () => {
+    const { result, source } = renderRealtime();
+    source.readyState = MockEventSource.CLOSED;
+    act(() => source.onerror?.(new Event("error")));
+
+    expect(result.current.status).toBe("offline");
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch).toHaveBeenCalledWith("/api/operations?project=prj_1", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+  });
+
+  it("reports reconnecting while the browser owns the retry", () => {
+    const { result, source } = renderRealtime();
+
+    act(() => source.onerror?.(new Event("error")));
+
+    expect(result.current.status).toBe("reconnecting");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("backs off fallback errors from fifteen to thirty seconds", async () => {
+    vi.mocked(fetch).mockRejectedValue(new Error("offline"));
+    const { source } = renderRealtime();
+    source.readyState = MockEventSource.CLOSED;
+    act(() => source.onerror?.(new Event("error")));
+
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(fetch).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps the cached active snapshot after a fallback failure", async () => {
+    vi.mocked(fetch).mockRejectedValue(new Error("offline"));
+    const { result, source } = renderRealtime();
+    source.readyState = MockEventSource.CLOSED;
+    act(() => source.onerror?.(new Event("error")));
+
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+
+    expect(result.current.operations).toEqual(activeOperations);
+    expect(result.current.status).toBe("offline");
+  });
+
+  it("refreshes immediately when the hidden document becomes visible", async () => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    const { source } = renderRealtime();
+    source.readyState = MockEventSource.CLOSED;
+    act(() => source.onerror?.(new Event("error")));
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    expect(fetch).not.toHaveBeenCalled();
+
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("stops the fallback on reconnect and never polls without active operations", async () => {
+    const { source } = renderRealtime();
+    source.readyState = MockEventSource.CLOSED;
+    act(() => source.onerror?.(new Event("error")));
+    source.readyState = MockEventSource.CONNECTING;
+    act(() => source.onopen?.(new Event("open")));
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(fetch).not.toHaveBeenCalled();
+
+    MockEventSource.instances = [];
+    const empty = renderHook(() => useAppRealtimeState("prj_empty"));
+    const emptySource = MockEventSource.instances[0];
+    emptySource.readyState = MockEventSource.CLOSED;
+    act(() => emptySource.onerror?.(new Event("error")));
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(fetch).not.toHaveBeenCalled();
+    empty.unmount();
+  });
+});

@@ -1,0 +1,99 @@
+---
+title: "MCP server"
+description: "Connect an MCP-compatible AI client to the bisibility API."
+---
+
+An MCP server lets an MCP-compatible AI client call bisibility operations as
+tools instead of composing HTTP requests itself.
+
+## Install
+
+```bash
+npm install @bisibility/mcp@0.10.0
+```
+
+The current docs-tested package is `@bisibility/mcp@0.10.0`. See
+[Versioning and support](/versioning).
+
+## Authenticate
+
+The local stdio server reads the API root and credential from its environment:
+
+```bash
+export BISIBILITY_API_KEY="your-api-key"
+export BISIBILITY_BASE_URL="https://<region-host>/api/v1"
+```
+
+It accepts project API keys and
+[personal access tokens](/api/personal-access-tokens).
+
+The hosted Streamable HTTP server is available at:
+
+```text
+https://bisibility.com/api/mcp
+```
+
+Tools that spend provider money are listed in [Paid MCP tools](/agents/paid-tools).
+Scopes and the consent screen are in [Agent permissions](/agents/permissions).
+
+MCP clients that support OAuth discover the authorization flow automatically.
+bisibility uses Authorization Code with PKCE, dynamic client registration, and
+access tokens bound to the MCP resource. API keys and personal access tokens
+remain available for clients that manage bearer credentials directly. For how
+each client differs in tool visibility and approval, see
+[what each client exposes](/agents#what-each-client-exposes).
+
+## Start the local server
+
+This copyable quickstart starts the docs-tested stdio server.
+
+```bash
+export BISIBILITY_API_KEY="your-api-key"
+export BISIBILITY_BASE_URL="https://<region-host>/api/v1"
+
+npx -y @bisibility/mcp@0.10.0
+```
+
+Point your MCP client at that stdio command. The first useful read is the
+`list_projects` tool, which performs
+[`GET /projects`](/api-reference/projects/list-projects-visible-to-this-api-key).
+
+The [complete MCP example](https://github.com/CorgiCorner/bisibility/blob/main/examples/mcp/quickstart.mjs)
+starts the server and calls `list_projects`.
+
+## Track AI observations and save an analysis
+
+Start with `get_project_context` and `get_ai_research_catalog`, then inspect saved topics,
+prompts, runs and samples. `get_ai_tracking_history`, `get_ai_tracking_trends` and
+`export_ai_tracking_evidence` retain coverage, source identity and continuation metadata.
+They read stored evidence without purchasing a new observation.
+
+`ai_tracking_suggestions_preview` reviews the complete context, competitors, model and
+market without paid work. `ai_tracking_suggestions_generate` requires write scope,
+the unchanged preview, explicit own-key actual-cost consent and a stable UUID retry key.
+The returned drafts are editable hypotheses. Accepting one preserves its verified
+generation reference and does not launch a baseline or activate a schedule.
+
+Use `create_agent_report` to save an approved analysis with its sources and limitations.
+A read-only connection can review stored data but cannot save a report or generate drafts.
+See [AI Tracking](/guides/ai-tracking) and [Agent Reports](/guides/agent-reports).
+
+## Interpret research results
+
+For application API responses, read [rank coverage](/serp-observations#read-a-completed-check)
+before treating a null position as absence within the requested depth.
+Execution status and observation completeness describe different facts.
+
+[Backlinks](/api/backlinks#partial-history) documents successful snapshots with
+unavailable history and [failed summary evidence](/api/backlinks#unconfirmed-history-cost).
+The latter remains an error response with unknown total cost, rather than a
+successful reusable snapshot. Consult [client compatibility](/compatibility)
+for the support verified for your installed package version.
+
+## Next steps
+
+The [SDK method reference](/sdks/methods) maps common workflows to MCP tool
+names.
+
+The [MCP server source](https://github.com/CorgiCorner/bisibility-mcp) lists the
+complete tool surface.

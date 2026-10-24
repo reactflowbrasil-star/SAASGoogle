@@ -1,0 +1,249 @@
+import type {
+  KeywordMetrics,
+  RankedKeywordsPage,
+  ResearchPage,
+  SerpRawPayload,
+} from "@/lib/providers/types";
+import type { SerpDepth } from "@/lib/serp/constants";
+import {
+  decideOrganicResult,
+  type OrganicResultDecision,
+  organicResultNormalization,
+} from "./organic-result-decision";
+
+// The engine processed the request successfully but returned an empty SERP.
+export const DATA_FOR_SEO_NO_SEARCH_RESULTS_STATUS = 40102;
+
+export type DataForSeoItem = {
+  domain?: string;
+  rank_absolute?: number;
+  rank_group?: number;
+  title?: string;
+  type?: string;
+  url?: string;
+};
+
+export type DataForSeoResponse = {
+  cost?: number;
+  status_code?: number;
+  status_message?: string;
+  tasks?: Array<{
+    id?: string;
+    cost?: number;
+    result?: Array<{
+      items?: unknown[];
+      total_count?: number;
+    }>;
+    status_code?: number;
+    status_message?: string;
+  }>;
+};
+
+type RankedKeywordItem = {
+  keyword_data?: {
+    keyword?: string;
+    keyword_info?: { search_volume?: number | null; cpc?: number | null };
+    keyword_properties?: { keyword_difficulty?: number | null } | null;
+    search_intent_info?: { main_intent?: string | null } | null;
+    serp_info?: { serp_item_types?: unknown[] } | null;
+  };
+  ranked_serp_element?: {
+    keyword_difficulty?: number | null;
+    serp_item?: {
+      etv?: number | null;
+      rank_absolute?: number | null;
+      rank_group?: number | null;
+      rank_changes?: { previous_rank_absolute?: number | null } | null;
+      url?: string;
+    };
+  };
+};
+
+type KeywordInfo = {
+  competition?: number | null;
+  cpc?: number | null;
+  monthly_searches?: Array<{ month?: number; search_volume?: number | null; year?: number }>;
+  search_volume?: number | null;
+};
+
+type ResearchItem = {
+  keyword?: string;
+  keyword_data?: ResearchItem;
+  keyword_info?: KeywordInfo | null;
+  keyword_info_normalized_with_clickstream?: KeywordInfo | null;
+  keyword_properties?: { keyword_difficulty?: number | null } | null;
+  search_intent_info?: { main_intent?: string | null } | null;
+};
+
+function finiteNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function intent(value: unknown): KeywordMetrics["intent"] {
+  if (value == null) return null;
+  if (
+    value === "informational" ||
+    value === "commercial" ||
+    value === "transactional" ||
+    value === "navigational"
+  )
+    return value;
+  return "unknown";
+}
+
+function metrics(item: ResearchItem): KeywordMetrics {
+  const baseInfo = item.keyword_info ?? {};
+  const volumeInfo = item.keyword_info_normalized_with_clickstream ?? baseInfo;
+  const cpc = finiteNumber(baseInfo.cpc);
+  return {
+    competition: finiteNumber(baseInfo.competition),
+    cpcCents: cpc === null ? null : Math.round(cpc * 100),
+    difficulty: finiteNumber(item.keyword_properties?.keyword_difficulty),
+    intent: intent(item.search_intent_info?.main_intent),
+    monthlyTrend: (volumeInfo.monthly_searches ?? []).slice(0, 12).flatMap((row) => {
+      const month = finiteNumber(row.month);
+      const year = finiteNumber(row.year);
+      if (month === null || year === null) return [];
+      return [{ month, searchVolume: finiteNumber(row.search_volume), year }];
+    }),
+    searchVolume: finiteNumber(volumeInfo.search_volume),
+  };
+}
+
+function researchPage(data: DataForSeoResponse, nested: boolean): ResearchPage {
+  const result = data.tasks?.[0]?.result?.[0] as { items?: ResearchItem[] } | undefined;
+  const rows = (result?.items ?? []).flatMap((raw) => {
+    const item = nested ? raw.keyword_data : raw;
+    const keyword = item?.keyword?.trim();
+    return keyword && item ? [{ keyword, ...metrics(item) }] : [];
+  });
+  return { costCents: dataForSeoResponseCostCents(data), rows };
+}
+
+export function dataForSeoRelatedKeywordsPage(data: DataForSeoResponse) {
+  return researchPage(data, true);
+}
+
+export function dataForSeoKeywordSuggestionsPage(data: DataForSeoResponse) {
+  return researchPage(data, false);
+}
+
+export function dataForSeoKeywordIdeasPage(data: DataForSeoResponse) {
+  return researchPage(data, false);
+}
+
+export function dataForSeoKeywordMetricsPage(data: DataForSeoResponse) {
+  return researchPage(data, false);
+}
+
+export function dataForSeoRankedKeywordsPage(data: DataForSeoResponse): RankedKeywordsPage {
+  const result = data.tasks?.[0]?.result?.[0] as
+    | { items?: RankedKeywordItem[]; total_count?: number }
+    | undefined;
+  const items = result?.items ?? [];
+  const rows = items.flatMap((item) => {
+    const keywordData = item.keyword_data;
+    const keyword = keywordData?.keyword?.trim();
+    if (!keyword) return [];
+    const serpItem = item.ranked_serp_element?.serp_item;
+    const rankAbsolute = finiteNumber(serpItem?.rank_absolute);
+    const previousRankAbsolute = finiteNumber(serpItem?.rank_changes?.previous_rank_absolute);
+    const rankAbsoluteDelta =
+      rankAbsolute !== null && previousRankAbsolute !== null
+        ? previousRankAbsolute - rankAbsolute
+        : null;
+    const cpc = finiteNumber(keywordData?.keyword_info?.cpc);
+    const difficulty =
+      finiteNumber(keywordData?.keyword_properties?.keyword_difficulty) ??
+      finiteNumber(item.ranked_serp_element?.keyword_difficulty);
+    const intentValue = intent(keywordData?.search_intent_info?.main_intent);
+    const rankingUrl =
+      typeof serpItem?.url === "string" && serpItem.url.trim() !== "" ? serpItem.url.trim() : null;
+    const serpFeatures = Array.isArray(keywordData?.serp_info?.serp_item_types)
+      ? keywordData.serp_info.serp_item_types.filter(
+          (value): value is string => typeof value === "string",
+        )
+      : [];
+    return [
+      {
+        cpcCents: cpc === null ? null : Math.round(cpc * 100),
+        difficulty,
+        estimatedTraffic: finiteNumber(serpItem?.etv),
+        intent: intentValue === "unknown" ? null : intentValue,
+        keyword,
+        position: finiteNumber(serpItem?.rank_group),
+        rankAbsoluteDelta,
+        rankAbsolute,
+        rankingUrl,
+        searchVolume: finiteNumber(keywordData?.keyword_info?.search_volume),
+        serpFeatures,
+      },
+    ];
+  });
+  return {
+    consumedCount: items.length,
+    costCents: dataForSeoResponseCostCents(data),
+    rows,
+    totalCount: finiteNumber(result?.total_count),
+  };
+}
+
+function featureLabel(value: string) {
+  return value.trim().replace(/[_-]+/g, " ");
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function organicCandidate(value: unknown) {
+  const item = record(value);
+  if (!item || typeof item.type !== "string") return {};
+  if (item.type !== "organic") return null;
+  return {
+    domain: item.domain,
+    rank: item.rank_group,
+    title: item.title,
+    url: item.url,
+  };
+}
+
+export function dataForSeoOrganicDecision(
+  items: readonly unknown[] | undefined,
+  domain: string,
+  depth: SerpDepth,
+) {
+  return decideOrganicResult({
+    candidates: (items ?? []).flatMap((item) => {
+      const candidate = organicCandidate(item);
+      return candidate === null ? [] : [candidate];
+    }),
+    depth,
+    domain,
+  });
+}
+
+export function dataForSeoRawPayload(
+  items: readonly unknown[] = [],
+  decision: Exclude<OrganicResultDecision, { outcome: "indeterminate" }>,
+): SerpRawPayload {
+  const features = new Set<string>();
+  for (const value of items) {
+    const item = record(value);
+    if (typeof item?.type === "string" && item.type !== "organic") {
+      features.add(featureLabel(item.type));
+    }
+  }
+  return {
+    normalization: organicResultNormalization(decision),
+    organic_results: decision.organicResults,
+    ...(features.size ? { serp_features: [...features] } : {}),
+  };
+}
+
+export function dataForSeoResponseCostCents(data: DataForSeoResponse) {
+  const taskCost = data.tasks?.reduce((sum, task) => sum + (task.cost ?? 0), 0) ?? 0;
+  return Number(((data.cost ?? taskCost) * 100).toFixed(4));
+}

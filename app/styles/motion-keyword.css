@@ -1,0 +1,15 @@
+/* Landing marquee. The keyword research promo uses the shared feature motion recipes
+   (components/marketing/features/motion) instead of global classes. */
+@keyframes bvmarquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.bv-marquee-track {
+  animation: bvmarquee 14s linear infinite;
+  will-change: transform;
+}

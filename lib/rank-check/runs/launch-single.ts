@@ -1,0 +1,81 @@
+import "server-only";
+
+import type { ProviderRequestOrigin } from "@/lib/provider-usage/surface";
+import type { SerpDepth } from "@/lib/serp/constants";
+import { launchRankCheckRun } from "./launch";
+import {
+  ALREADY_IN_PROGRESS_REASON,
+  isLaunchRankCheckRunNothingToRun,
+  LaunchRankCheckRunError,
+  type LaunchRankCheckRunResult,
+  launchRankCheckRunNothingToRun,
+  nothingToRunReasonFromExclusion,
+  type RankCheckRunProject,
+} from "./launch-types";
+import { previewRankCheckRun } from "./preview";
+
+type LaunchSingleRankCheckRunInput = {
+  paymentOptionId?: string;
+  acceptedPayment?: import("@/lib/action-payment/contract").AcceptedActionPayment;
+  requirePayment?: boolean;
+  idempotencyKey?: string;
+  actorId: string | null;
+  depth?: SerpDepth;
+  keywordId: `kw_${string}`;
+  maxCostCents?: number;
+  origin: ProviderRequestOrigin;
+  project: RankCheckRunProject;
+  providerId?: string;
+  trigger: "api" | "manual";
+};
+
+export async function launchSingleRankCheckRun(
+  input: LaunchSingleRankCheckRunInput,
+): Promise<LaunchRankCheckRunResult> {
+  const spec = { kind: "single" as const, keywordId: input.keywordId, v: 1 as const };
+  const preview = await previewRankCheckRun({
+    actorId: input.actorId,
+    paymentOptionId: input.paymentOptionId,
+    depth: input.depth,
+    origin: input.origin,
+    project: input.project,
+    providerId: input.providerId,
+    spec,
+    trigger: input.trigger,
+  });
+  if (
+    input.maxCostCents === 0 ||
+    (input.maxCostCents !== undefined &&
+      typeof preview.estimate.costCents === "number" &&
+      preview.estimate.costCents > input.maxCostCents)
+  ) {
+    throw new LaunchRankCheckRunError(
+      "cost_limit_exceeded",
+      preview.estimate.costCents ?? undefined,
+    );
+  }
+  const launched = await launchRankCheckRun({
+    actorId: input.actorId,
+    paymentOptionId: input.paymentOptionId,
+    acceptedPayment: input.acceptedPayment,
+    requirePayment: input.requirePayment,
+    idempotencyKey: input.idempotencyKey,
+    depth: input.depth,
+    origin: input.origin,
+    previewToken: preview.previewToken,
+    project: input.project,
+    providerId: input.providerId,
+    spec,
+    trigger: input.trigger,
+  });
+  if (!isLaunchRankCheckRunNothingToRun(launched)) return launched;
+  // The launch reads the row under a lock and is the later read, so a predicate verdict from it
+  // wins outright. It falls back to "already in progress" when it had no row to judge - the one
+  // case where the preview, which resolved this same keyword moments earlier and already recorded
+  // why it excluded it, knows the cause and the launch does not. Carrying that reason through is
+  // the difference between naming the paused market and inventing a check that is not running.
+  if (launched.reason !== ALREADY_IN_PROGRESS_REASON) return launched;
+  const excluded = preview.excluded.find(({ keywordId }) => keywordId === input.keywordId);
+  const carried = nothingToRunReasonFromExclusion(excluded?.reason);
+  return carried ? launchRankCheckRunNothingToRun(carried) : launched;
+}

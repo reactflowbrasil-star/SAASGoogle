@@ -1,0 +1,280 @@
+import type { ObservationRunInput } from "@/lib/observation/types";
+import type { ProviderRequestAttribution } from "@/lib/provider-usage/tag";
+import type { SerpDepth } from "@/lib/serp/constants";
+import type { SerpRankLocation } from "@/lib/serp/location";
+import type { SerpSnapshotContinuation, SnapshotPageEvidence } from "@/lib/serp/snapshot-extension";
+import type { ProviderAllocationCatalog } from "./allocation-catalog";
+import type {
+  AnalyticsQueryStatsInput,
+  AnalyticsTopQuery,
+  PageStatRow,
+  QueryStatRow,
+} from "./analytics-types";
+import type {
+  BacklinkHistoryInput,
+  BacklinkHistoryResult,
+  BacklinkRowMode,
+  BacklinkRowsResult,
+  BacklinkSummaryResult,
+  BacklinkTargetInput,
+} from "./backlink-types";
+import type {
+  DomainOverviewInput,
+  DomainOverviewResult,
+  HistoricalOverviewResult,
+  HistoricalRankOverviewInput,
+  RelevantPagesInput,
+  RelevantPagesResult,
+} from "./domain-overview-types";
+
+export type {
+  BacklinkFlag,
+  BacklinkHistoryInput,
+  BacklinkHistoryResult,
+  BacklinkRow,
+  BacklinkRowMode,
+  BacklinkRowsResult,
+  BacklinkSummary,
+  BacklinkSummaryResult,
+  BacklinkTargetInput,
+  BacklinkTargetScope,
+} from "./backlink-types";
+
+import type { ProviderUsageObserver } from "./usage";
+
+export type {
+  AnalyticsMetricRange,
+  AnalyticsQueryStatsInput,
+  AnalyticsTopQuery,
+  PageStatRow,
+  QueryStatRow,
+} from "./analytics-types";
+export type {
+  DomainOverviewInput,
+  DomainOverviewResult,
+  DomainRankMetrics,
+  HistoricalOverviewResult,
+  HistoricalOverviewRow,
+  HistoricalRankOverviewInput,
+  RelevantPageRow,
+  RelevantPagesInput,
+  RelevantPagesResult,
+} from "./domain-overview-types";
+
+export type ProviderCredentials = {
+  usageObserver?: ProviderUsageObserver;
+  accountEmail?: string;
+  login?: string;
+  password?: string;
+  apiKey?: string;
+  endpoint?: string;
+  onRefreshToken?: (refreshToken: string) => Promise<void>;
+};
+
+export type ProviderCredentialRequirement = "apiKey" | "endpoint" | "login" | "password";
+export type ProviderStatus = "connected" | "needs_reauth" | "ready" | "planned" | "optional";
+export type ProviderKind = "serp" | "analytics" | "enrichment";
+export type SerpDevice = "desktop" | "mobile";
+
+export type ProviderTestResult = {
+  ok: boolean;
+  message: string;
+  balance?: number;
+  availabilityTotal?: number;
+};
+
+export type SerpRankInput = {
+  attribution?: ProviderRequestAttribution;
+  keyword: string;
+  completedCheckCount?: number;
+  location: SerpRankLocation;
+  device: SerpDevice;
+  domain: string;
+  depth?: SerpDepth;
+  stopOnMatch?: boolean;
+  tag?: string;
+  credentials?: ProviderCredentials;
+};
+
+export type SerpOrganicResult = {
+  rank: number;
+  url: string;
+  title: string | null;
+  domain: string | null;
+};
+
+export type SerpRawPayload = {
+  snapshotPageEvidence?: SnapshotPageEvidence;
+  snapshotContinuation?: SerpSnapshotContinuation;
+  normalization?: {
+    anomalies: Array<{ code: string; index: number }>;
+    outcome: "match" | "no_match";
+    version: "v2";
+  };
+  organic_results: SerpOrganicResult[];
+  serp_features?: string[];
+};
+
+export type SerpRankResult = {
+  billingUnits?: number | null;
+  position: number | null;
+  rankingUrl: string | null;
+  costCents: number;
+  checkedAt: Date;
+  raw?: SerpRawPayload | null;
+  /** Durable observation rows extracted at ingest (PR0); absent when the adapter captured none. */
+  observation?: ObservationRunInput | null;
+};
+
+export type RankedKeywordRow = {
+  keyword: string;
+  position: number | null;
+  searchVolume: number | null;
+  estimatedTraffic: number | null;
+  cpcCents: number | null;
+  difficulty: number | null;
+  intent: "informational" | "navigational" | "commercial" | "transactional" | null;
+  rankingUrl: string | null;
+  serpFeatures: string[];
+  rankAbsoluteDelta: number | null; // previous rankAbsolute minus current rankAbsolute
+  rankAbsolute: number | null;
+};
+
+export type RankedKeywordsPage = {
+  /** Raw provider items consumed by this offset page, before malformed rows are dropped. */
+  consumedCount: number;
+  rows: RankedKeywordRow[];
+  totalCount: number | null;
+  costCents: number;
+};
+
+export type KeywordMetrics = {
+  searchVolume: number | null;
+  cpcCents: number | null;
+  competition: number | null;
+  difficulty: number | null;
+  intent: "informational" | "commercial" | "transactional" | "navigational" | "unknown" | null;
+  monthlyTrend: { month: number; searchVolume: number | null; year: number }[];
+};
+
+export type ResearchKeywordRow = { keyword: string } & KeywordMetrics;
+export type ResearchPage = { costCents: number; rows: ResearchKeywordRow[] };
+
+export type KeywordResearchInput = {
+  attribution?: ProviderRequestAttribution;
+  includeClickstream: boolean;
+  limit: number;
+  location: SerpRankLocation;
+  seed: string;
+  tag?: string;
+};
+
+export type SerpProvider = {
+  payment?: import("@/lib/action-payment/provider-descriptor").ProviderPaymentDescriptor;
+  paymentFor?(
+    feature: string,
+  ): import("@/lib/action-payment/provider-descriptor").ProviderPaymentDescriptor | null;
+  id: string;
+  label: string;
+  testConnection(creds: ProviderCredentials): Promise<ProviderTestResult>;
+  fetchRank(input: SerpRankInput): Promise<SerpRankResult>;
+  fetchRankedKeywords?(
+    credentials: ProviderCredentials,
+    input: {
+      attribution?: ProviderRequestAttribution;
+      domain: string;
+      languageCode?: string;
+      limit: number;
+      location: SerpRankLocation;
+      locationCode?: number;
+      offset: number;
+      tag?: string;
+    },
+  ): Promise<RankedKeywordsPage>;
+  fetchRelatedKeywords?(
+    credentials: ProviderCredentials,
+    input: KeywordResearchInput,
+  ): Promise<ResearchPage>;
+  fetchKeywordSuggestions?(
+    credentials: ProviderCredentials,
+    input: KeywordResearchInput,
+  ): Promise<ResearchPage>;
+  fetchKeywordIdeas?(
+    credentials: ProviderCredentials,
+    input: KeywordResearchInput,
+  ): Promise<ResearchPage>;
+  fetchKeywordMetrics?(
+    credentials: ProviderCredentials,
+    input: {
+      attribution?: ProviderRequestAttribution;
+      includeClickstream: boolean;
+      keywords: string[];
+      location: SerpRankLocation;
+      tag?: string;
+    },
+  ): Promise<ResearchPage>;
+  fetchBacklinksSummary?(
+    credentials: ProviderCredentials,
+    input: BacklinkTargetInput,
+  ): Promise<BacklinkSummaryResult>;
+  fetchBacklinksHistory?(
+    credentials: ProviderCredentials,
+    input: BacklinkHistoryInput,
+  ): Promise<BacklinkHistoryResult>;
+  fetchBacklinksRows?(
+    credentials: ProviderCredentials,
+    input: BacklinkTargetInput & {
+      limit: number;
+      mode: BacklinkRowMode;
+      offset: number;
+    },
+  ): Promise<BacklinkRowsResult>;
+  fetchDomainRankOverview?(
+    credentials: ProviderCredentials,
+    input: DomainOverviewInput,
+  ): Promise<DomainOverviewResult>;
+  fetchHistoricalRankOverview?(
+    credentials: ProviderCredentials,
+    input: HistoricalRankOverviewInput,
+  ): Promise<HistoricalOverviewResult>;
+  fetchRelevantPages?(
+    credentials: ProviderCredentials,
+    input: RelevantPagesInput,
+  ): Promise<RelevantPagesResult>;
+};
+
+export type AnalyticsProvider = {
+  id: string;
+  label: string;
+  testConnection(creds: ProviderCredentials): Promise<ProviderTestResult>;
+  fetchTopQueries?(
+    credentials: ProviderCredentials,
+    input: { limit: number },
+  ): Promise<AnalyticsTopQuery[]>;
+  fetchQueryStats?(
+    credentials: ProviderCredentials,
+    input: AnalyticsQueryStatsInput,
+  ): Promise<QueryStatRow[]>;
+  fetchPageStats?(
+    credentials: ProviderCredentials,
+    input: { startDate: string; endDate: string; limit?: number },
+  ): Promise<PageStatRow[]>;
+};
+
+type ProviderCatalogItemBase = {
+  id: string;
+  label: string;
+  kind: ProviderKind;
+  defaultStatus: ProviderStatus;
+  requiredCredentials?: readonly ProviderCredentialRequirement[];
+  /** Provider-specific names for credential fields, used in requirement messages. */
+  credentialLabels?: Partial<Record<ProviderCredentialRequirement, string>>;
+  /** When true, a missing login credential defaults to the project's tracked domain. */
+  loginDefaultsToProjectDomain?: boolean;
+  logoDomain?: string;
+};
+
+export type ProviderCatalogItem = ProviderCatalogItemBase;
+export type ProviderCatalogEntry = ProviderCatalogItemBase & {
+  allocation: ProviderAllocationCatalog;
+};

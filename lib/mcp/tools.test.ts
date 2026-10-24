@@ -1,0 +1,1662 @@
+import {
+  ALERT_RULE_NAME_MIN_LENGTH,
+  ALERT_RULE_PERCENT_MAX,
+  ALERT_RULE_PERCENT_MIN,
+  ALERT_RULE_RANK_MAX,
+  ALERT_RULE_RANK_MIN,
+  ALERT_RULE_TEXT_MAX_LENGTH,
+} from "@/lib/alerts/schema";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { agentMcpSchemas } from "./agent-schemas";
+import { MCP_TOOL_NAMES } from "./canonical-tools";
+import { getMcpToolDefinitions } from "./definitions";
+import { descriptions } from "./descriptions";
+import { dispatchMcpTool } from "./tools";
+import type { JsonObject } from "./types";
+
+const mocks = vi.hoisted(() => {
+  const handler = async (req: Request, path: string[]) => {
+    const contentType = req.headers.get("content-type") ?? "";
+    const body = contentType.includes("json") ? await req.json() : null;
+    const url = new URL(req.url);
+
+    return Response.json({
+      authorization: req.headers.get("authorization"),
+      body,
+      idempotencyKey: req.headers.get("idempotency-key"),
+      method: req.method,
+      path,
+      prefer: req.headers.get("prefer"),
+      search: url.search,
+    });
+  };
+  return {
+    authenticateBearer: vi.fn(),
+    handleApiRequest: vi.fn(handler),
+    handleMcpPreauthenticatedApiRequest: vi.fn(
+      (request: Request, path: string[], _context: { auth: unknown }) => handler(request, path),
+    ),
+  };
+});
+
+vi.mock("@/lib/api/router", () => ({
+  handleApiRequest: mocks.handleApiRequest,
+  handleMcpPreauthenticatedApiRequest: mocks.handleMcpPreauthenticatedApiRequest,
+}));
+
+vi.mock("@/lib/api/auth", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  authenticateBearer: mocks.authenticateBearer,
+}));
+
+describe("MCP tool dispatch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("publishes the canonical unprefixed 140-tool contract", () => {
+    const definitions = getMcpToolDefinitions();
+
+    expect(definitions.map((tool) => tool.name)).toEqual(MCP_TOOL_NAMES);
+    expect(definitions).toHaveLength(140);
+    expect(definitions.some((tool) => tool.name === "preview_project_defaults")).toBe(true);
+    expect(definitions.every((tool) => /^[a-z][a-z0-9_]*$/.test(tool.name))).toBe(true);
+    expect(definitions.some((tool) => tool.name.startsWith("bisibility_"))).toBe(false);
+    expect(definitions.some((tool) => tool.name === "list_rank_checks")).toBe(false);
+  });
+
+  it("describes every required top-level input and publishes safety annotations", () => {
+    const definitions = getMcpToolDefinitions();
+
+    for (const tool of definitions) {
+      const required = Array.isArray(tool.inputSchema.required) ? tool.inputSchema.required : [];
+      const properties = tool.inputSchema.properties as Record<string, { description?: string }>;
+      for (const name of required) {
+        expect(properties[name]?.description, `${tool.name}.${name}`).toBeTruthy();
+      }
+    }
+    expect(definitions.find((tool) => tool.name === "get_rank_history")?.annotations).toEqual({
+      destructiveHint: false,
+      openWorldHint: false,
+      readOnlyHint: true,
+    });
+    expect(definitions.find((tool) => tool.name === "run_rank_check")?.annotations).toEqual({
+      destructiveHint: false,
+      openWorldHint: true,
+      readOnlyHint: false,
+    });
+    expect(definitions.find((tool) => tool.name === "delete_project")?.annotations).toEqual({
+      destructiveHint: true,
+      openWorldHint: false,
+      readOnlyHint: false,
+    });
+  });
+
+  it("publishes API key scope and expiry controls", () => {
+    const createApiKey = getMcpToolDefinitions().find((tool) => tool.name === "create_api_key");
+
+    expect(createApiKey?.inputSchema).toMatchObject({
+      properties: {
+        expires_in_days: {
+          anyOf: expect.arrayContaining([
+            expect.objectContaining({ const: 30 }),
+            expect.objectContaining({ const: 90 }),
+            expect.objectContaining({ const: 365 }),
+            expect.objectContaining({ type: "null" }),
+          ]),
+        },
+        name: { type: "string" },
+        scope: {
+          default: "admin",
+          description: expect.stringContaining("omitted"),
+          enum: ["read", "write", "admin"],
+        },
+      },
+      required: ["name"],
+    });
+  });
+
+  it("publishes the schedule jitter range", () => {
+    const tools = getMcpToolDefinitions();
+
+    expect(tools.find((tool) => tool.name === "add_keywords")?.inputSchema).toMatchObject({
+      properties: {
+        schedule: {
+          properties: { jitter_minutes: { maximum: 120, minimum: 0 } },
+        },
+      },
+    });
+    expect(
+      tools.find((tool) => tool.name === "update_project_defaults")?.inputSchema,
+    ).toMatchObject({
+      properties: { jitter_minutes: { maximum: 120, minimum: 0 } },
+    });
+  });
+
+  it("publishes strict v3 public-ID schemas and rejects raw MCP inputs", async () => {
+    const keyword = getMcpToolDefinitions().find((tool) => tool.name === "get_keyword");
+    expect(keyword?.inputSchema).toMatchObject({
+      properties: {
+        keyword_id: { pattern: "^kw_[a-z][a-z0-9]{23}$" },
+        project_id: { pattern: "^prj_[a-z][a-z0-9]{23}$" },
+      },
+    });
+
+    await expect(
+      dispatchMcpTool("get_keyword", { keyword_id: "keyword_db_1" }, "bsb_key_live_test"),
+    ).rejects.toMatchObject({ code: "invalid_public_id" });
+    await expect(
+      dispatchMcpTool(
+        "create_alert_rule",
+        {
+          condition_type: "threshold",
+          name: "Track ranking",
+          project_id: "prj_a00000000000000000000000",
+          target_ids: ["keyword_db_1"],
+          target_type: "keyword",
+        },
+        "bsb_key_live_test",
+      ),
+    ).rejects.toMatchObject({ code: "invalid_public_id" });
+    expect(mocks.handleApiRequest).not.toHaveBeenCalled();
+  });
+
+  it("lists project keywords through the REST router", async () => {
+    const result = await dispatchMcpTool(
+      "list_keywords",
+      {
+        limit: 25,
+        project_id: "prj_a00000000000000000000000",
+        search: "rank tracker",
+        tag: "Product",
+      },
+      "bsb_key_live_test",
+    );
+
+    expect(result).toMatchObject({ ok: true, status: 200 });
+    expect(result.payload).toMatchObject({
+      authorization: "Bearer bsb_key_live_test",
+      method: "GET",
+      path: ["projects", "prj_a00000000000000000000000", "keywords"],
+      search: "?limit=25&search=rank+tracker&tag=Product",
+    });
+  });
+
+  it.each(["list_rank_check_runs", "get_rank_check_run"] as const)(
+    "%s reaches an authenticated retained-run GET through the public dispatcher",
+    async (name) => {
+      const project = "prj_a00000000000000000000000";
+      const run = "rcr_a00000000000000000000000";
+      const input: JsonObject =
+        name === "list_rank_check_runs"
+          ? {
+              project_id: project,
+              segment: "planned",
+              status: "blocked,cancelled",
+              limit: 25,
+              cursor: "opaque+cursor/=",
+            }
+          : { project_id: project, run_id: run };
+      const result = await dispatchMcpTool(name, input, "bsb_key_live_test");
+      expect(result).toMatchObject({
+        ok: true,
+        status: 200,
+        payload: {
+          authorization: "Bearer bsb_key_live_test",
+          body: null,
+          method: "GET",
+          path: [
+            "projects",
+            project,
+            "rank-check-runs",
+            ...(name === "get_rank_check_run" ? [run] : []),
+          ],
+        },
+      });
+      expect(mocks.handleApiRequest).toHaveBeenCalledOnce();
+      expect(mocks.handleMcpPreauthenticatedApiRequest).not.toHaveBeenCalled();
+      const [request] = mocks.handleApiRequest.mock.calls[0];
+      expect(request.headers.get("x-bisibility-project")).toBe(project);
+      expect(request.headers.get("x-bisibility-source")).toBe("mcp");
+      expect(request.headers.get("idempotency-key")).toBeNull();
+      expect(request.headers.get("prefer")).toBeNull();
+      const params = Object.fromEntries(new URL(request.url).searchParams);
+      expect(params).toEqual(
+        name === "list_rank_check_runs"
+          ? {
+              segment: "planned",
+              status: "blocked,cancelled",
+              limit: "25",
+              cursor: "opaque+cursor/=",
+            }
+          : {},
+      );
+    },
+  );
+
+  it.each(["list_rank_check_runs", "get_rank_check_run"] as const)(
+    "%s preserves preauthenticated read scope without forwarding an OAuth bearer",
+    async (name) => {
+      const project = "prj_a00000000000000000000000";
+      const input: JsonObject =
+        name === "list_rank_check_runs"
+          ? { project_id: project, segment: "history", limit: 10 }
+          : { project_id: project, run_id: "rcr_a00000000000000000000000" };
+      const auth = {
+        kind: "personal_token",
+        memberships: [],
+        token: {
+          id: "oauth:test",
+          name: "MCP OAuth",
+          prefix: "oauth",
+          publicId: null,
+          scopes: ["read"],
+          userId: "user_1",
+        },
+        user: {
+          email: "owner@example.com",
+          id: "user_1",
+          name: "Owner",
+          publicId: "usr_a00000000000000000000000",
+        },
+      } as const;
+      const result = await dispatchMcpTool(name, input, auth);
+      expect(result).toMatchObject({
+        ok: true,
+        status: 200,
+        payload: {
+          authorization: null,
+          body: null,
+          method: "GET",
+          path: [
+            "projects",
+            project,
+            "rank-check-runs",
+            ...(name === "get_rank_check_run" ? ["rcr_a00000000000000000000000"] : []),
+          ],
+        },
+      });
+      expect(mocks.handleMcpPreauthenticatedApiRequest).toHaveBeenCalledOnce();
+      const [request, , context] = mocks.handleMcpPreauthenticatedApiRequest.mock.calls[0];
+      expect(request.headers.get("authorization")).toBeNull();
+      expect(request.headers.get("x-bisibility-project")).toBe(project);
+      expect(request.headers.get("x-bisibility-source")).toBe("mcp");
+      expect(Object.fromEntries(new URL(request.url).searchParams)).toEqual(
+        name === "list_rank_check_runs" ? { segment: "history", limit: "10" } : {},
+      );
+      expect(context.auth).toBe(auth);
+      expect(mocks.handleApiRequest).not.toHaveBeenCalled();
+      expect(mocks.authenticateBearer).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["list_rank_check_runs", "get_rank_check_run"] as const)(
+    "%s rejects launch-shaped input before either REST path",
+    async (name) => {
+      const input: JsonObject = {
+        project_id: "prj_a00000000000000000000000",
+        force: true,
+        ...(name === "get_rank_check_run" ? { run_id: "rcr_a00000000000000000000000" } : {}),
+      };
+      await expect(dispatchMcpTool(name, input, "bsb_key_live_test")).rejects.toMatchObject({
+        name: "ZodError",
+      });
+      expect(mocks.handleApiRequest).not.toHaveBeenCalled();
+      expect(mocks.handleMcpPreauthenticatedApiRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["air", "lmr"])("rejects a foreign %s run before REST", async (prefix) => {
+    await expect(
+      dispatchMcpTool(
+        "get_rank_check_run",
+        {
+          project_id: "prj_a00000000000000000000000",
+          run_id: `${prefix}_a00000000000000000000000`,
+        },
+        "bsb_key_live_test",
+      ),
+    ).rejects.toMatchObject({ code: "invalid_public_id" });
+    expect(mocks.handleApiRequest).not.toHaveBeenCalled();
+    expect(mocks.handleMcpPreauthenticatedApiRequest).not.toHaveBeenCalled();
+  });
+
+  it("passes OAuth authorization as internal context without forwarding the token", async () => {
+    const oauthAuth = {
+      kind: "personal_token",
+      memberships: [],
+      token: {
+        id: "oauth:test",
+        name: "MCP OAuth",
+        prefix: "oauth",
+        publicId: null,
+        scopes: ["read"],
+        userId: "user_1",
+      },
+      user: {
+        email: "owner@example.com",
+        id: "user_1",
+        name: "Owner",
+        publicId: "usr_a00000000000000000000000",
+      },
+    } as const;
+
+    await dispatchMcpTool("list_projects", {}, oauthAuth);
+
+    const [request, , preauthenticated] = mocks.handleMcpPreauthenticatedApiRequest.mock.calls.at(
+      -1,
+    ) as unknown as [Request, string[], { auth: unknown }];
+    expect(request.headers.get("authorization")).toBeNull();
+    expect(request.headers.get("x-bisibility-source")).toBe("mcp");
+    expect(preauthenticated.auth).toBe(oauthAuth);
+    expect(mocks.handleApiRequest).not.toHaveBeenCalled();
+  });
+
+  it("answers get_session_profile locally with a read-scope token profile", async () => {
+    const readOnlyHintCount = getMcpToolDefinitions().filter(
+      (tool) => tool.annotations?.readOnlyHint,
+    ).length;
+    const result = await dispatchMcpTool("get_session_profile", {}, {
+      kind: "personal_token",
+      memberships: [],
+      token: {
+        id: "oauth:test",
+        name: "MCP OAuth",
+        prefix: "oauth",
+        publicId: null,
+        scopes: ["read"],
+        userId: "user_1",
+      },
+      user: {
+        email: "owner@example.com",
+        id: "user_1",
+        name: "Owner",
+        publicId: "usr_a00000000000000000000000",
+      },
+    } as const);
+
+    expect(result).toMatchObject({ ok: true, status: 200 });
+    expect(result.payload).toEqual({
+      canonical_names: [...MCP_TOOL_NAMES],
+      client_note: `Clients that hide tools without readOnlyHint (for example connectors without a developer or write mode) show ${readOnlyHintCount} of ${MCP_TOOL_NAMES.length} tools; a missing write tool is a client setting, not a token limit.`,
+      read_only: true,
+      tool_count: MCP_TOOL_NAMES.length,
+      tool_names: [...MCP_TOOL_NAMES],
+      toolsets: expect.arrayContaining(["system", "keywords", "projects"]),
+    });
+    expect(mocks.handleApiRequest).not.toHaveBeenCalled();
+    expect(mocks.handleMcpPreauthenticatedApiRequest).not.toHaveBeenCalled();
+    expect(mocks.authenticateBearer).not.toHaveBeenCalled();
+  });
+
+  it("marks a write-scope token as a read-write session profile", async () => {
+    const result = await dispatchMcpTool("get_session_profile", {}, {
+      kind: "personal_token",
+      memberships: [],
+      token: {
+        id: "oauth:test",
+        name: "MCP OAuth",
+        prefix: "oauth",
+        publicId: null,
+        scopes: ["admin", "read", "write"],
+        userId: "user_1",
+      },
+      user: {
+        email: "owner@example.com",
+        id: "user_1",
+        name: "Owner",
+        publicId: "usr_a00000000000000000000000",
+      },
+    } as const);
+
+    expect(result.payload).toMatchObject({ read_only: false });
+    expect(mocks.handleApiRequest).not.toHaveBeenCalled();
+  });
+
+  it("resolves bearer-credential scopes for the session profile without a REST call", async () => {
+    mocks.authenticateBearer.mockResolvedValue({
+      kind: "personal_token",
+      memberships: [],
+      token: {
+        id: "token_1",
+        name: "Automation",
+        prefix: "bsb_pat_live_",
+        publicId: null,
+        scopes: ["read"],
+        userId: "user_1",
+      },
+      user: {
+        email: "owner@example.com",
+        id: "user_1",
+        name: "Owner",
+        publicId: null,
+      },
+    });
+
+    const result = await dispatchMcpTool("get_session_profile", {}, "bsb_pat_live_test");
+
+    expect(result.payload).toMatchObject({ read_only: true });
+    expect(mocks.authenticateBearer).toHaveBeenCalledTimes(1);
+    expect(mocks.handleApiRequest).not.toHaveBeenCalled();
+    expect(mocks.handleMcpPreauthenticatedApiRequest).not.toHaveBeenCalled();
+  });
+
+  it("normalizes keyword creation payloads and forwards idempotency", async () => {
+    const result = await dispatchMcpTool(
+      "add_keywords",
+      {
+        idempotency_key: "idem_1",
+        keywords: ["rank tracker", { keyword: "seo api", target_url: "/api" }],
+        project_id: "prj_a00000000000000000000000",
+        tags: ["Product"],
+        target_url: "/rank-tracker",
+      },
+      "bsb_key_live_test",
+    );
+
+    expect(result.payload).toMatchObject({
+      body: {
+        keywords: [
+          { keyword: "rank tracker", tags: ["Product"], target_url: "/rank-tracker" },
+          { keyword: "seo api", tags: ["Product"], target_url: "/api" },
+        ],
+      },
+      idempotencyKey: "idem_1",
+      method: "POST",
+      path: ["projects", "prj_a00000000000000000000000", "keywords"],
+    });
+  });
+
+  it("maps rank history to keyword rank-check routes", async () => {
+    const result = await dispatchMcpTool(
+      "get_rank_history",
+      {
+        keyword_id: "kw_a00000000000000000000000",
+        limit: 2,
+        project_id: "prj_a00000000000000000000000",
+        status: "completed",
+      },
+      "bsb_key_live_test",
+    );
+
+    expect(result.payload).toMatchObject({
+      method: "GET",
+      path: ["keywords", "kw_a00000000000000000000000", "rank-checks"],
+      search: "?limit=2&status=completed",
+    });
+    const request = mocks.handleApiRequest.mock.calls.at(-1)?.[0] as Request;
+    expect(request.headers.get("x-bisibility-project")).toBe("prj_a00000000000000000000000");
+    expect(request.headers.get("x-bisibility-source")).toBe("mcp");
+  });
+
+  it("forwards async rank checks through the standard Prefer header", async () => {
+    const result = await dispatchMcpTool(
+      "run_rank_check",
+      {
+        async: true,
+        keyword_id: "kw_a00000000000000000000000",
+        project_id: "prj_a00000000000000000000000",
+      },
+      "bsb_key_live_test",
+    );
+
+    expect(result.payload).toMatchObject({
+      body: {},
+      method: "POST",
+      prefer: "respond-async",
+    });
+  });
+
+  it.each([
+    ["get_cloud_import_compatibility", {}, "GET", ["cloud", "import", "compatibility"]],
+    ["get_provider_rates", {}, "GET", ["provider-rates"]],
+    [
+      "get_project_defaults",
+      { project_id: "prj_a00000000000000000000000" },
+      "GET",
+      ["projects", "prj_a00000000000000000000000", "defaults"],
+    ],
+    [
+      "list_project_api_keys",
+      { limit: 25, project_id: "prj_a00000000000000000000000" },
+      "GET",
+      ["projects", "prj_a00000000000000000000000", "api-keys"],
+    ],
+    [
+      "list_signals",
+      { project_id: "prj_a00000000000000000000000", source: "deploy" },
+      "GET",
+      ["projects", "prj_a00000000000000000000000", "signals"],
+    ],
+  ])(
+    "routes the added %s operation through the shared API router",
+    async (name, input, method, path) => {
+      const result = await dispatchMcpTool(name, input, "bsb_key_live_test");
+
+      expect(result.payload).toMatchObject({ method, path });
+    },
+  );
+
+  it("maps the added write operations without duplicating domain logic", async () => {
+    const projectId = "prj_a00000000000000000000000";
+    const cases = [
+      [
+        "update_project",
+        { name: "Renamed", project_id: projectId },
+        "PATCH",
+        ["projects", projectId],
+      ],
+      ["delete_project", { project_id: projectId }, "DELETE", ["projects", projectId]],
+      [
+        "analyze_backlinks",
+        { project_id: projectId, target: "example.com" },
+        "GET",
+        ["projects", projectId, "backlinks"],
+      ],
+      [
+        "create_signal",
+        { project_id: projectId, source: "deploy", type: "deploy.completed" },
+        "POST",
+        ["signals"],
+      ],
+      [
+        "create_project_api_key",
+        { name: "Automation", project_id: projectId },
+        "POST",
+        ["projects", projectId, "api-keys"],
+      ],
+      [
+        "set_provider_enabled",
+        { enabled: false, project_id: projectId, provider_id: "dataforseo" },
+        "PATCH",
+        ["projects", projectId, "providers", "dataforseo"],
+      ],
+    ] as const;
+
+    for (const [name, input, method, path] of cases) {
+      const result = await dispatchMcpTool(name, input, "bsb_key_live_test");
+      expect(result.payload).toMatchObject({ method, path });
+    }
+  });
+
+  it("forwards explicit keyword cadence but adds no schedule for omitted defaults", async () => {
+    const projectId = "prj_a00000000000000000000000";
+    const plain = await dispatchMcpTool(
+      "add_keywords",
+      { project_id: projectId, keywords: ["manual keyword"] },
+      "bsb_key_live_test",
+    );
+    expect(plain.payload).toMatchObject({ body: { keywords: [{ keyword: "manual keyword" }] } });
+    expect((plain.payload as { body: { keywords: object[] } }).body.keywords[0]).not.toHaveProperty(
+      "schedule",
+    );
+    const scheduled = await dispatchMcpTool(
+      "add_keywords",
+      { project_id: projectId, keywords: ["daily keyword"], schedule: { frequency: "daily" } },
+      "bsb_key_live_test",
+    );
+    expect(scheduled.payload).toMatchObject({
+      body: { keywords: [{ keyword: "daily keyword", schedule: { frequency: "daily" } }] },
+    });
+  });
+
+  it("forwards result depth and custom cadence to the shared estimate endpoint", async () => {
+    const result = await dispatchMcpTool(
+      "get_cost_estimate",
+      {
+        keywords: 1,
+        depth: 20,
+        frequency: "custom_cron",
+        cron_expression: "0 6 * * *",
+      },
+      "bsb_key_live_test",
+    );
+    expect(result.payload).toMatchObject({
+      method: "GET",
+      path: ["cost-estimate"],
+      search: "?keywords=1&depth=20&frequency=custom_cron&cron_expression=0+6+*+*+*",
+    });
+  });
+
+  it("preserves cost, backlink pagination, and provider-setting arguments", async () => {
+    const projectId = "prj_a00000000000000000000000";
+
+    const estimate = await dispatchMcpTool(
+      "get_cost_estimate",
+      {
+        devices: 2,
+        frequency: "weekly",
+        keywords: 100,
+        locations: 3,
+        option: "priority",
+        plan: "business",
+        provider: "dataforseo",
+      },
+      "bsb_key_live_test",
+    );
+    expect(estimate.payload).toMatchObject({
+      method: "GET",
+      path: ["cost-estimate"],
+      search:
+        "?keywords=100&devices=2&locations=3&frequency=weekly&provider=dataforseo&option=priority&plan=business",
+    });
+
+    const rows = await dispatchMcpTool(
+      "load_more_backlink_rows",
+      {
+        snapshot_ref: "opaque-current-snapshot",
+        include_subdomains: true,
+        limit: 300,
+        project_id: projectId,
+        target: "example.com",
+        target_scope: "site",
+      },
+      "bsb_key_live_test",
+    );
+    expect(rows.payload).toMatchObject({
+      body: {
+        include_subdomains: true,
+        limit: 300,
+        target: "example.com",
+        target_scope: "site",
+      },
+      method: "POST",
+      path: ["projects", projectId, "backlinks", "rows"],
+    });
+
+    const priority = await dispatchMcpTool(
+      "set_provider_priority",
+      { priority: 7, project_id: projectId, provider_id: "dataforseo" },
+      "bsb_key_live_test",
+    );
+    expect(priority.payload).toMatchObject({
+      body: { priority: 7 },
+      method: "PATCH",
+      path: ["projects", projectId, "providers", "dataforseo"],
+    });
+
+    const primary = await dispatchMcpTool(
+      "set_primary_provider",
+      { project_id: projectId, provider_id: "dataforseo" },
+      "bsb_key_live_test",
+    );
+    expect(primary.payload).toMatchObject({
+      body: { priority: 0 },
+      method: "PATCH",
+      path: ["projects", projectId, "providers", "dataforseo"],
+    });
+  });
+
+  it.each([
+    ["analyze_domain_overview", "analyze", { estimate_only: true, max_cost_cents: 0 }],
+    ["load_domain_overview_history", "history", { max_cost_cents: 0 }],
+    ["load_domain_overview_keywords", "keywords", { limit: 100, max_cost_cents: 0, offset: 0 }],
+    ["load_domain_overview_pages", "pages", { limit: 100, max_cost_cents: 0, offset: 0 }],
+  ] as const)("routes %s with the explicit cost contract", async (name, action, extra) => {
+    const projectId = "prj_a00000000000000000000000";
+    const result = await dispatchMcpTool(
+      name,
+      {
+        ...extra,
+        language_code: "en",
+        location_code: 2840,
+        project_id: projectId,
+        target: "example.com",
+      },
+      "bsb_key_live_test",
+    );
+
+    expect(result.payload).toMatchObject({
+      body: expect.objectContaining(extra),
+      method: "POST",
+      path: ["projects", projectId, "domain-overview", action],
+    });
+  });
+
+  it("rejects uncapped hosted Domain Overview analysis before REST dispatch", async () => {
+    await expect(
+      dispatchMcpTool(
+        "analyze_domain_overview",
+        {
+          estimate_only: true,
+          language_code: "en",
+          location_code: 2840,
+          project_id: "prj_a00000000000000000000000",
+          target: "example.com",
+        },
+        "bsb_key_live_test",
+      ),
+    ).rejects.toThrow("max_cost_cents must be a nonnegative integer");
+    expect(mocks.handleApiRequest).not.toHaveBeenCalled();
+  });
+
+  it("routes the read-only estimate tools with estimate_only forced", async () => {
+    const projectId = "prj_a00000000000000000000000";
+
+    const backlinks = await dispatchMcpTool(
+      "estimate_backlinks_cost",
+      {
+        include_subdomains: true,
+        mode: "one_per_domain",
+        project_id: projectId,
+        result_limit: 300,
+        target: "example.com",
+        target_scope: "site",
+      },
+      "bsb_key_live_test",
+    );
+    expect(backlinks.payload).toMatchObject({
+      method: "GET",
+      path: ["projects", projectId, "backlinks"],
+      search:
+        "?estimate_only=true&target=example.com&target_scope=site&mode=one_per_domain&result_limit=300&include_subdomains=true",
+    });
+
+    const research = await dispatchMcpTool(
+      "estimate_keyword_research_cost",
+      {
+        include_clickstream: true,
+        max_cost_cents: 500,
+        mode: "related",
+        project_id: projectId,
+        result_limit: 300,
+        seed: "rank tracker",
+      },
+      "bsb_key_live_test",
+    );
+    expect(research.payload).toMatchObject({
+      method: "GET",
+      path: ["projects", projectId, "keyword-research"],
+      search:
+        "?estimate_only=true&seed=rank+tracker&mode=related&result_limit=300&include_clickstream=true&max_cost_cents=500",
+    });
+
+    const domainOverview = await dispatchMcpTool(
+      "estimate_domain_overview_cost",
+      {
+        keyword_limit: 50,
+        language_code: "en",
+        location_code: 2840,
+        project_id: projectId,
+        target: "example.com",
+      },
+      "bsb_key_live_test",
+    );
+    expect(domainOverview.payload).toMatchObject({
+      body: {
+        estimate_only: true,
+        keyword_limit: 50,
+        language_code: "en",
+        location_code: 2840,
+        target: "example.com",
+      },
+      method: "POST",
+      path: ["projects", projectId, "domain-overview", "analyze"],
+    });
+  });
+
+  it("marks the estimate tools read-only in the served definitions", () => {
+    const definitions = getMcpToolDefinitions();
+
+    for (const name of [
+      "estimate_backlinks_cost",
+      "estimate_domain_overview_cost",
+      "estimate_keyword_research_cost",
+      "get_session_profile",
+    ]) {
+      const tool = definitions.find((definition) => definition.name === name);
+      expect(tool?.annotations).toMatchObject({
+        readOnlyHint: true,
+        destructiveHint: false,
+      });
+    }
+  });
+
+  it("maps optional project_id to the PAT project-selection header", async () => {
+    const result = await dispatchMcpTool(
+      "get_keyword",
+      { keyword_id: "kw_a00000000000000000000000", project_id: "prj_a00000000000000000000000" },
+      "bsb_pat_live_test",
+    );
+
+    expect(result.payload).toMatchObject({
+      method: "GET",
+      path: ["keywords", "kw_a00000000000000000000000"],
+    });
+    const request = mocks.handleApiRequest.mock.calls.at(-1)?.[0] as Request;
+    expect(request.headers.get("x-bisibility-project")).toBe("prj_a00000000000000000000000");
+  });
+
+  it("routes ranked-keyword suggestions through the shared REST endpoint", async () => {
+    const result = await dispatchMcpTool(
+      "list_ranked_keyword_suggestions",
+      {
+        connection_id: "conn_a00000000000000000000000",
+        fresh: true,
+        limit: 100,
+        max_cost_cents: 5,
+        offset: 100,
+        project_id: "prj_a00000000000000000000000",
+      },
+      "bsb_key_live_test",
+    );
+    expect(result.payload).toMatchObject({
+      method: "GET",
+      path: ["projects", "prj_a00000000000000000000000", "ranked-keyword-suggestions"],
+      search:
+        "?connection_id=conn_a00000000000000000000000&offset=100&limit=100&fresh=true&max_cost_cents=5",
+    });
+    expect(
+      getMcpToolDefinitions().find((tool) => tool.name === "list_ranked_keyword_suggestions")
+        ?.description,
+    ).toContain("$0.02");
+  });
+
+  it("routes keyword research and metrics through the shared REST endpoints", async () => {
+    const research = await dispatchMcpTool(
+      "research_keywords",
+      {
+        connection_id: "conn_a00000000000000000000000",
+        estimate_only: true,
+        fresh: true,
+        include_clickstream: true,
+        mode: "ideas",
+        max_cost_cents: 7,
+        project_id: "prj_a00000000000000000000000",
+        result_limit: 300,
+        seed: "rank tracker",
+      },
+      "bsb_key_live_test",
+    );
+    expect(research.payload).toMatchObject({
+      method: "GET",
+      path: ["projects", "prj_a00000000000000000000000", "keyword-research"],
+      search:
+        "?seed=rank+tracker&mode=ideas&result_limit=300&connection_id=conn_a00000000000000000000000&include_clickstream=true&fresh=true&estimate_only=true&max_cost_cents=7",
+    });
+    const metrics = await dispatchMcpTool(
+      "get_keyword_metrics",
+      {
+        connection_id: "conn_a00000000000000000000000",
+        estimate_only: true,
+        include_clickstream: false,
+        keywords: ["rank tracker", "seo api"],
+        max_cost_cents: 7,
+        project_id: "prj_a00000000000000000000000",
+      },
+      "bsb_key_live_test",
+    );
+    expect(metrics.payload).toMatchObject({
+      body: {
+        connection_id: "conn_a00000000000000000000000",
+        estimate_only: true,
+        include_clickstream: false,
+        keywords: ["rank tracker", "seo api"],
+        max_cost_cents: 7,
+      },
+      method: "POST",
+      path: ["projects", "prj_a00000000000000000000000", "keyword-metrics"],
+    });
+    expect(
+      getMcpToolDefinitions().find((tool) => tool.name === "research_keywords")?.description,
+    ).toContain("one seed per call");
+    expect(
+      getMcpToolDefinitions().find((tool) => tool.name === "get_keyword_metrics")?.description,
+    ).toContain("up to 700 keywords");
+    expect(
+      getMcpToolDefinitions().find((tool) => tool.name === "research_keywords")?.description,
+    ).toContain("estimate_only first");
+  });
+
+  it("passes the location_key filter the keyword list tool advertises", async () => {
+    const result = await dispatchMcpTool(
+      "list_keywords",
+      { location_key: "US@en", project_id: "prj_abcdefghijklmnopqrstuvwx" },
+      "bsb_key_live_test",
+    );
+
+    expect(result.payload).toMatchObject({ search: "?location_key=US%40en" });
+  });
+
+  it("maps canonical location search to the project-independent REST endpoint", async () => {
+    const result = await dispatchMcpTool(
+      "search_locations",
+      { country: "US", limit: 20, q: "Austin" },
+      "bsb_key_live_test",
+    );
+    expect(result.payload).toMatchObject({
+      method: "GET",
+      path: ["locations", "search"],
+      search: "?q=Austin&country=US&limit=20",
+    });
+    expect(
+      getMcpToolDefinitions().find((tool) => tool.name === "search_locations")?.description,
+    ).toContain("location_key verbatim");
+  });
+
+  it("maps team mutations to guarded project REST routes", async () => {
+    const updated = await dispatchMcpTool(
+      "update_team_member_role",
+      {
+        member_id: "mbr_a00000000000000000000000",
+        project_id: "prj_a00000000000000000000000",
+        role: "viewer",
+      },
+      "bsb_key_live_test",
+    );
+    expect(mocks.handleApiRequest.mock.calls.at(-1)?.[1]).toEqual([
+      "projects",
+      "prj_a00000000000000000000000",
+      "team",
+      "members",
+      "mbr_a00000000000000000000000",
+    ]);
+    expect(updated.payload).toMatchObject({ body: { role: "viewer" }, method: "PATCH" });
+
+    await dispatchMcpTool(
+      "resend_team_invite",
+      { invite_id: "inv_a00000000000000000000000", project_id: "prj_a00000000000000000000000" },
+      "bsb_key_live_test",
+    );
+    expect(mocks.handleApiRequest.mock.calls.at(-1)?.[1]).toEqual([
+      "projects",
+      "prj_a00000000000000000000000",
+      "team",
+      "invites",
+      "inv_a00000000000000000000000",
+      "resend",
+    ]);
+
+    await dispatchMcpTool(
+      "remove_team_member",
+      { member_id: "mbr_a00000000000000000000000", project_id: "prj_a00000000000000000000000" },
+      "bsb_key_live_test",
+    );
+    expect(
+      getMcpToolDefinitions().find((tool) => tool.name === "remove_team_member")?.description,
+    ).toContain("Confirm the user's intent");
+  });
+
+  it("keeps advertised query-stats enums and ranges aligned with the agent schema", () => {
+    const tool = getMcpToolDefinitions().find(
+      (definition) => definition.name === "list_search_performance_query_stats",
+    );
+    const properties = tool?.inputSchema.properties as Record<string, JsonObject>;
+    const agent = agentMcpSchemas.listSearchPerformanceQueryStats;
+
+    expect(Object.keys(properties).sort()).toEqual(Object.keys(agent.properties).sort());
+    expect(tool?.inputSchema.required).toEqual([...agent.required].sort());
+    for (const [name, property] of Object.entries(properties)) {
+      const constraints = Object.fromEntries(
+        Object.entries(property).filter(([key]) =>
+          [
+            "type",
+            "enum",
+            "minimum",
+            "maximum",
+            "minLength",
+            "maxLength",
+            "items",
+            "contains",
+          ].includes(key),
+        ),
+      );
+      expect(agent.properties[name], name).toMatchObject(constraints);
+    }
+  });
+
+  it("forwards every advertised query-stats property to REST", async () => {
+    const input: JsonObject = {
+      clicks_min: 0,
+      connection_id: "conn_a00000000000000000000000",
+      country: "usa",
+      device: "mobile",
+      dimensions: ["query", "page", "country", "device"],
+      end_date: "2026-06-30",
+      impressions_min: 100,
+      limit: 25,
+      offset: 0,
+      page_path: "/docs/?source=mcp&topic=rank tracker",
+      page_path_match: "prefix",
+      position_max: 20.5,
+      project_id: "prj_a00000000000000000000000",
+      query: "rank tracker & SEO",
+      query_match: "contains",
+      start_date: "2026-06-01",
+    };
+    const tool = getMcpToolDefinitions().find(
+      (definition) => definition.name === "list_search_performance_query_stats",
+    );
+    const properties = Object.keys(tool?.inputSchema.properties ?? {});
+    expect(properties.sort()).toEqual(Object.keys(input).sort());
+
+    const result = await dispatchMcpTool(
+      "list_search_performance_query_stats",
+      input,
+      "bsb_key_live_test",
+    );
+    expect(result.payload).toMatchObject({
+      method: "GET",
+      path: ["projects", input.project_id, "analytics", "query-stats"],
+    });
+    const params = new URLSearchParams(result.payload.search as string);
+    expect([...params.keys()].sort()).toEqual(properties.filter((name) => name !== "project_id"));
+    for (const name of properties) {
+      if (name === "project_id") continue;
+      const value = input[name];
+      expect(params.getAll(name), name).toEqual([
+        Array.isArray(value) ? value.join(",") : String(value),
+      ]);
+    }
+  });
+
+  it("maps analytics reads and sync to project REST routes", async () => {
+    const snapshots = await dispatchMcpTool(
+      "list_traffic_snapshots",
+      {
+        end_date: "2026-06-30",
+        limit: 50,
+        paths: ["/", "/pricing"],
+        project_id: "prj_a00000000000000000000000",
+        start_date: "2026-06-01",
+      },
+      "bsb_key_live_test",
+    );
+    expect(snapshots.payload).toMatchObject({
+      method: "GET",
+      path: ["projects", "prj_a00000000000000000000000", "analytics", "traffic-snapshots"],
+      search: "?start_date=2026-06-01&end_date=2026-06-30&limit=50&path=%2F&path=%2Fpricing",
+    });
+
+    const queries = await dispatchMcpTool(
+      "list_search_performance_query_stats",
+      {
+        connection_id: "conn_a00000000000000000000000",
+        end_date: "2026-06-30",
+        project_id: "prj_a00000000000000000000000",
+        query: "rank tracker",
+        start_date: "2026-06-01",
+      },
+      "bsb_key_live_test",
+    );
+    expect(queries.payload).toMatchObject({
+      path: ["projects", "prj_a00000000000000000000000", "analytics", "query-stats"],
+      search:
+        "?start_date=2026-06-01&end_date=2026-06-30&connection_id=conn_a00000000000000000000000&query=rank+tracker",
+    });
+
+    const filteredQueries = await dispatchMcpTool(
+      "list_search_performance_query_stats",
+      {
+        clicks_min: 5,
+        end_date: "2026-06-30",
+        impressions_min: 100,
+        page_path: "/docs/",
+        page_path_match: "prefix",
+        position_max: 20,
+        project_id: "prj_a00000000000000000000000",
+        query_match: "contains",
+        start_date: "2026-06-01",
+      },
+      "bsb_key_live_test",
+    );
+    expect(filteredQueries.payload).toMatchObject({
+      method: "GET",
+      path: ["projects", "prj_a00000000000000000000000", "analytics", "query-stats"],
+      search:
+        "?start_date=2026-06-01&end_date=2026-06-30&query_match=contains&page_path=%2Fdocs%2F&page_path_match=prefix&clicks_min=5&impressions_min=100&position_max=20",
+    });
+
+    const pagedQueries = await dispatchMcpTool(
+      "list_search_performance_query_stats",
+      {
+        clicks_min: 5,
+        connection_id: "conn_a00000000000000000000000",
+        country: "usa",
+        device: "mobile",
+        dimensions: ["query", "device", "country"],
+        end_date: "2026-06-30",
+        impressions_min: 100,
+        limit: 25,
+        offset: 50,
+        page_path: "/docs/",
+        page_path_match: "prefix",
+        position_max: 20,
+        project_id: "prj_a00000000000000000000000",
+        query: "rank tracker",
+        query_match: "contains",
+        start_date: "2026-06-01",
+      },
+      "bsb_key_live_test",
+    );
+    expect(pagedQueries.payload).toMatchObject({
+      method: "GET",
+      path: ["projects", "prj_a00000000000000000000000", "analytics", "query-stats"],
+      search:
+        "?start_date=2026-06-01&end_date=2026-06-30&connection_id=conn_a00000000000000000000000&query=rank+tracker&limit=25&query_match=contains&page_path=%2Fdocs%2F&page_path_match=prefix&clicks_min=5&impressions_min=100&position_max=20&country=usa&device=mobile&offset=50&dimensions=query%2Cdevice%2Ccountry",
+    });
+
+    const sync = await dispatchMcpTool(
+      "sync_project_traffic",
+      { idempotency_key: "sync_1", project_id: "prj_a00000000000000000000000" },
+      "bsb_key_live_test",
+    );
+    expect(sync.payload).toMatchObject({
+      idempotencyKey: "sync_1",
+      method: "POST",
+      path: ["projects", "prj_a00000000000000000000000", "analytics", "sync"],
+    });
+    expect(
+      getMcpToolDefinitions().find((tool) => tool.name === "list_traffic_snapshots")?.description,
+    ).toContain("project's own connected analytics accounts");
+  });
+
+  it("exposes every search-performance query parameter the route forwards", () => {
+    const schema = agentMcpSchemas.listSearchPerformanceQueryStats;
+    expect(Object.keys(schema.properties as object).sort()).toEqual([
+      "clicks_min",
+      "connection_id",
+      "country",
+      "device",
+      "dimensions",
+      "end_date",
+      "impressions_min",
+      "limit",
+      "offset",
+      "page_path",
+      "page_path_match",
+      "position_max",
+      "project_id",
+      "query",
+      "query_match",
+      "start_date",
+    ]);
+    expect(schema.properties).toMatchObject({
+      clicks_min: { minimum: 0, type: "integer" },
+      country: { maxLength: 3, minLength: 3, pattern: "^[a-zA-Z]{3}$", type: "string" },
+      device: { enum: ["desktop", "mobile", "tablet"], type: "string" },
+      dimensions: {
+        contains: { const: "query" },
+        items: { enum: ["query", "page", "country", "device"], type: "string" },
+        type: "array",
+      },
+      impressions_min: { minimum: 0, type: "integer" },
+      limit: { default: 100, maximum: 1_000, minimum: 1, type: "integer" },
+      offset: { default: 0, minimum: 0, type: "integer" },
+      page_path: { maxLength: 2_048, minLength: 1, type: "string" },
+      page_path_match: { default: "contains", enum: ["contains", "prefix"], type: "string" },
+      position_max: { minimum: 0, type: "number" },
+      query: { maxLength: 1_000, minLength: 1, type: "string" },
+      query_match: { default: "equals", enum: ["equals", "contains"], type: "string" },
+    });
+    expect(descriptions.listSearchPerformanceQueryStats).toContain("country");
+    expect(descriptions.listSearchPerformanceQueryStats).toContain("device");
+    expect(descriptions.listSearchPerformanceQueryStats).toContain("dimensions");
+    expect(descriptions.listSearchPerformanceQueryStats).toContain("offset");
+    expect(descriptions.listSearchPerformanceQueryStats).toContain("next_offset");
+  });
+
+  it("maps alert, rank export, and sitemap tools through REST", async () => {
+    const marked = await dispatchMcpTool(
+      "mark_project_alerts_read",
+      { idempotency_key: "alerts_1", project_id: "prj_a00000000000000000000000" },
+      "bsb_key_live_test",
+    );
+    expect(marked.payload).toMatchObject({
+      idempotencyKey: "alerts_1",
+      method: "POST",
+      path: ["projects", "prj_a00000000000000000000000", "triggered-alerts", "mark-read"],
+    });
+
+    const muted = await dispatchMcpTool(
+      "mute_triggered_alert",
+      { alert_id: "al_a00000000000000000000000", project_id: "prj_a00000000000000000000000" },
+      "bsb_key_live_test",
+    );
+    expect(muted.payload).toMatchObject({
+      method: "POST",
+      path: [
+        "projects",
+        "prj_a00000000000000000000000",
+        "triggered-alerts",
+        "al_a00000000000000000000000",
+        "mute",
+      ],
+    });
+
+    const exported = await dispatchMcpTool(
+      "export_rank_history",
+      {
+        granularity: "weekly",
+        keyword_ids: ["kw_a00000000000000000000000", "kw_a00000000000000000000000"],
+        limit: 100,
+        project_id: "prj_a00000000000000000000000",
+        range: "90",
+      },
+      "bsb_key_live_test",
+    );
+    expect(exported.payload).toMatchObject({
+      method: "GET",
+      path: ["projects", "prj_a00000000000000000000000", "exports", "rank-history"],
+      search:
+        "?format=json&granularity=weekly&limit=100&range=90&keyword_id=kw_a00000000000000000000000&keyword_id=kw_a00000000000000000000000",
+    });
+
+    await dispatchMcpTool(
+      "list_sitemap_monitors",
+      { project_id: "prj_a00000000000000000000000" },
+      "bsb_key_live_test",
+    );
+    expect(mocks.handleApiRequest.mock.calls.at(-1)?.[1]).toEqual([
+      "projects",
+      "prj_a00000000000000000000000",
+      "sitemap-monitors",
+    ]);
+
+    const enabled = await dispatchMcpTool(
+      "enable_sitemap_monitor",
+      { monitor_id: "prj_a00000000000000000000000", project_id: "prj_a00000000000000000000000" },
+      "bsb_key_live_test",
+    );
+    expect(enabled.payload).toMatchObject({ body: { enabled: true }, method: "PATCH" });
+    const disabled = await dispatchMcpTool(
+      "disable_sitemap_monitor",
+      { monitor_id: "prj_a00000000000000000000000", project_id: "prj_a00000000000000000000000" },
+      "bsb_key_live_test",
+    );
+    expect(disabled.payload).toMatchObject({ body: { enabled: false }, method: "PATCH" });
+
+    const definitions = getMcpToolDefinitions();
+    expect(definitions.find((tool) => tool.name === "export_rank_history")?.description).toContain(
+      "JSON",
+    );
+    expect(
+      definitions.find((tool) => tool.name === "mute_triggered_alert")?.inputSchema,
+    ).toMatchObject({
+      required: expect.arrayContaining(["project_id", "alert_id"]),
+    });
+  });
+
+  it("advertises and forwards complete alert rule mutation inputs", async () => {
+    const definitions = getMcpToolDefinitions();
+    const createdDefinition = definitions.find((tool) => tool.name === "create_alert_rule");
+    const updatedDefinition = definitions.find((tool) => tool.name === "update_alert_rule");
+
+    expect(createdDefinition?.inputSchema).toMatchObject({
+      properties: expect.objectContaining({
+        channels: expect.objectContaining({
+          items: expect.objectContaining({ enum: ["email", "slack", "webhook"] }),
+        }),
+        condition_type: expect.objectContaining({ enum: expect.arrayContaining(["downtrend"]) }),
+        name: expect.anything(),
+        recipient_ids: expect.objectContaining({ type: "array" }),
+        severity: expect.objectContaining({ enum: ["info", "warning", "urgent"] }),
+        target_ids: expect.objectContaining({ type: "array" }),
+        target_type: expect.objectContaining({ enum: ["all", "keyword", "tag"] }),
+        threshold_position: expect.anything(),
+      }),
+      required: expect.arrayContaining(["project_id", "name", "condition_type"]),
+    });
+    expect(createdDefinition?.inputSchema).toMatchObject({
+      properties: {
+        change_pct: {
+          anyOf: expect.arrayContaining([
+            expect.objectContaining({
+              maximum: ALERT_RULE_PERCENT_MAX,
+              minimum: ALERT_RULE_PERCENT_MIN,
+            }),
+            expect.objectContaining({ type: "null" }),
+          ]),
+        },
+        name: {
+          maxLength: ALERT_RULE_TEXT_MAX_LENGTH,
+          minLength: ALERT_RULE_NAME_MIN_LENGTH,
+        },
+        recipient_ids: {
+          items: {
+            pattern: "^usr_[a-z][a-z0-9]{23}$",
+            type: "string",
+          },
+        },
+        target_ids: {
+          items: {
+            anyOf: expect.arrayContaining([
+              expect.objectContaining({ pattern: "^kw_[a-z][a-z0-9]{23}$" }),
+              expect.objectContaining({ pattern: "^tag_[a-z][a-z0-9]{23}$" }),
+            ]),
+          },
+        },
+        threshold_position: {
+          anyOf: expect.arrayContaining([
+            expect.objectContaining({
+              maximum: ALERT_RULE_RANK_MAX,
+              minimum: ALERT_RULE_RANK_MIN,
+            }),
+            expect.objectContaining({ type: "null" }),
+          ]),
+        },
+      },
+    });
+    expect(updatedDefinition?.inputSchema).toMatchObject({
+      properties: expect.objectContaining({ rule_id: expect.anything() }),
+      required: expect.arrayContaining(["rule_id", "name", "condition_type"]),
+    });
+    expect(updatedDefinition?.inputSchema.required).not.toContain("project_id");
+
+    const created = await dispatchMcpTool(
+      "create_alert_rule",
+      {
+        channels: ["email"],
+        condition_type: "threshold",
+        name: "Lost page one",
+        project_id: "prj_a00000000000000000000000",
+        recipient_ids: ["usr_a00000000000000000000000"],
+        severity: "warning",
+        target_ids: ["kw_a00000000000000000000000"],
+        target_type: "keyword",
+        threshold_position: 10,
+      },
+      "bsb_key_live_test",
+    );
+    expect(created.payload).toMatchObject({
+      body: {
+        channels: ["email"],
+        condition_type: "threshold",
+        name: "Lost page one",
+        recipient_ids: ["usr_a00000000000000000000000"],
+        severity: "warning",
+        target_ids: ["kw_a00000000000000000000000"],
+        target_type: "keyword",
+        threshold_position: 10,
+      },
+      method: "POST",
+      path: ["projects", "prj_a00000000000000000000000", "alert-rules"],
+    });
+
+    const updated = await dispatchMcpTool(
+      "update_alert_rule",
+      {
+        channels: ["webhook"],
+        condition_type: "threshold",
+        name: "Lost page one",
+        project_id: "prj_a00000000000000000000000",
+        recipient_ids: [],
+        rule_id: "alr_a00000000000000000000000",
+        severity: "info",
+        target_ids: [],
+        target_type: "all",
+        threshold_position: 12,
+      },
+      "bsb_key_live_test",
+    );
+    expect(updated.payload).toMatchObject({
+      body: expect.objectContaining({
+        channels: ["webhook"],
+        condition_type: "threshold",
+        recipient_ids: [],
+        severity: "info",
+        threshold_position: 12,
+      }),
+      method: "PATCH",
+      path: ["alert-rules", "alr_a00000000000000000000000"],
+    });
+  });
+
+  it("maps project defaults updates to the REST defaults route", async () => {
+    const result = await dispatchMcpTool(
+      "update_project_defaults",
+      {
+        country: "Germany",
+        device: "mobile",
+        frequency: "weekly",
+        idempotency_key: "idem_defaults",
+        project_id: "prj_a00000000000000000000000",
+        serp_stop_on_match: false,
+      },
+      "bsb_key_live_test",
+    );
+
+    expect(result.payload).toMatchObject({
+      body: {
+        country: "Germany",
+        device: "mobile",
+        frequency: "weekly",
+        serp_stop_on_match: false,
+      },
+      idempotencyKey: "idem_defaults",
+      method: "PATCH",
+      path: ["projects", "prj_a00000000000000000000000", "defaults"],
+    });
+  });
+
+  it("forwards the saved-view surface for list and create tools", async () => {
+    const listed = await dispatchMcpTool(
+      "list_saved_views",
+      { project_id: "prj_a00000000000000000000000", surface: "competitors" },
+      "bsb_key_live_test",
+    );
+    const created = await dispatchMcpTool(
+      "create_saved_view",
+      {
+        config: {
+          scope: {
+            device: "desktop",
+            engine: "google",
+            location_id: "loc_us",
+          },
+          surface: "competitors",
+          version: 1,
+        },
+        name: "US desktop",
+        project_id: "prj_a00000000000000000000000",
+        surface: "competitors",
+      },
+      "bsb_key_live_test",
+    );
+
+    expect(listed.payload).toMatchObject({ search: "?surface=competitors" });
+    expect(created.payload).toMatchObject({
+      body: expect.objectContaining({ name: "US desktop", surface: "competitors" }),
+      method: "POST",
+      path: ["projects", "prj_a00000000000000000000000", "saved-views"],
+    });
+    const definition = getMcpToolDefinitions().find((tool) => tool.name === "list_saved_views");
+    expect(definition?.inputSchema).toMatchObject({
+      properties: expect.objectContaining({
+        surface: expect.objectContaining({ enum: ["keywords", "competitors"] }),
+      }),
+    });
+  });
+
+  it("maps saved-keyword tools to project-scoped REST routes", async () => {
+    const listed = await dispatchMcpTool(
+      "list_saved_keywords",
+      { cursor: "saved_cursor", limit: 10, project_id: "prj_a00000000000000000000000" },
+      "bsb_key_live_test",
+    );
+    const created = await dispatchMcpTool(
+      "create_saved_keywords",
+      {
+        idempotency_key: "idem_saved",
+        keywords: ["rank tracker"],
+        project_id: "prj_a00000000000000000000000",
+      },
+      "bsb_key_live_test",
+    );
+    const deleted = await dispatchMcpTool(
+      "delete_saved_keyword",
+      {
+        project_id: "prj_a00000000000000000000000",
+        saved_keyword_id: "svkw_a00000000000000000000000",
+      },
+      "bsb_key_live_test",
+    );
+
+    expect(listed.payload).toMatchObject({
+      method: "GET",
+      path: ["projects", "prj_a00000000000000000000000", "saved-keywords"],
+      search: "?cursor=saved_cursor&limit=10",
+    });
+    expect(created.payload).toMatchObject({
+      body: { keywords: ["rank tracker"] },
+      idempotencyKey: "idem_saved",
+      method: "POST",
+      path: ["projects", "prj_a00000000000000000000000", "saved-keywords"],
+    });
+    expect(deleted.payload).toMatchObject({
+      method: "DELETE",
+      path: [
+        "projects",
+        "prj_a00000000000000000000000",
+        "saved-keywords",
+        "svkw_a00000000000000000000000",
+      ],
+    });
+  });
+
+  it("does not advertise api_key in hosted tool schemas", () => {
+    const listKeywords = getMcpToolDefinitions().find((tool) => tool.name === "list_keywords");
+    expect(listKeywords?.inputSchema).toMatchObject({
+      properties: expect.objectContaining({
+        country: expect.objectContaining({ type: "string" }),
+        device: expect.objectContaining({ enum: ["desktop", "mobile"] }),
+      }),
+      required: ["project_id"],
+    });
+    expect(listKeywords?.inputSchema).toMatchObject({
+      properties: expect.not.objectContaining({ api_key: expect.anything() }),
+    });
+  });
+
+  it("warns agents before provider-backed rank checks", () => {
+    const runRankCheck = getMcpToolDefinitions().find((tool) => tool.name === "run_rank_check");
+
+    expect(runRankCheck?.description).toContain("may incur provider cost");
+    expect(runRankCheck?.description).toContain("explicit user approval");
+    expect(runRankCheck?.description).toContain("cannot enforce the client's confirmation UI");
+  });
+
+  it("advertises language-qualified keys for keyword market tools", () => {
+    const definitions = getMcpToolDefinitions();
+    const addKeywords = definitions.find((tool) => tool.name === "add_keywords");
+    const updateKeyword = definitions.find((tool) => tool.name === "update_keyword");
+    const setKeywordTargetUrl = definitions.find((tool) => tool.name === "set_keyword_target_url");
+    const updateProjectDefaults = definitions.find(
+      (tool) => tool.name === "update_project_defaults",
+    );
+
+    expect(addKeywords?.inputSchema).toMatchObject({
+      properties: expect.objectContaining({ country: expect.anything() }),
+    });
+    expect(addKeywords?.inputSchema).toMatchObject({
+      properties: expect.objectContaining({
+        location: expect.anything(),
+        location_key: expect.objectContaining({
+          description: expect.stringContaining("@language"),
+          pattern: expect.any(String),
+        }),
+      }),
+    });
+    const addProperties = addKeywords?.inputSchema.properties as
+      | Record<string, { pattern?: string }>
+      | undefined;
+    const locationKeyPattern = new RegExp(addProperties?.location_key?.pattern ?? "$.^");
+    expect(locationKeyPattern.test("ES/Andalusia/Malaga@en")).toBe(true);
+    expect(locationKeyPattern.test("ES@es-419")).toBe(true);
+    expect(locationKeyPattern.test("ES@")).toBe(false);
+    expect(locationKeyPattern.test("ES@en/us")).toBe(false);
+    expect(updateKeyword?.inputSchema).toMatchObject({
+      properties: expect.objectContaining({ country: expect.anything() }),
+    });
+    expect(updateKeyword?.inputSchema).toMatchObject({
+      properties: expect.objectContaining({
+        location: expect.anything(),
+        location_key: expect.anything(),
+      }),
+    });
+    expect(setKeywordTargetUrl?.inputSchema).toMatchObject({
+      properties: {
+        keyword_id: expect.anything(),
+        target_url: expect.anything(),
+      },
+      required: ["keyword_id", "target_url"],
+    });
+    expect(updateProjectDefaults?.inputSchema).toMatchObject({
+      properties: expect.objectContaining({
+        country: expect.objectContaining({ type: "string" }),
+        device: expect.objectContaining({ enum: ["desktop", "mobile"] }),
+        serp_stop_on_match: expect.objectContaining({ type: "boolean" }),
+      }),
+      required: expect.arrayContaining(["frequency", "project_id"]),
+    });
+  });
+
+  it("forwards intent and topic filters on list_keywords", async () => {
+    const projectId = "prj_a00000000000000000000000";
+    const result = await dispatchMcpTool(
+      "list_keywords",
+      {
+        intent: "navigational",
+        project_id: projectId,
+        topic: "pricing",
+      },
+      "bsb_key_live_test",
+    );
+    const params = new URLSearchParams(result.payload.search);
+    expect(params.get("intent")).toBe("navigational");
+    expect(params.get("topic")).toBe("pricing");
+  });
+
+  it("set_primary_provider is a no-op when primary=false and promotes when primary=true", async () => {
+    const projectId = "prj_a00000000000000000000000";
+    const demote = await dispatchMcpTool(
+      "set_primary_provider",
+      { primary: false, project_id: projectId, provider_id: "dataforseo" },
+      "bsb_key_live_test",
+    );
+    expect(demote.payload).toMatchObject({
+      body: {},
+      method: "PATCH",
+      path: ["projects", projectId, "providers", "dataforseo"],
+    });
+    expect(demote.payload.body.priority).toBeUndefined();
+
+    const promote = await dispatchMcpTool(
+      "set_primary_provider",
+      { primary: true, project_id: projectId, provider_id: "dataforseo" },
+      "bsb_key_live_test",
+    );
+    expect(promote.payload).toMatchObject({
+      body: { priority: 0 },
+      method: "PATCH",
+    });
+  });
+
+  it("translates the deprecated primary=true alias into priority on connect/update", async () => {
+    const projectId = "prj_a00000000000000000000000";
+    const connect = await dispatchMcpTool(
+      "connect_provider",
+      { primary: true, project_id: projectId, provider_id: "dataforseo" },
+      "bsb_key_live_test",
+    );
+    expect(connect.payload.body).toMatchObject({ priority: 0 });
+    expect(connect.payload.body.primary).toBeUndefined();
+    const update = await dispatchMcpTool(
+      "update_provider_settings",
+      { primary: true, project_id: projectId, provider_id: "dataforseo" },
+      "bsb_key_live_test",
+    );
+    expect(update.payload).toMatchObject({
+      body: { priority: 0 },
+      method: "PATCH",
+    });
+    expect(update.payload.body.primary).toBeUndefined();
+    const nothing = await dispatchMcpTool(
+      "update_provider_settings",
+      { primary: false, project_id: projectId, provider_id: "dataforseo" },
+      "bsb_key_live_test",
+    );
+    expect(nothing.payload.body.priority).toBeUndefined();
+    expect(nothing.payload.body.primary).toBeUndefined();
+  });
+});

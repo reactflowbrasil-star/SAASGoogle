@@ -1,0 +1,1529 @@
+import type { Location } from "@/lib/generated/prisma/client";
+import { testUsageObserver } from "@/lib/providers/usage-test-observer";
+import { type SerpRankLocation, serpRankLocation } from "@/lib/serp/location";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ProviderCallError } from "../call-error";
+import { dataForSeoProvider } from "./dataforseo";
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(
+    JSON.stringify(
+      typeof body === "object" &&
+        body !== null &&
+        !("cost" in body) &&
+        (!("tasks" in body) ||
+          !(body.tasks as Array<{ cost?: unknown }>).some((task) => task.cost !== undefined))
+        ? { cost: 0, ...body }
+        : body,
+    ),
+    {
+      headers: { "Content-Type": "application/json" },
+      status,
+    },
+  );
+}
+
+function serpEnvelope(items: unknown[], cost = 0.0006) {
+  return {
+    cost,
+    status_code: 20000,
+    tasks: [{ cost, result: [{ items }], status_code: 20000 }],
+  };
+}
+
+// Neutral, pre-resolved handles the runner hands the adapter (design §2.3). Country
+// rows leave primaryGeoCode null (name path); city rows carry a numeric code.
+function location(overrides: Partial<SerpRankLocation> = {}): SerpRankLocation {
+  return {
+    gl: "us",
+    hl: "en",
+    primaryGeoCode: null,
+    primaryGeoName: "United States",
+    secondaryGeoName: "United States",
+    ...overrides,
+  };
+}
+
+function rankInput(
+  input: {
+    depth?: 10 | 20 | 50 | 100;
+    device?: "desktop" | "mobile";
+    domain?: string;
+    location?: SerpRankLocation;
+    password?: string;
+    stopOnMatch?: boolean;
+    tag?: string;
+  } = {},
+) {
+  return {
+    credentials: {
+      login: "login",
+      password: input.password ?? "secret",
+      usageObserver: testUsageObserver,
+    },
+    depth: input.depth,
+    device: input.device ?? ("desktop" as const),
+    domain: input.domain ?? "example.com",
+    keyword: "rank tracker",
+    location: input.location ?? location(),
+    stopOnMatch: input.stopOnMatch,
+    tag: input.tag,
+  };
+}
+
+function abortError() {
+  return Object.assign(new Error("The operation was aborted."), { name: "AbortError" });
+}
+
+const stopOnMatchParams = {
+  find_targets_in: ["organic"],
+  stop_crawl_on_match: [{ match_type: "with_subdomains", match_value: "example.com" }],
+};
+
+describe("dataForSeoProvider", () => {
+  it.each(["task", "envelope"] as const)(
+    "classifies account verification by numeric %s status without retrying",
+    async (level) => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        jsonResponse({
+          cost: 0,
+          status_code: level === "envelope" ? 40104 : 20000,
+          status_message: "Untrusted provider text with secret",
+          tasks: [
+            {
+              cost: 0,
+              status_code: level === "task" ? 40104 : 20000,
+              status_message: "Untrusted provider text with secret",
+            },
+          ],
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const fetchRelated = dataForSeoProvider.fetchRelatedKeywords;
+      if (!fetchRelated) throw new Error("Related keyword research is unavailable.");
+      await expect(
+        fetchRelated(
+          { login: "login", password: "secret", usageObserver: testUsageObserver },
+          { includeClickstream: false, limit: 100, location: location(), seed: "rank tracker" },
+        ),
+      ).rejects.toMatchObject({
+        code: "provider_account_restricted",
+        costCents: 0,
+        message: "Verify your DataForSEO account in the provider dashboard before using the API.",
+      });
+      expect(fetchMock).toHaveBeenCalledOnce();
+    },
+  );
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it.each([10, 20, 50, 100] as const)("sends the requested top-%i depth", async (depth) => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(serpEnvelope([])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await dataForSeoProvider.fetchRank(rankInput({ depth }));
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual([
+      expect.objectContaining({ depth, search_param: "&nfpr=1" }),
+    ]);
+  });
+
+  it("records the billable no-search-results status as an empty SERP", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        cost: 0.002,
+        status_code: 20000,
+        tasks: [{ status_code: 40102, cost: 0.002, result: [{ items: null }] }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(dataForSeoProvider.fetchRank(rankInput({ depth: 20 }))).resolves.toMatchObject({
+      position: null,
+      rankingUrl: null,
+      costCents: 0.2,
+      raw: { organic_results: [], normalization: { outcome: "no_match" } },
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the existing manual and legacy adapter on the Live endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(serpEnvelope([])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await dataForSeoProvider.fetchRank(rankInput());
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://api.dataforseo.com/v3/serp/google/organic/live/advanced",
+    );
+  });
+
+  it("forwards the provider usage tag on Live requests", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(serpEnvelope([])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await dataForSeoProvider.fetchRank(rankInput({ tag: "app=white-label;c=check_123" }));
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual([
+      expect.objectContaining({ tag: "app=white-label;c=check_123" }),
+    ]);
+  });
+
+  it("parses the matching organic result position and ranking URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        serpEnvelope([
+          { rank_absolute: 1, type: "paid", url: "https://ads.example.com" },
+          { rank_absolute: 2, type: "people_also_ask" },
+          {
+            domain: "www.example.com",
+            rank_absolute: 5,
+            rank_group: 3,
+            title: "Example result",
+            type: "organic",
+            url: "https://www.example.com/page",
+          },
+        ]),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await dataForSeoProvider.fetchRank(
+      rankInput({
+        location: serpRankLocation({
+          gl: "de",
+          hl: "de",
+          primaryGeoCode: null,
+          primaryGeoName: "Germany",
+          secondaryGeoName: "Germany",
+        } as Location),
+      }),
+    );
+
+    expect(result).toMatchObject({
+      billingUnits: 1,
+      costCents: 0.06,
+      position: 3,
+      rankingUrl: "https://www.example.com/page",
+      raw: {
+        organic_results: [
+          {
+            domain: "example.com",
+            rank: 3,
+            title: "Example result",
+            url: "https://www.example.com/page",
+          },
+        ],
+        serp_features: ["paid", "people also ask"],
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const headers = new Headers(fetchMock.mock.calls[0][1]?.headers);
+    expect(headers.get("authorization")).toBe("Basic bG9naW46c2VjcmV0");
+    expect(headers.get("content-type")).toBe("application/json");
+    // Country row: no numeric code, so location_name is sent; language_code = hl.
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual([
+      {
+        depth: 100,
+        device: "desktop",
+        keyword: "rank tracker",
+        search_param: "&nfpr=1",
+        language_code: "de",
+        location_name: "Germany",
+        ...stopOnMatchParams,
+      },
+    ]);
+  });
+
+  it("prefers the numeric location_code and sends language_code=hl for a resolved city", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        serpEnvelope([
+          {
+            domain: "example.com",
+            rank_absolute: 12,
+            rank_group: 12,
+            type: "organic",
+            url: "https://example.com/city",
+          },
+        ]),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      dataForSeoProvider.fetchRank(
+        rankInput({
+          depth: 50,
+          location: serpRankLocation({
+            gl: "us",
+            hl: "en",
+            primaryGeoCode: 1026339,
+            primaryGeoName: "Austin,Texas,United States",
+            secondaryGeoName: "Austin, Texas, United States",
+          } as Location),
+        }),
+      ),
+    ).resolves.toMatchObject({ position: 12 });
+
+    // City row: numeric location_code preferred over location_name.
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual([
+      {
+        depth: 50,
+        device: "desktop",
+        keyword: "rank tracker",
+        search_param: "&nfpr=1",
+        language_code: "en",
+        location_code: 1026339,
+        ...stopOnMatchParams,
+      },
+    ]);
+  });
+
+  it("sends a non-default market language independently of the country handle", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(serpEnvelope([])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await dataForSeoProvider.fetchRank(
+      rankInput({
+        location: location({
+          gl: "es",
+          hl: "en",
+          primaryGeoName: "Spain",
+          secondaryGeoName: "Spain",
+        }),
+      }),
+    );
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual([
+      expect.objectContaining({
+        language_code: "en",
+        location_name: "Spain",
+      }),
+    ]);
+  });
+
+  it("preserves the requested mobile device", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        serpEnvelope([
+          {
+            domain: "example.com",
+            rank_group: 1,
+            type: "organic",
+            url: "https://example.com/mobile",
+          },
+        ]),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await dataForSeoProvider.fetchRank(rankInput({ device: "mobile" }));
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))[0]).toMatchObject({
+      device: "mobile",
+    });
+  });
+
+  it("falls back to location_name when the resolved row has no numeric code", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        serpEnvelope([
+          {
+            domain: "example.com",
+            rank_absolute: 12,
+            rank_group: 12,
+            type: "organic",
+            url: "https://example.com/country",
+          },
+        ]),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      dataForSeoProvider.fetchRank(
+        rankInput({
+          depth: 50,
+          location: location({
+            primaryGeoName: "United Kingdom",
+            secondaryGeoName: "United Kingdom",
+          }),
+        }),
+      ),
+    ).resolves.toMatchObject({ position: 12 });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual([
+      {
+        depth: 50,
+        device: "desktop",
+        keyword: "rank tracker",
+        search_param: "&nfpr=1",
+        language_code: "en",
+        location_name: "United Kingdom",
+        ...stopOnMatchParams,
+      },
+    ]);
+  });
+
+  it("omits the stop target when stop on match is disabled", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(serpEnvelope([])));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await dataForSeoProvider.fetchRank(rankInput({ stopOnMatch: false }));
+
+    const [payload] = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(payload).not.toHaveProperty("stop_crawl_on_match");
+    expect(payload).not.toHaveProperty("find_targets_in");
+  });
+
+  it("returns null rank data when the domain is not in organic results", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          serpEnvelope([
+            { domain: "example.com", rank_group: 1, type: "local_pack" },
+            { domain: "competitor.com", rank_group: 1, type: "organic" },
+          ]),
+        ),
+      ),
+    );
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).resolves.toMatchObject({
+      position: null,
+      rankingUrl: null,
+    });
+  });
+
+  it("rejects an organic result with an unclassifiable domain URL", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(
+            serpEnvelope([{ domain: "http://[invalid/path", rank_absolute: 1, type: "organic" }]),
+          ),
+        ),
+    );
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      anomalyCodes: ["organic_result_unclassifiable"],
+      name: "ProviderPayloadContractError",
+    });
+  });
+
+  it("uses the best matching organic result after normalizing www and subdomains", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          serpEnvelope([
+            {
+              domain: "blog.example.com",
+              rank_absolute: 8,
+              rank_group: 8,
+              title: "First matching result",
+              type: "organic",
+              url: "https://blog.example.com/first",
+            },
+            {
+              domain: "example.com",
+              rank_absolute: 2,
+              rank_group: 2,
+              title: "Better rank but later",
+              type: "organic",
+              url: "https://example.com/later",
+            },
+          ]),
+        ),
+      ),
+    );
+
+    await expect(
+      dataForSeoProvider.fetchRank(rankInput({ domain: "www.example.com" })),
+    ).resolves.toMatchObject({
+      position: 2,
+      rankingUrl: "https://example.com/later",
+      raw: {
+        organic_results: [
+          {
+            domain: "blog.example.com",
+            rank: 8,
+            title: "First matching result",
+            url: "https://blog.example.com/first",
+          },
+          {
+            domain: "example.com",
+            rank: 2,
+            title: "Better rank but later",
+            url: "https://example.com/later",
+          },
+        ],
+      },
+    });
+  });
+
+  it("selects the minimum rank_group across every matching organic URL", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          serpEnvelope([
+            {
+              domain: "blog.example.com",
+              rank_absolute: 3,
+              rank_group: 8,
+              type: "organic",
+              url: "https://blog.example.com/first",
+            },
+            {
+              domain: "example.com",
+              rank_absolute: 9,
+              rank_group: 2,
+              type: "organic",
+              url: "https://example.com/best",
+            },
+          ]),
+        ),
+      ),
+    );
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).resolves.toMatchObject({
+      position: 2,
+      rankingUrl: "https://example.com/best",
+    });
+  });
+
+  it("rejects a matching organic item that has rank_absolute but no rank_group", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          serpEnvelope([
+            {
+              domain: "example.com",
+              rank_absolute: 3,
+              type: "organic",
+              url: "https://example.com/ambiguous",
+            },
+          ]),
+        ),
+      ),
+    );
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      anomalyCodes: ["organic_rank_missing"],
+      name: "ProviderPayloadContractError",
+    });
+  });
+
+  it("records but skips a malformed rank on a known nonmatching organic item", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          serpEnvelope([
+            {
+              domain: "competitor.example.org",
+              rank_absolute: 1,
+              type: "organic",
+              url: "https://competitor.example.org/page",
+            },
+            {
+              domain: "example.com",
+              rank_absolute: 5,
+              rank_group: 3,
+              type: "organic",
+              url: "https://example.com/ranking",
+            },
+          ]),
+        ),
+      ),
+    );
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).resolves.toMatchObject({
+      position: 3,
+      raw: {
+        normalization: {
+          anomalies: [{ code: "organic_rank_missing", index: 0 }],
+          outcome: "match",
+          version: "v2",
+        },
+      },
+    });
+  });
+
+  it("returns an empty raw payload when successful tasks have no result items", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          status_code: 20000,
+          tasks: [{ cost: 0.0001, result: [{}], status_code: 20000 }],
+        }),
+      ),
+    );
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).resolves.toMatchObject({
+      costCents: 0.01,
+      position: null,
+      rankingUrl: null,
+      raw: { organic_results: [] },
+    });
+  });
+
+  it("rejects a successful task whose result container is missing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          status_code: 20000,
+          tasks: [{ cost: 0.0001, status_code: 20000 }],
+        }),
+      ),
+    );
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toThrow(
+      "organic_result_unclassifiable",
+    );
+  });
+
+  it("rejects malformed task items instead of returning an invalid rank", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(serpEnvelope([null]))));
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toThrow();
+  });
+
+  it("retries HTTP 429 responses before succeeding", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ status_message: "rate limited" }, 429))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          serpEnvelope([
+            {
+              domain: "example.com",
+              rank_absolute: 9,
+              rank_group: 9,
+              type: "organic",
+              url: "https://example.com/retry",
+            },
+          ]),
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).resolves.toMatchObject({
+      position: 9,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps final HTTP 429 responses to a DataForSEO rate-limit error message", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(jsonResponse({ status_message: "rate limit exceeded" }, 429)),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      message: "rate limit exceeded",
+      name: "DataForSeoError",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("maps HTTP 4xx responses to non-retryable DataForSEO errors", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ status_message: "Unauthorized credentials" }, 401));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      message: "Unauthorized credentials",
+      name: "DataForSeoError",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries HTTP 5xx responses and then fails", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(jsonResponse({ status_message: "temporary outage" }, 500)),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toThrow("temporary outage");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("maps provider quota envelope codes to DataForSEO errors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          status_code: 40202,
+          status_message: "Payment required.",
+          tasks: [{ status_code: 40202, status_message: "Not enough credits." }],
+        }),
+      ),
+    );
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      message: "Not enough credits.",
+      name: "DataForSeoError",
+    });
+  });
+
+  it("retains a network failure as unknown without paid retry", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      phase: "request",
+      name: "ProviderUsagePersistenceError",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a timed out paid SERP request", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(abortError())
+      .mockResolvedValueOnce(
+        jsonResponse(
+          serpEnvelope([
+            {
+              domain: "example.com",
+              rank_absolute: 7,
+              rank_group: 7,
+              type: "organic",
+              url: "https://example.com/timeout-retry",
+            },
+          ]),
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      phase: "request",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains a paid timeout as unknown", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(abortError());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      phase: "request",
+      name: "ProviderUsagePersistenceError",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses a 30s abort timeout for SERP rank checks and 10s for the connection test", async () => {
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(serpEnvelope([]))));
+    await dataForSeoProvider.fetchRank(rankInput());
+    const serpDelays = setTimeoutSpy.mock.calls.map((call) => call[1]);
+    expect(serpDelays).toContain(30_000);
+    expect(serpDelays).not.toContain(10_000);
+
+    setTimeoutSpy.mockClear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse({ status_code: 20000, tasks: [] })),
+    );
+    await dataForSeoProvider.testConnection({
+      login: "login",
+      password: "secret",
+      usageObserver: testUsageObserver,
+    });
+    const testDelays = setTimeoutSpy.mock.calls.map((call) => call[1]);
+    expect(testDelays).toContain(10_000);
+    expect(testDelays).not.toContain(30_000);
+
+    setTimeoutSpy.mockRestore();
+  });
+
+  it("redacts credential values from provider errors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementation(() =>
+          Promise.resolve(jsonResponse({ status_message: "bad provider-secret credential" }, 500)),
+        ),
+    );
+
+    let message = "";
+    try {
+      await dataForSeoProvider.fetchRank(rankInput({ password: "provider-secret" }));
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("[redacted]");
+    expect(message).not.toContain("provider-secret");
+  });
+
+  it("tests connections with default messages and nested or top-level balances", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({ status_code: 20000, tasks: [{ result: [{ money: { balance: 4.5 } }] }] }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ balance: 2, status_code: 40000 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      dataForSeoProvider.testConnection({
+        login: "login",
+        password: "secret",
+        usageObserver: testUsageObserver,
+      }),
+    ).resolves.toEqual({ balance: 4.5, message: "Connected.", ok: true });
+    await expect(
+      dataForSeoProvider.testConnection({
+        login: "login",
+        password: "secret",
+        usageObserver: testUsageObserver,
+      }),
+    ).resolves.toEqual({
+      balance: 2,
+      message: "DataForSEO connection test failed.",
+      ok: false,
+    });
+  });
+
+  it("returns a safe connection-test failure when credentials are missing", async () => {
+    await expect(dataForSeoProvider.testConnection({})).resolves.toMatchObject({
+      message: expect.any(String),
+      ok: false,
+    });
+  });
+
+  it("maps the ranked-keywords serp_info returned without an unsupported request flag", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        cost: 0.02,
+        status_code: 20000,
+        tasks: [
+          {
+            result: [
+              {
+                items: [
+                  {
+                    keyword_data: {
+                      keyword: "rank tracker",
+                      search_param: "&nfpr=1",
+                      keyword_info: { search_volume: 500 },
+                      serp_info: { serp_item_types: ["organic", "ai_overview"] },
+                    },
+                    ranked_serp_element: {
+                      serp_item: { etv: 12.4, rank_absolute: 4, rank_group: 2 },
+                    },
+                  },
+                ],
+                total_count: 201,
+              },
+            ],
+            status_code: 20000,
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      dataForSeoProvider.fetchRankedKeywords?.(
+        { login: "login", password: "secret", usageObserver: testUsageObserver },
+        {
+          domain: "https://www.Example.com/docs",
+          limit: 100,
+          location: location(),
+          offset: 100,
+        },
+      ),
+    ).resolves.toMatchObject({
+      costCents: 2,
+      rows: [{ position: 2, serpFeatures: ["organic", "ai_overview"] }],
+      totalCount: 201,
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual([
+      {
+        language_code: "en",
+        limit: 100,
+        location_name: "United States",
+        offset: 100,
+        order_by: ["ranked_serp_element.serp_item.etv,desc"],
+        target: "example.com",
+      },
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))[0]).not.toHaveProperty(
+      "include_serp_info",
+    );
+  });
+
+  it.each([40102, 40501])("maps Labs no-data status %i through the real adapter", async (code) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status_code: 20000,
+          tasks: [
+            {
+              result: [{ google: { date_update: "2026-08-04" } }],
+              status_code: 20000,
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          cost: 0.02,
+          status_code: 20000,
+          tasks: [
+            { cost: 0.02, result: null, status_code: code, status_message: "No Search Results" },
+          ],
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      dataForSeoProvider.fetchDomainRankOverview?.(
+        { login: "login", password: "secret", usageObserver: testUsageObserver },
+        {
+          includeSubdomains: false,
+          location: location(),
+          target: "example.com",
+        },
+      ),
+    ).resolves.toEqual({
+      costCents: 2,
+      metrics: null,
+      sourceSnapshotAt: "2026-08-04T00:00:00.000Z",
+    });
+  });
+
+  it("degrades city locations to the country level for Labs lookups", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        cost: 0.02,
+        status_code: 20000,
+        tasks: [{ result: [{ items: [], total_count: 0 }], status_code: 20000 }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await dataForSeoProvider.fetchRankedKeywords?.(
+      { login: "login", password: "secret", usageObserver: testUsageObserver },
+      {
+        domain: "example.com",
+        limit: 100,
+        location: location({
+          primaryGeoCode: 1026339,
+          primaryGeoName: "Austin,Texas,United States",
+          secondaryGeoName: "Austin, Texas, United States",
+        }),
+        offset: 0,
+      },
+    );
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual([
+      expect.objectContaining({
+        language_code: "en",
+        location_name: "United States",
+      }),
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))[0]).not.toHaveProperty(
+      "location_code",
+    );
+  });
+
+  it("maps ranked-keyword HTTP 401 responses by status to reauthorization", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse({ status_message: "You are not authorized to access this resource" }, 401),
+        ),
+    );
+
+    await expect(
+      dataForSeoProvider.fetchRankedKeywords?.(
+        { login: "login", password: "secret", usageObserver: testUsageObserver },
+        { domain: "example.com", limit: 100, location: location(), offset: 0 },
+      ),
+    ).rejects.toMatchObject({ name: "ProviderAuthError", providerId: "dataforseo" });
+  });
+
+  it("maps missing ranked-keyword credentials to reauthorization", async () => {
+    await expect(
+      dataForSeoProvider.fetchRankedKeywords?.(
+        {},
+        { domain: "example.com", limit: 100, location: location(), offset: 0 },
+      ),
+    ).rejects.toMatchObject({ name: "ProviderAuthError", providerId: "dataforseo" });
+  });
+
+  it("maps unsupported Labs locations to a typed error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          status_code: 20000,
+          tasks: [{ status_code: 40501, status_message: "Location is not supported." }],
+        }),
+      ),
+    );
+
+    await expect(
+      dataForSeoProvider.fetchRankedKeywords?.(
+        { login: "login", password: "secret", usageObserver: testUsageObserver },
+        { domain: "example.com", limit: 100, location: location(), offset: 0 },
+      ),
+    ).rejects.toMatchObject({ name: "DataForSeoUnsupportedLocationError" });
+  });
+
+  it("maps invalid Labs location fields to a typed error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          status_code: 20000,
+          tasks: [{ status_code: 40501, status_message: "Invalid Field: 'location_code'" }],
+        }),
+      ),
+    );
+
+    await expect(
+      dataForSeoProvider.fetchRankedKeywords?.(
+        { login: "login", password: "secret", usageObserver: testUsageObserver },
+        { domain: "example.com", limit: 100, location: location(), offset: 0 },
+      ),
+    ).rejects.toMatchObject({ name: "DataForSeoUnsupportedLocationError" });
+  });
+
+  it.each(["language_name", "language_code"])(
+    "maps the probed 40501 invalid %s pair to a typed unsupported error",
+    async (field) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          jsonResponse({
+            status_code: 20000,
+            tasks: [{ status_code: 40501, status_message: `Invalid Field: '${field}'.` }],
+          }),
+        ),
+      );
+
+      await expect(
+        dataForSeoProvider.fetchRankedKeywords?.(
+          { login: "login", password: "secret", usageObserver: testUsageObserver },
+          { domain: "example.com", limit: 100, location: location(), offset: 0 },
+        ),
+      ).rejects.toMatchObject({ name: "DataForSeoUnsupportedLocationError" });
+    },
+  );
+
+  it("does not classify a generic non-40501 language validation as unsupported", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          status_code: 20000,
+          tasks: [{ status_code: 40000, status_message: "Invalid Field: 'language_code'." }],
+        }),
+      ),
+    );
+
+    await expect(
+      dataForSeoProvider.fetchRankedKeywords?.(
+        { login: "login", password: "secret", usageObserver: testUsageObserver },
+        { domain: "example.com", limit: 100, location: location(), offset: 0 },
+      ),
+    ).rejects.toMatchObject({ name: "DataForSeoError" });
+  });
+
+  it.each([
+    ["fetchRelatedKeywords", "related_keywords", { depth: 3, keyword: "rank tracker" }],
+    ["fetchKeywordSuggestions", "keyword_suggestions", { keyword: "rank tracker" }],
+    ["fetchKeywordIdeas", "keyword_ideas", { keywords: ["rank tracker"] }],
+  ] as const)("calls %s with Labs parameters", async (method, path, expected) => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        cost: 0.01,
+        status_code: 20000,
+        tasks: [{ result: [{ items: [] }], status_code: 20000 }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const providerMethod = dataForSeoProvider[method];
+    if (!providerMethod) throw new Error(`${method} is unavailable.`);
+
+    await providerMethod(
+      { login: "login", password: "secret", usageObserver: testUsageObserver },
+      {
+        includeClickstream: true,
+        limit: 300,
+        location: location({
+          primaryGeoCode: 1026339,
+          primaryGeoName: "Austin,Texas,United States",
+          secondaryGeoName: "Austin, Texas, United States",
+        }),
+        seed: "rank tracker",
+      },
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toContain(`/google/${path}/live`);
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual([
+      {
+        ...expected,
+        include_clickstream_data: true,
+        language_code: "en",
+        limit: 300,
+        location_name: "United States",
+      },
+    ]);
+  });
+
+  it("hydrates up to 700 metrics and maps HTTP 401 by status", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          cost: 0.01,
+          status_code: 20000,
+          tasks: [{ result: [{ items: [] }], status_code: 20000 }],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ status_message: "You are not authorized to access this resource" }, 401),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const metrics = dataForSeoProvider.fetchKeywordMetrics;
+    if (!metrics) throw new Error("Metrics capability is unavailable.");
+
+    await expect(
+      metrics(
+        { login: "login", password: "secret", usageObserver: testUsageObserver },
+        {
+          includeClickstream: false,
+          keywords: Array.from({ length: 701 }, (_, index) => `keyword ${index}`),
+          location: location(),
+        },
+      ),
+    ).rejects.toThrow("at most 700 keywords");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await metrics(
+      { login: "login", password: "secret", usageObserver: testUsageObserver },
+      {
+        includeClickstream: false,
+        keywords: Array.from({ length: 700 }, (_, index) => `keyword ${index}`),
+        location: location(),
+      },
+    );
+    const [payload] = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(payload.keywords).toHaveLength(700);
+    expect(payload).toMatchObject({
+      include_clickstream_data: false,
+      language_code: "en",
+      location_name: "United States",
+    });
+
+    await expect(
+      metrics(
+        { login: "login", password: "secret", usageObserver: testUsageObserver },
+        { includeClickstream: false, keywords: ["rank tracker"], location: location() },
+      ),
+    ).rejects.toMatchObject({ name: "ProviderAuthError", providerId: "dataforseo" });
+  });
+});
+
+describe("DataForSEO observation capture", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("records complete local-pack observations from the requested scope", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          serpEnvelope([
+            {
+              domain: "local.example.com",
+              rank_absolute: 3,
+              title: "Local business",
+              type: "local_pack",
+            },
+            {
+              domain: "competitor.example.com",
+              rank_group: 1,
+              type: "organic",
+              url: "https://competitor.example.com",
+            },
+          ]),
+        ),
+      ),
+    );
+
+    const result = await dataForSeoProvider.fetchRank(rankInput({ stopOnMatch: false }));
+
+    expect(result.observation).toMatchObject({
+      completeness: "complete",
+      configuredScope: { device: "desktop", language: "en", location: "United States" },
+      effectiveScope: { device: "desktop", language: "en", location: "United States" },
+      engine: "google",
+      items: [expect.objectContaining({ resultKind: "local_pack", title: "Local business" })],
+      provider: "dataforseo",
+      requestPolicy: {
+        depth: 100,
+        findTargetsIn: null,
+        forcedAiOverview: false,
+        stopOnMatch: false,
+      },
+      surface: "web_serp",
+    });
+    expect(result.observation?.executedAt).toBe(result.checkedAt);
+  });
+
+  it("captures the effective Top20 policy without claiming complete-prefix evidence", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          serpEnvelope([
+            {
+              type: "organic",
+              domain: "example.com",
+              rank_group: 1,
+              url: "https://example.com/",
+            },
+          ]),
+        ),
+      ),
+    );
+    const result = await dataForSeoProvider.fetchRank(rankInput({ depth: 20, stopOnMatch: false }));
+    expect(result.position).toBe(1);
+    expect(result.observation).toMatchObject({
+      completeness: "complete",
+      requestPolicy: {
+        depth: 20,
+        stopOnMatch: false,
+        findTargetsIn: null,
+        evidence: { completeThrough: { organic_result: null } },
+      },
+    });
+  });
+  it("marks provider-side organic matching as a potentially truncated observation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          serpEnvelope([
+            {
+              domain: "competitor.example.com",
+              rank_group: 1,
+              type: "organic",
+              url: "https://competitor.example.com",
+            },
+          ]),
+        ),
+      ),
+    );
+
+    const result = await dataForSeoProvider.fetchRank(rankInput({ stopOnMatch: true }));
+
+    expect(result.observation?.completeness).toBe("truncated_by_stop_on_match");
+    if (result.observation?.surface !== "web_serp") throw new Error("Expected web observation");
+    expect(result.observation.requestPolicy.findTargetsIn).toBe("with_subdomains");
+  });
+});
+
+describe("dataForSeoProvider error classification", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("maps HTTP 402 to provider_billing with a single non-retryable fetch", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{"cost":0,"status_message":"Payment Required"}', { status: 402 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      code: "provider_billing",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps HTTP 401 to provider_auth", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response('{"cost":0,"status_message":"Unauthorized"}', { status: 401 }),
+        ),
+    );
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      code: "provider_auth",
+    });
+  });
+
+  it("maps HTTP 403 to provider_auth", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response('{"cost":0,"status_message":"Forbidden"}', { status: 403 }),
+        ),
+    );
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      code: "provider_auth",
+    });
+  });
+
+  it("maps HTTP 429 to provider_rate_limited", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementation(
+          async () =>
+            new Response('{"cost":0,"status_message":"Too Many Requests"}', { status: 429 }),
+        ),
+    );
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      code: "provider_rate_limited",
+    });
+  });
+
+  it("maps HTTP 500 to provider_transient", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementation(
+          async () =>
+            new Response('{"cost":0,"status_message":"Internal Server Error"}', { status: 500 }),
+        ),
+    );
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      code: "provider_transient",
+    });
+  });
+
+  it.each(["envelope", "task"])(
+    "maps restricted account status 40201 in the %s without claiming insufficient funds",
+    async (level) => {
+      const failure = {
+        status_code: 40201,
+        status_message: "Account access temporarily paused. Contact support.",
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(
+            jsonResponse(
+              level === "envelope"
+                ? { ...failure, tasks: [] }
+                : { status_code: 20000, tasks: [failure] },
+            ),
+          ),
+      );
+      await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+        code: "provider_account_restricted",
+        message: failure.status_message,
+      });
+    },
+  );
+
+  it("maps an internal insufficient-funds task code to provider_billing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          status_code: 20000,
+          status_message: "Ok.",
+          tasks: [{ status_code: 40210, status_message: "Insufficient Funds." }],
+        }),
+      ),
+    );
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      code: "provider_billing",
+      message: "Insufficient Funds.",
+    });
+  });
+
+  it("maps internal payment-required status 40200 to provider_billing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse({ status_code: 40200, status_message: "Payment Required.", tasks: [] }),
+        ),
+    );
+
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      code: "provider_billing",
+      message: "Payment Required.",
+    });
+  });
+
+  it("uses a neutral failure when an Ok envelope has no task", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(jsonResponse({ status_code: 20000, status_message: "Ok.", tasks: [] })),
+    );
+
+    const error = await dataForSeoProvider.fetchRank(rankInput()).catch((cause: unknown) => cause);
+    expect(error).toMatchObject({
+      code: "provider_transient",
+      message: "DataForSEO SERP response did not include a task.",
+    });
+    expect((error as Error).message).not.toBe("Ok.");
+  });
+
+  it("maps a status message containing 'Payment Required' to provider_billing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse({ status_code: 40000, status_message: "Payment Required for this request" }),
+        ),
+    );
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      code: "provider_billing",
+    });
+  });
+
+  it("maps a negative-balance task error to provider_billing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          status_code: 40000,
+          status_message: "Insufficient funds",
+          tasks: [{ status_code: 40102, status_message: "Your account has a negative balance" }],
+        }),
+      ),
+    );
+    const error = await dataForSeoProvider.fetchRank(rankInput()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ProviderCallError);
+    expect((error as ProviderCallError).code).toBe("provider_billing");
+  });
+
+  it("maps a generic envelope failure to provider_transient", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          status_code: 40000,
+          status_message: "Unknown error",
+          tasks: [{ status_code: 40102, status_message: "Task failed" }],
+        }),
+      ),
+    );
+    await expect(dataForSeoProvider.fetchRank(rankInput())).rejects.toMatchObject({
+      code: "provider_transient",
+    });
+  });
+});
+
+describe("DataForSEO observation completeness and policy", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it("records a fired stop-on-match policy with its provider match type", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          serpEnvelope([
+            {
+              domain: "example.com",
+              rank_group: 1,
+              type: "organic",
+              url: "https://example.com/first",
+            },
+          ]),
+        ),
+      ),
+    );
+
+    const result = await dataForSeoProvider.fetchRank(rankInput({ stopOnMatch: true }));
+
+    expect(result.observation?.completeness).toBe("truncated_by_stop_on_match");
+    if (result.observation?.surface !== "web_serp") throw new Error("Expected web observation");
+    expect(result.observation.requestPolicy.findTargetsIn).toBe("with_subdomains");
+  });
+
+  it("keeps an armed but unfired stop-on-match policy unknown", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          serpEnvelope([
+            {
+              domain: "competitor.example.org",
+              rank_group: 1,
+              type: "organic",
+              url: "https://competitor.example.org/first",
+            },
+          ]),
+        ),
+      ),
+    );
+
+    const result = await dataForSeoProvider.fetchRank(rankInput({ stopOnMatch: true }));
+
+    expect(result.observation?.completeness).toBe("unknown");
+    if (result.observation?.surface !== "web_serp") throw new Error("Expected web observation");
+    expect(result.observation.requestPolicy.findTargetsIn).toBe("with_subdomains");
+  });
+
+  it("records a complete observation without a stop-on-match policy", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          serpEnvelope([
+            {
+              domain: "competitor.example.org",
+              rank_group: 1,
+              type: "organic",
+              url: "https://competitor.example.org/first",
+            },
+          ]),
+        ),
+      ),
+    );
+
+    const result = await dataForSeoProvider.fetchRank(rankInput({ stopOnMatch: false }));
+
+    expect(result.observation?.completeness).toBe("complete");
+    if (result.observation?.surface !== "web_serp") throw new Error("Expected web observation");
+    expect(result.observation.requestPolicy.findTargetsIn).toBeNull();
+  });
+});

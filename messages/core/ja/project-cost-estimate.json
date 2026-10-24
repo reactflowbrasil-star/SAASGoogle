@@ -1,0 +1,31 @@
+{
+  "projectCostEstimate": {
+    "providerSpend": {
+      "headerUnavailable": "使用量を取得できません",
+      "headerUsageUnknown": "使用量不明",
+      "headerCapTooltip": "予約分を含む予算の使用状況。詳細は使用状況画面で確認できます。",
+      "headerNoCap": "予算なし · 予算を設定",
+      "headerNoCapAria": "予算なし、予算を設定",
+      "headerUsed": "{percent}% 使用済み",
+      "headerAtLeastUsed": "少なくとも {percent}% 使用済み",
+      "headerUnderOne": "1% 未満使用済み",
+      "headerAtLeastUnderOne": "一部の使用量を確認済み",
+      "headerExceeded": "予算超過",
+      "headerUsageAria": "予算の使用状況: {status}。詳細を表示",
+      "headerNoLimit": "上限なし",
+      "headerWarning": "予算の警告"
+    },
+    "status": {
+      "unavailable": "見積もりを取得できません。",
+      "retry": "再試行",
+      "updating": "見積もりを更新中..."
+    },
+    "spendInfo": {
+      "aria": "プロバイダー利用額について",
+      "description": "プロバイダーの月間上限と現在の利用状況です。",
+      "session": "このセッション {spent}",
+      "details": "詳細",
+      "setBudget": "予算を設定"
+    }
+  }
+}

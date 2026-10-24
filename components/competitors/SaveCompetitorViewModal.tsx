@@ -1,0 +1,116 @@
+"use client";
+
+import { useSharedErrorMessages } from "@/components/i18n/useSharedErrorMessages";
+import { presentSafeActionError } from "@/components/keywords/safe-action-error";
+import { Modal } from "@/components/ui/Modal";
+import { useToast } from "@/components/ui/toast-context";
+import type { CompetitorSavedViewConfig } from "@/lib/competitors/saved-view-model";
+import { competitorSavedViewHref } from "@/lib/competitors/saved-view-model";
+import { zodResolver } from "@/lib/forms/zod-resolver";
+import { type SavedViewFormValues, savedViewNameSchema } from "@/lib/keywords/saved-view-model";
+import type { ProjectRef } from "@/lib/routing/app-path";
+import type { CreateProjectSavedViewInput, SavedViewResource } from "@/lib/saved-views/model";
+import { BookmarkSimpleIcon as BookmarkSimple } from "@phosphor-icons/react/dist/csr/BookmarkSimple";
+import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { useForm } from "react-hook-form";
+
+type SaveCompetitorViewModalProps = {
+  config: CompetitorSavedViewConfig;
+  createSavedViewAction?: (input: CreateProjectSavedViewInput) => Promise<SavedViewResource>;
+  onClose: () => void;
+  onSaved: () => void;
+  open: boolean;
+  projectId: string;
+  projectRef: ProjectRef;
+};
+
+export function SaveCompetitorViewModal({
+  config,
+  createSavedViewAction,
+  onClose,
+  onSaved,
+  open,
+  projectId,
+  projectRef,
+}: Readonly<SaveCompetitorViewModalProps>) {
+  const t = useTranslations("projectCompetitors.ui");
+  const sharedErrors = useSharedErrorMessages();
+  const router = useRouter();
+  const { showToast } = useToast();
+  const {
+    formState: { errors, isSubmitting },
+    handleSubmit,
+    register,
+    setError,
+  } = useForm<SavedViewFormValues>({
+    defaultValues: { name: "" },
+    resolver: zodResolver(savedViewNameSchema),
+  });
+
+  async function submit(values: SavedViewFormValues) {
+    if (!createSavedViewAction) return;
+    try {
+      const view = await createSavedViewAction({ config, name: values.name, projectId });
+      if (view.surface !== "competitors") throw new Error("Unexpected saved view surface.");
+      onSaved();
+      onClose();
+      showToast(t("comparisonViewSaved"), { severity: "success" });
+      router.push(competitorSavedViewHref(projectRef, view.id, view.config));
+      router.refresh();
+    } catch (error) {
+      setError("root", { message: presentSafeActionError(error, sharedErrors, t("saveError")) });
+    }
+  }
+
+  return (
+    <Modal
+      footer={
+        <>
+          <button
+            className="text-[13px] font-semibold text-fg-muted"
+            onClick={onClose}
+            type="button"
+          >
+            {t("cancel")}
+          </button>
+          <button
+            className="inline-flex items-center gap-2 rounded-control bg-accent-solid px-4 py-2.5 text-[13px] font-semibold text-accent-on-solid disabled:bg-bg-sunken disabled:text-fg-muted"
+            disabled={isSubmitting || !createSavedViewAction}
+            form="save-competitor-view"
+            type="submit"
+          >
+            <BookmarkSimple aria-hidden size={15} weight="regular" />
+            {isSubmitting ? t("saving") : t("saveView")}
+          </button>
+        </>
+      }
+      onClose={onClose}
+      open={open}
+      size="sm"
+      title={t("saveComparisonView")}
+    >
+      <form
+        className="grid gap-3"
+        id="save-competitor-view"
+        onSubmit={handleSubmit((values) => void submit(values))}
+      >
+        <label className="grid gap-2 font-sans tabular-nums text-[10px] uppercase text-fg-muted">
+          {t("viewName")}
+          <input
+            className="rounded-control border border-border-control bg-transparent px-3 py-2.5 font-sans tabular-nums text-[13.5px] normal-case text-fg outline-none focus:border-accent"
+            placeholder={t("viewNamePlaceholder")}
+            {...register("name")}
+          />
+        </label>
+        {errors.name ? (
+          <p className="m-0 text-[12px] text-red-text">{errors.name.message}</p>
+        ) : null}
+        {errors.root ? (
+          <p className="m-0 text-[12px] text-red-text">{errors.root.message}</p>
+        ) : null}
+        <p className="m-0 text-[12.5px] leading-5 text-fg-muted">{t("saveViewHint")}</p>
+      </form>
+    </Modal>
+  );
+}

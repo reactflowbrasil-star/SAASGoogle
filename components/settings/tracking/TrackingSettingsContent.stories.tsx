@@ -1,0 +1,171 @@
+import { withTrackingSettingsMessages } from "@/.storybook/tracking-settings-messages";
+import { SettingsShell } from "@/components/settings/shell/SettingsShell";
+import { TrackingSettingsContent } from "@/components/settings/tracking/TrackingSettingsContent";
+import {
+  TrackingSettingsLoading,
+  TrackingSettingsRouteLoading,
+} from "@/components/settings/tracking/TrackingSettingsLoading";
+import type { DefaultsData } from "@/lib/settings/options";
+import { reviewedDefaultsPreview } from "@/lib/settings/reviewed-defaults.test-fixture";
+import type { Meta, StoryObj } from "@storybook/react";
+import type { ReactNode } from "react";
+import { expect, fn, userEvent, within } from "storybook/test";
+
+const projectId = "prj_7Kd2Qf9m";
+const locationFixture = [
+  {
+    canonical_key: "PL",
+    city_name: null,
+    country_code: "PL",
+    display_name: "Poland",
+    hl: "pl",
+    id: "country:PL",
+    kind: "country",
+    language_code: "pl",
+    language_label: "Polish",
+    region_code: null,
+    region_name: null,
+  },
+  {
+    canonical_key: "PF",
+    city_name: null,
+    country_code: "PF",
+    display_name: "French Polynesia",
+    hl: "fr",
+    id: "country:PF",
+    kind: "country",
+    language_code: "fr",
+    language_label: "French",
+    region_code: null,
+    region_name: null,
+  },
+];
+const defaults: DefaultsData = {
+  city: null,
+  costPerCheck: 0.0155,
+  country: "Poland",
+  device: "Desktop",
+  deviceCount: 1,
+  inspectionDailyLimit: 100,
+  keywordCount: 248,
+  locationCount: 1,
+  locationKey: "PL",
+  locationLabel: "Poland",
+  searchSync: {
+    firstDataDate: "2026-05-12T00:00:00.000Z",
+    firstDataDateLabel: "May 12, 2026",
+    lastQuotaPausedAt: "Aug 27, 2026",
+    newestFinalizedDate: "2026-08-29T00:00:00.000Z",
+    pace: "gentle",
+    plannedRemaining: 1240,
+    requestsToday: 32,
+    retentionMonths: 12,
+  },
+  schedule: {
+    cron_expression: null,
+    frequency: "daily",
+    jitter_minutes: 60,
+    last_checked_at: "2026-08-08T06:00:00.000Z",
+    next_check_at: "2026-08-09T06:00:00.000Z",
+    timezone: "Europe/Warsaw",
+  },
+  serpDepth: 100,
+  serpStopOnMatch: true,
+  targetUrlCount: 42,
+};
+
+function TrackingStoryShell({ children }: Readonly<{ children: ReactNode }>) {
+  return (
+    <main className="min-h-screen bg-bg p-4 text-fg sm:p-6">
+      <SettingsShell activeSection="tracking" projectRef={projectId}>
+        {children}
+      </SettingsShell>
+    </main>
+  );
+}
+
+const meta = {
+  component: TrackingSettingsContent,
+  decorators: [
+    withTrackingSettingsMessages,
+    (Story) => {
+      const original = window.fetch;
+      window.fetch = (async (input: RequestInfo | URL) =>
+        String(input).includes("/api/locations/search")
+          ? new Response(JSON.stringify({ data: locationFixture }), {
+              headers: { "content-type": "application/json" },
+            })
+          : original(input)) as typeof window.fetch;
+      return <Story />;
+    },
+  ],
+  parameters: { nextjs: { appDirectory: true } },
+  title: "Settings/Tracking",
+} satisfies Meta<typeof TrackingSettingsContent>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+const args = {
+  canEdit: true,
+  defaults,
+  domain: "example.com",
+  previewDefaults: fn(reviewedDefaultsPreview),
+  projectId,
+  updateDefaults: fn(async (values) => ({ ...values, kind: "saved" })),
+} satisfies Story["args"];
+
+function renderContent(storyArgs: Story["args"]) {
+  return (
+    <TrackingStoryShell>
+      <TrackingSettingsContent {...storyArgs} />
+    </TrackingStoryShell>
+  );
+}
+
+export const Settled: Story = { args, render: renderContent };
+
+export const LocationOpenTypedPol: Story = {
+  args,
+  name: 'STATE · location open, typed "pol"',
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const location = canvas.getByRole("combobox", { name: "Location" });
+    await userEvent.clear(location);
+    await userEvent.type(location, "pol");
+    await expect(await canvas.findByRole("option", { name: /Poland/ })).toBeVisible();
+  },
+  render: renderContent,
+};
+
+export const DepthLowered: Story = {
+  args,
+  name: "STATE · depth lowered below the current one",
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const body = within(canvasElement.ownerDocument.body);
+    await userEvent.click(canvas.getByRole("button", { name: "Default SERP depth" }));
+    await userEvent.click(body.getByRole("menuitem", { name: "Top 20" }));
+    await expect(canvas.getByText(/ranking past 20/)).toBeVisible();
+  },
+  render: renderContent,
+};
+
+export const Loading: Story = {
+  args,
+  render: () => (
+    <TrackingStoryShell>
+      <TrackingSettingsLoading />
+    </TrackingStoryShell>
+  ),
+};
+
+export const RouteLoading: Story = {
+  args,
+  name: "Route loading",
+  render: () => (
+    <main className="min-h-screen bg-bg p-4 text-fg sm:p-6">
+      <TrackingSettingsRouteLoading />
+    </main>
+  ),
+};

@@ -1,0 +1,659 @@
+import { paymentQuote } from "@/components/action-payment/payment-test-fixture";
+import sharedMessages from "@/messages/core/en/shared.json";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("next-intl", () => ({
+  useFormatter: () => ({ dateTime: (value: unknown) => String(value) }),
+  useLocale: () => "en",
+  useTranslations: (namespace: string) => (key: string) =>
+    namespace === "shared.errors" && key === "budgetMissing"
+      ? sharedMessages.shared.errors.budgetMissing
+      : key,
+}));
+vi.mock("@/lib/actions/ai-research", () => ({ analyzeAiResearchAction: vi.fn() }));
+
+import { AiResearchResults } from "./AiResearchResults";
+import { AiResearchWorkspace } from "./AiResearchWorkspace";
+import { aiResearchCatalogFixture } from "./ai-research-fixtures";
+
+describe("AI workspace product states", () => {
+  it("uses the same source setup state when the source disappears after the page loaded", async () => {
+    const analyze = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, reason: "no_source" })
+      .mockResolvedValue({
+        ok: true,
+        estimate: true,
+        payment: paymentQuote({
+          charge: { value: "0.12", certainty: "estimate", unit: { kind: "currency", code: "USD" } },
+        }),
+        estimatedCostCents: 1,
+        evidence: "synthetic_prompt_test",
+      });
+    const { rerender } = render(
+      <AiResearchWorkspace
+        projectId="prj_example"
+        domain="example.com"
+        mode="prompt"
+        history={[]}
+        catalog={aiResearchCatalogFixture}
+        supportingProviders={["DataForSEO"]}
+        analyzeAction={analyze}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("brand"), { target: { value: "Example" } });
+    fireEvent.change(screen.getByLabelText("prompt"), {
+      target: { value: "Which tools help small businesses?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "estimateCost" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "emptyTitle" })).toBeVisible());
+    expect(screen.getByRole("link", { name: "connectAction" })).toHaveAttribute(
+      "href",
+      "/app/prj_example/integrations",
+    );
+    expect(screen.getByRole("button", { name: "estimateCost" })).toBeDisabled();
+    expect(screen.queryByText("noSource")).not.toBeInTheDocument();
+    rerender(
+      <AiResearchWorkspace
+        projectId="prj_example"
+        domain="example.com"
+        mode="prompt"
+        history={[]}
+        catalog={{ ...aiResearchCatalogFixture, fetchedAt: new Date().toISOString() }}
+        supportingProviders={["DataForSEO"]}
+        analyzeAction={analyze}
+      />,
+    );
+    expect(analyze).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "sourceRetry" }));
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "estimateCost" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "estimateCost" }));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(2));
+  });
+  it("keeps retained results readable and explains missing sources beside the disabled form", () => {
+    render(
+      <AiResearchWorkspace
+        projectId="prj_example"
+        domain="example.com"
+        mode="visibility"
+        history={[]}
+        catalogFailure="no_source"
+        supportingProviders={["DataForSEO"]}
+        initialOutcome={{
+          ok: true,
+          estimate: false,
+          cached: false,
+          reportId: "agr_example",
+          costCents: 1,
+          result: {
+            evidence: "observed_dataset",
+            rows: [],
+            totalAvailable: 0,
+            truncated: false,
+            failure: null,
+            costStatus: "confirmed",
+            costCents: 1,
+            fetchedAt: "2026-10-21",
+          },
+        }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "estimateCost" })).toBeDisabled();
+    expect(screen.getByRole("link", { name: "action" })).toHaveAttribute(
+      "href",
+      "/app/prj_example/integrations",
+    );
+    expect(screen.getByRole("link", { name: "openReport" })).toHaveAttribute(
+      "href",
+      "/app/prj_example/agent-reports/agr_example",
+    );
+  });
+  it("never clears an uncertain-cost review just because a source is available again", () => {
+    const analyze = vi.fn();
+    render(
+      <AiResearchWorkspace
+        projectId="prj_example"
+        domain="example.com"
+        mode="prompt"
+        history={[]}
+        catalog={aiResearchCatalogFixture}
+        supportingProviders={["DataForSEO"]}
+        analyzeAction={analyze}
+        initialOutcome={{
+          ok: false,
+          reason: "no_source",
+          message: "Review retained usage",
+          retryBlocked: true,
+        }}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "sourceRetry" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "estimateCost" })).toBeDisabled();
+    expect(analyze).not.toHaveBeenCalled();
+  });
+  it("keeps saved reports readable and disables paid actions for read-only users", () => {
+    render(
+      <AiResearchWorkspace
+        projectId="prj_example"
+        domain="acme.com"
+        mode="visibility"
+        canRun={false}
+        history={[{ id: "agr_example", title: "Saved report", createdAt: "2026-10-02" }]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "estimateCost" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeDisabled();
+    expect(screen.getByRole("link", { name: /Saved report/ })).toHaveAttribute(
+      "href",
+      "/app/prj_example/agent-reports/agr_example",
+    );
+  });
+  it("does not turn unknown-cost failed requests into a no-observations claim", () => {
+    render(
+      <AiResearchResults
+        result={{
+          evidence: "synthetic_prompt_test",
+          rows: [],
+          totalAvailable: null,
+          truncated: true,
+          failure: "unknown receipt",
+          costStatus: "unknown",
+          costCents: 0,
+          fetchedAt: "2026-10-02",
+        }}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("partialFailure");
+    expect(screen.queryByText("noObservations")).toBeNull();
+  });
+});
+
+describe("AI catalog and cost preflight", () => {
+  it.each([
+    ["32.162", false],
+    ["29.99", true],
+    [null, false],
+  ] as const)(
+    "compares an engine quote of %s credits with the customer cap",
+    async (value, affordable) => {
+      const unit = {
+        kind: "credits",
+        key: "credits",
+        singular: "credit",
+        plural: "credits",
+      } as const;
+      const payment = paymentQuote({ charge: { value, certainty: "estimate", unit } });
+      const analyze = vi.fn().mockResolvedValue({
+        ok: true,
+        estimate: true,
+        payment,
+        estimatedCostCents: 24.74,
+        pricingPolicy: "measured_engines",
+        evidence: "synthetic_prompt_test",
+      });
+      render(
+        <AiResearchWorkspace
+          projectId="prj_example"
+          domain="acme.com"
+          mode="prompt"
+          history={[]}
+          catalog={aiResearchCatalogFixture}
+          analyzeAction={analyze}
+          engineOptions={[{ engine: "claude", model: "claude-sonnet-5" }]}
+        />,
+      );
+      fireEvent.change(screen.getByLabelText("brand"), { target: { value: "Acme" } });
+      fireEvent.change(screen.getByLabelText("prompt"), { target: { value: "Compare tools" } });
+      fireEvent.change(screen.getByLabelText("costCap"), { target: { value: "30" } });
+      expect(screen.getByText("estimateRequired")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "estimateCost" }));
+      await waitFor(() => expect(analyze).toHaveBeenCalledOnce());
+      await waitFor(() => expect(screen.queryByText("estimateRequired")).not.toBeInTheDocument());
+      await waitFor(() => {
+        const button = screen.getByRole("button", { name: /^runAnalysis/ });
+        if (affordable) expect(button).toBeEnabled();
+        else expect(button).toBeDisabled();
+      });
+    },
+  );
+
+  function workspace(analyzeAction = vi.fn()) {
+    render(
+      <AiResearchWorkspace
+        projectId="prj_example"
+        domain="acme.com"
+        mode="prompt"
+        history={[]}
+        catalog={aiResearchCatalogFixture}
+        analyzeAction={analyzeAction}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("brand"), { target: { value: "Acme" } });
+    fireEvent.change(screen.getByLabelText("prompt"), {
+      target: { value: "Which tools help small businesses?" },
+    });
+    return analyzeAction;
+  }
+  it("shows supported names rather than raw location codes", () => {
+    render(
+      <AiResearchWorkspace
+        projectId="prj_example"
+        domain="acme.com"
+        mode="visibility"
+        history={[]}
+        catalog={aiResearchCatalogFixture}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "country" })).toHaveTextContent("United States");
+    expect(screen.getByRole("button", { name: "language" })).toHaveTextContent("English");
+    expect(screen.queryByLabelText("locationCode")).toBeNull();
+    expect(screen.queryByLabelText("languageCode")).toBeNull();
+  });
+  it("requires a current affordable estimate and invalidates it after edits", async () => {
+    const analyze = workspace(
+      vi.fn().mockResolvedValue({
+        ok: true,
+        estimate: true,
+        payment: paymentQuote({
+          charge: { value: "0.12", certainty: "estimate", unit: { kind: "currency", code: "USD" } },
+        }),
+        estimatedCostCents: 12,
+        evidence: "synthetic_prompt_test",
+      }),
+    );
+    expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "estimateCost" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeEnabled());
+    expect(analyze).toHaveBeenCalledWith(
+      "prj_example",
+      "prompt",
+      expect.objectContaining({
+        estimate_only: true,
+        web_search: false,
+        max_output_tokens: 512,
+        response_language: "en",
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("outputTokens"), { target: { value: "2048" } });
+    expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeDisabled();
+  });
+  it("runs with the exact displayed quote and opaque payer selection", async () => {
+    const payment = paymentQuote();
+    const analyze = workspace(
+      vi.fn().mockResolvedValue({
+        ok: true,
+        estimate: true,
+        payment,
+        estimatedCostCents: 1,
+        evidence: "synthetic_prompt_test",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "estimateCost" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeEnabled());
+    expect(screen.getByRole("button", { name: /^runAnalysis/ })).toHaveTextContent("≈ 4 tokens");
+    fireEvent.click(screen.getByRole("button", { name: /^runAnalysis/ }));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(2));
+    expect(analyze).toHaveBeenLastCalledWith(
+      "prj_example",
+      "prompt",
+      expect.objectContaining({
+        estimate_only: false,
+        payment_option_id: payment.option.id,
+        accepted_payment: { quote_token: payment.quoteToken },
+        require_payment: true,
+      }),
+    );
+  });
+  it("blocks a run when the estimate exceeds the cap", async () => {
+    workspace(
+      vi.fn().mockResolvedValue({
+        ok: true,
+        estimate: true,
+        payment: paymentQuote({
+          charge: { value: "0.12", certainty: "estimate", unit: { kind: "currency", code: "USD" } },
+        }),
+        estimatedCostCents: 61,
+        evidence: "synthetic_prompt_test",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "estimateCost" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("estimateAboveCap"));
+    expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeDisabled();
+  });
+  it("preserves saved reports when the provider catalog is unavailable", () => {
+    render(
+      <AiResearchWorkspace
+        projectId="prj_example"
+        domain="acme.com"
+        mode="prompt"
+        history={[{ id: "agr_saved", title: "Saved report", createdAt: "2026-10-06" }]}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("catalogUnavailableLegacy");
+    expect(screen.getByRole("button", { name: "estimateCost" })).toBeEnabled();
+    expect(screen.getByRole("link", { name: /Saved report/ })).toBeVisible();
+  });
+  it("keeps web search unavailable even when provider capabilities support it", () => {
+    workspace();
+    expect(screen.getByRole("checkbox", { name: "webSearch" })).toBeDisabled();
+    expect(screen.getByText("webSearchPolicyPending")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "searchCountry" })).toBeNull();
+  });
+});
+
+it("keeps the approved legacy preset available when fresh model prices are missing", () => {
+  render(
+    <AiResearchWorkspace
+      projectId="prj_example"
+      domain="acme.com"
+      mode="prompt"
+      history={[]}
+      catalog={{
+        ...aiResearchCatalogFixture,
+        models: aiResearchCatalogFixture.models.map((model) => ({
+          ...model,
+          priceAvailable: false,
+        })),
+      }}
+    />,
+  );
+  expect(screen.getByRole("alert")).toHaveTextContent("pricingUnavailableLegacy");
+  expect(screen.getByRole("button", { name: "estimateCost" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeDisabled();
+});
+
+it("searches current model names and keeps unknown-price models unselectable", async () => {
+  render(
+    <AiResearchWorkspace
+      projectId="prj_example"
+      domain="acme.com"
+      mode="prompt"
+      history={[]}
+      catalog={aiResearchCatalogFixture}
+    />,
+  );
+  const trigger = screen.getByRole("button", { name: "firstModel" });
+  fireEvent.click(trigger);
+  const search = screen.getByRole("textbox", { name: "searchPlaceholder" });
+  fireEvent.change(search, { target: { value: "reasoning" } });
+  expect(screen.queryByRole("menuitem", { name: "GPT-4.1 mini" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: /Reasoning example/ })).toBeNull();
+  fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "showUnavailableModels" }));
+  const unavailable = screen.getByRole("menuitem", { name: /Reasoning example/ });
+  expect(unavailable).toHaveAttribute("aria-disabled", "true");
+  fireEvent.click(unavailable);
+  expect(trigger).toHaveTextContent("GPT-4.1 mini");
+});
+
+it("does not authorize changed settings from an estimate that finishes later", async () => {
+  let finish: (value: {
+    ok: true;
+    estimate: true;
+    payment: ReturnType<typeof paymentQuote>;
+    estimatedCostCents: number;
+    evidence: "synthetic_prompt_test";
+  }) => void = () => {};
+  const pending = new Promise<{
+    ok: true;
+    estimate: true;
+    payment: ReturnType<typeof paymentQuote>;
+    estimatedCostCents: number;
+    evidence: "synthetic_prompt_test";
+  }>((resolve) => {
+    finish = resolve;
+  });
+  const analyze = vi.fn().mockReturnValue(pending);
+  render(
+    <AiResearchWorkspace
+      projectId="prj_example"
+      domain="acme.com"
+      mode="prompt"
+      history={[]}
+      catalog={aiResearchCatalogFixture}
+      analyzeAction={analyze}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("brand"), { target: { value: "Acme" } });
+  fireEvent.change(screen.getByLabelText("prompt"), {
+    target: { value: "Which tools help small businesses?" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "estimateCost" }));
+  await waitFor(() => expect(analyze).toHaveBeenCalledOnce());
+  fireEvent.change(screen.getByLabelText("brand"), { target: { value: "Another brand" } });
+  await act(async () =>
+    finish({
+      ok: true,
+      estimate: true,
+      payment: paymentQuote({
+        charge: { value: "0.12", certainty: "estimate", unit: { kind: "currency", code: "USD" } },
+      }),
+      estimatedCostCents: 12,
+      evidence: "synthetic_prompt_test",
+    }),
+  );
+  expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeDisabled();
+  expect(screen.getByText("estimateRequired")).toBeVisible();
+});
+
+it("explains missing verified pricing without enabling a paid run", async () => {
+  const analyze = vi.fn().mockResolvedValue({
+    ok: false,
+    reason: "pricing_unavailable",
+    message: "Pricing unavailable",
+  });
+  render(
+    <AiResearchWorkspace
+      projectId="prj_example"
+      domain="acme.com"
+      mode="prompt"
+      history={[]}
+      catalog={aiResearchCatalogFixture}
+      analyzeAction={analyze}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("brand"), { target: { value: "Acme" } });
+  fireEvent.change(screen.getByLabelText("prompt"), {
+    target: { value: "Which tools help small businesses?" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "estimateCost" }));
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("pricingUnavailable"));
+  expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeDisabled();
+});
+
+it.each([
+  undefined,
+  { ...aiResearchCatalogFixture, fetchedAt: "2026-01-01T00:00:00Z" },
+  {
+    ...aiResearchCatalogFixture,
+    models: aiResearchCatalogFixture.models.map((model) => ({ ...model, priceAvailable: false })),
+  },
+])(
+  "runs the original preset after a current server estimate during catalog outage %j",
+  async (catalog) => {
+    const analyze = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        estimate: true,
+        payment: paymentQuote({
+          charge: { value: "0.12", certainty: "estimate", unit: { kind: "currency", code: "USD" } },
+        }),
+        estimatedCostCents: 52.6013,
+        evidence: "synthetic_prompt_test",
+        estimateKind: "admission_bound",
+        isGuaranteedMaximum: false,
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        reason: "fixture_stop",
+        message: "No provider execution in fixture",
+      });
+    render(
+      <AiResearchWorkspace
+        projectId="prj_example"
+        domain="acme.com"
+        mode="prompt"
+        history={[]}
+        catalog={catalog}
+        analyzeAction={analyze}
+      />,
+    );
+    expect(screen.getByLabelText("outputTokens")).toHaveValue(512);
+    expect(screen.getByLabelText("outputTokens")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "responseLanguage" })).toHaveTextContent(
+      "legacyPromptLanguage",
+    );
+    expect(screen.getByRole("button", { name: "responseLanguage" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "webSearch" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "firstModel" })).toHaveTextContent("GPT-4.1 mini");
+    expect(screen.getByRole("button", { name: "secondModel" })).toHaveTextContent("GPT-4.1 nano");
+    fireEvent.change(screen.getByLabelText("brand"), { target: { value: "Acme" } });
+    fireEvent.change(screen.getByLabelText("prompt"), {
+      target: { value: "Jakie narzędzia pomagają małym firmom?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "estimateCost" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeEnabled());
+    expect(screen.getAllByText(/≈ \$0\.12/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: /^runAnalysis/ }));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(2));
+    expect(analyze).toHaveBeenLastCalledWith(
+      "prj_example",
+      "prompt",
+      expect.objectContaining({
+        estimate_only: false,
+        models: ["gpt-4.1-mini", "gpt-4.1-nano"],
+        max_output_tokens: 512,
+        web_search: false,
+        response_language: "en",
+      }),
+    );
+    expect(analyze.mock.calls[1][2]).not.toHaveProperty("country_iso_code", expect.any(String));
+  },
+);
+
+it("keeps the original observed market selectable and estimable during catalog outage", async () => {
+  const analyze = vi.fn().mockResolvedValue({
+    ok: true,
+    estimate: true,
+    payment: paymentQuote({
+      charge: { value: "0.12", certainty: "estimate", unit: { kind: "currency", code: "USD" } },
+    }),
+    estimatedCostCents: 11,
+    evidence: "observed_dataset",
+  });
+  render(
+    <AiResearchWorkspace
+      projectId="prj_example"
+      domain="acme.com"
+      mode="visibility"
+      history={[]}
+      analyzeAction={analyze}
+    />,
+  );
+  expect(screen.getByRole("button", { name: "country" })).toHaveTextContent("United States");
+  expect(screen.getByRole("button", { name: "language" })).toHaveTextContent("English");
+  fireEvent.change(screen.getByLabelText("brand"), { target: { value: "Acme" } });
+  fireEvent.click(screen.getByRole("button", { name: "estimateCost" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeEnabled());
+  expect(analyze).toHaveBeenCalledWith(
+    "prj_example",
+    "visibility",
+    expect.objectContaining({
+      platform: "chat_gpt",
+      location_code: 2840,
+      language_code: "en",
+      estimate_only: true,
+    }),
+  );
+});
+
+it("requires fresh bounded metadata for extended output and invalidates legacy estimates on changes", async () => {
+  const analyze = vi.fn().mockResolvedValue({
+    ok: true,
+    estimate: true,
+    payment: paymentQuote({
+      charge: { value: "0.12", certainty: "estimate", unit: { kind: "currency", code: "USD" } },
+    }),
+    estimatedCostCents: 52.6013,
+    evidence: "synthetic_prompt_test",
+  });
+  render(
+    <AiResearchWorkspace
+      projectId="prj_example"
+      domain="acme.com"
+      mode="prompt"
+      history={[]}
+      catalog={aiResearchCatalogFixture}
+      analyzeAction={analyze}
+    />,
+  );
+  expect(screen.getByLabelText("outputTokens")).toBeEnabled();
+  fireEvent.change(screen.getByLabelText("brand"), { target: { value: "Acme" } });
+  fireEvent.change(screen.getByLabelText("prompt"), { target: { value: "Which tools?" } });
+  fireEvent.click(screen.getByRole("button", { name: "estimateCost" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeEnabled());
+  fireEvent.change(screen.getByLabelText("outputTokens"), { target: { value: "4096" } });
+  expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "estimateCost" }));
+  await waitFor(() => expect(analyze).toHaveBeenCalledTimes(2));
+  expect(analyze).toHaveBeenLastCalledWith(
+    "prj_example",
+    "prompt",
+    expect.objectContaining({ max_output_tokens: 4096, estimate_only: true }),
+  );
+});
+
+it("keeps priced snapshots disabled while policy approval is pending", () => {
+  render(
+    <AiResearchWorkspace
+      projectId="prj_example"
+      domain="acme.com"
+      mode="prompt"
+      history={[]}
+      catalog={{
+        ...aiResearchCatalogFixture,
+        models: [
+          ...aiResearchCatalogFixture.models,
+          {
+            ...aiResearchCatalogFixture.models[0],
+            id: "gpt-4.1-mini-2025-04-14",
+            label: "Mini snapshot",
+            priceAvailable: true,
+            admissionEnabled: false,
+          },
+        ],
+      }}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "firstModel" }));
+  expect(screen.queryByRole("menuitem", { name: "Mini snapshot" })).toBeNull();
+  fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "showUnavailableModels" }));
+  expect(screen.getByRole("menuitem", { name: "Mini snapshot" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+});
+
+it("budget regression: shows shared guidance for a returned missing budget", async () => {
+  const analyze = vi
+    .fn()
+    .mockResolvedValue({ ok: false, reason: "budget_missing", message: "Server fallback" });
+  render(
+    <AiResearchWorkspace
+      projectId="prj_example"
+      domain="acme.com"
+      mode="visibility"
+      history={[]}
+      analyzeAction={analyze}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("brand"), { target: { value: "Acme" } });
+  fireEvent.click(screen.getByRole("button", { name: "estimateCost" }));
+  expect(await screen.findByText(sharedMessages.shared.errors.budgetMissing)).toHaveAttribute(
+    "role",
+    "alert",
+  );
+  expect(screen.getByRole("button", { name: /^runAnalysis/ })).toBeDisabled();
+});

@@ -1,0 +1,256 @@
+import type { FinalizedWindow } from "@/lib/search-insights/dates";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ImportObservabilityFacts } from "./import-observability";
+
+const mocks = vi.hoisted(() => ({
+  prisma: {
+    providerConnection: { findUnique: vi.fn() },
+    searchAnalyticsImport: { findUnique: vi.fn() },
+  },
+  runtimeCredentials: vi.fn(),
+}));
+
+vi.mock("@/lib/db/prisma", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/traffic/runtime-credentials", () => ({
+  trafficRuntimeCredentials: mocks.runtimeCredentials,
+}));
+
+const { importStateView, organicSessionsImportCoversWindow, readOrganicSessionsContext } =
+  await import("./sessions-context");
+const { readOrganicSessionsConnection } = await import(
+  "@/lib/search-insights/sync/sessions-credentials"
+);
+
+const window: FinalizedWindow = {
+  current: { end: "2026-07-08", start: "2026-06-11" },
+  previous: { end: "2026-06-10", start: "2026-05-14" },
+};
+
+function importState(overrides: Record<string, unknown> = {}) {
+  return {
+    capHitDays: 0,
+    cursorDate: "2026-05-13",
+    daysDone: 30,
+    daysTotal: 488,
+    earliestTargetDate: "2025-03-14",
+    finalizedThroughDate: "2026-07-08",
+    lastProbeAt: null,
+    lastSyncStartedAt: null,
+    newestFinalizedDate: "2026-07-08",
+    pausedReason: null,
+    state: "running",
+    ...overrides,
+  };
+}
+
+function connection(overrides: Record<string, unknown> = {}) {
+  return {
+    credentialsEncrypted: "encrypted",
+    enabled: true,
+    id: "conn_1",
+    provider: "ga4",
+    status: "connected",
+    ...overrides,
+  };
+}
+
+describe("organicSessionsImportCoversWindow", () => {
+  it("accepts an in-progress import that covers both compared windows", () => {
+    expect(organicSessionsImportCoversWindow(importState(), window)).toBe(true);
+  });
+
+  it("rejects a completed GA4 import one day behind the GSC window end", () => {
+    expect(
+      organicSessionsImportCoversWindow(
+        importState({
+          cursorDate: null,
+          finalizedThroughDate: "2026-07-07",
+          state: "completed",
+        }),
+        window,
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects an import whose cursor has not reached the first compared day", () => {
+    expect(
+      organicSessionsImportCoversWindow(importState({ cursorDate: "2026-05-14" }), window),
+    ).toBe(false);
+  });
+
+  it("requires only the current boundary when the view has no comparison", () => {
+    const boundaryOnly = importState({ cursorDate: "2026-07-07" });
+    const firstLookWindow: FinalizedWindow = {
+      current: { end: "2026-07-08", start: "2026-07-08" },
+      previous: { end: "2026-07-07", start: "2026-07-07" },
+    };
+
+    expect(organicSessionsImportCoversWindow(boundaryOnly, firstLookWindow, false)).toBe(true);
+    expect(organicSessionsImportCoversWindow(boundaryOnly, firstLookWindow, true)).toBe(false);
+  });
+
+  it("uses a completed import's retention boundary as its oldest stored day", () => {
+    expect(
+      organicSessionsImportCoversWindow(
+        importState({ cursorDate: null, earliestTargetDate: "2026-05-14", state: "completed" }),
+        window,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a connection with no import row", () => {
+    expect(organicSessionsImportCoversWindow(null, window)).toBe(false);
+  });
+});
+
+describe("importStateView", () => {
+  it("carries the single import facts selector into the presentation view", () => {
+    const facts: ImportObservabilityFacts = {
+      consecutiveDays: 7,
+      deepHistoryMonths: { completed: 0, target: 3 },
+      lastActivityAt: null,
+      lastProbeAt: null,
+      qualifyingDays: 7,
+      readyThrough: {
+        d1: { current: true, previous: true },
+        d7: { current: true, previous: false },
+        d28: { current: false, previous: false },
+        d90: { current: false, previous: false },
+      },
+      stall: {
+        expectedBatchMs: 0,
+        expectedDayMs: 0,
+        nextRequestInMs: 0,
+        silenceMs: 0,
+        thresholdMs: 0,
+      },
+      targetDays: 28,
+    };
+    const state = importStateView(
+      {
+        capHitDays: 0,
+        cursorDate: null,
+        daysDone: 0,
+        daysTotal: 57,
+        createdAt: new Date("2026-05-12T01:00:00.000Z"),
+        earliestTargetDate: new Date("2026-05-12T00:00:00.000Z"),
+        finalizedThroughDate: null,
+        firstDataDate: new Date("2026-05-12T00:00:00.000Z"),
+        lastProbeAt: null,
+        lastSyncStartedAt: null,
+        newestFinalizedDate: new Date("2026-07-07T00:00:00.000Z"),
+        pausedReason: null,
+        state: "running",
+        updatedAt: new Date("2026-05-12T02:00:00.000Z"),
+      },
+      facts,
+    );
+
+    expect(state).toMatchObject({
+      createdAt: "2026-05-12T01:00:00.000Z",
+      facts,
+      firstDataDate: "2026-05-12",
+      updatedAt: "2026-05-12T02:00:00.000Z",
+    });
+    expect(state.facts).toBe(facts);
+    expect(Object.keys(state)).not.toEqual(
+      expect.arrayContaining([
+        "completedDays",
+        "consecutiveDays",
+        "deepHistoryMonths",
+        "etaLabel",
+        "firstViewReady",
+        "lastActivityAt",
+        "localReadableThrough",
+        "qualifyingDays",
+        "readyThrough",
+        "stall",
+        "targetDays",
+        "waiting",
+      ]),
+    );
+  });
+});
+
+describe("readOrganicSessionsContext", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.runtimeCredentials.mockReturnValue({
+      apiKey: "refresh_token",
+      login: "properties/123456789",
+    });
+  });
+
+  it("reads the normalized numeric property and its source-specific import state", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(connection());
+    mocks.prisma.searchAnalyticsImport.findUnique.mockResolvedValue({
+      capHitDays: 0,
+      cursorDate: new Date("2026-05-13T00:00:00.000Z"),
+      daysDone: 30,
+      daysTotal: 488,
+      earliestTargetDate: new Date("2025-03-14T00:00:00.000Z"),
+      finalizedThroughDate: new Date("2026-07-08T00:00:00.000Z"),
+      keyEventsConfigured: true,
+      lastProbeAt: null,
+      lastSyncStartedAt: null,
+      newestFinalizedDate: new Date("2026-07-08T00:00:00.000Z"),
+      pausedReason: null,
+      state: "running",
+    });
+
+    await expect(readOrganicSessionsContext("project_1")).resolves.toMatchObject({
+      importState: { daysDone: 30, state: "running" },
+      keyEventsConfigured: true,
+      property: "123456789",
+      status: "connected",
+    });
+    expect(mocks.prisma.searchAnalyticsImport.findUnique).toHaveBeenCalledWith({
+      where: {
+        projectId_property_source: { projectId: "project_1", property: "123456789", source: "ga4" },
+      },
+    });
+  });
+
+  it("uses the same env-fallback property for the worker and read paths", async () => {
+    mocks.runtimeCredentials.mockReturnValue({ apiKey: "env_refresh_token", login: "987654321" });
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(
+      connection({ credentialsEncrypted: "empty-stored" }),
+    );
+    mocks.prisma.searchAnalyticsImport.findUnique.mockResolvedValue(null);
+
+    const [context, resolved] = await Promise.all([
+      readOrganicSessionsContext("project_1"),
+      readOrganicSessionsConnection("project_1"),
+    ]);
+
+    expect(context.property).toBe("987654321");
+    expect(resolved.connection?.property).toBe("987654321");
+  });
+
+  it("keeps a reconnecting connection visible without trying to join an unreadable property", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(
+      connection({ status: "needs_reauth" }),
+    );
+    mocks.runtimeCredentials.mockReturnValue({ apiKey: "refresh_token", login: "" });
+
+    await expect(readOrganicSessionsContext("project_1")).resolves.toEqual({
+      importState: null,
+      keyEventsConfigured: null,
+      property: null,
+      status: "needs_reauth",
+    });
+    expect(mocks.prisma.searchAnalyticsImport.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("treats a disabled connection as unavailable to match the sync path", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(connection({ enabled: false }));
+
+    await expect(readOrganicSessionsContext("project_1")).resolves.toEqual({
+      importState: null,
+      keyEventsConfigured: null,
+      property: null,
+      status: "not_connected",
+    });
+    expect(mocks.prisma.searchAnalyticsImport.findUnique).not.toHaveBeenCalled();
+  });
+});

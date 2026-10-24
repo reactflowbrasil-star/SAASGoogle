@@ -1,0 +1,48 @@
+---
+title: "Traffic analytics"
+description: "Read Search Console, GA4, and Plausible traffic next to rank data."
+---
+
+Analytics sources add clicks, impressions, sessions, key events, and page
+context. They never determine SERP rank positions.
+
+Connect accounts from [Integrations](/integrations). Search Console setup and
+retention are on [Search Console](/guides/search-console). Self-hosted OAuth,
+worker, and `TRAFFIC_SYNC_ENABLED` belong on
+[Google OAuth and traffic sync](/self-hosting/google-oauth).
+
+## Read traffic next to ranks
+
+After a source is connected, open the analytics views for the project. Use the
+comparison window to read query and page traffic beside completed rank checks.
+**Sync now** starts the same audited project synchronization as the app API.
+
+Analytics requests use a rolling 28-day window: query-level data ends three
+days before the run and page-level data ends one day before it to accommodate
+provider lag.
+
+## Google Analytics 4
+
+1. Open **Integrations** and choose GA4.
+2. Complete Google consent and select a property before connecting.
+3. Confirm the digits-only **Property ID** from GA4 **Admin → Property
+   details**. Do not paste a `G-` Measurement ID or a legacy `UA-` ID.
+
+If a traffic sync fails with `config_invalid`, manage the connection and
+re-select the property.
+
+## Plausible
+
+Connect the site domain, Stats API token, and optional self-hosted Plausible
+base URL. The default base is `https://plausible.io`. Leave the base blank for
+Plausible Cloud.
+
+## Snapshots and automation
+
+The same surfaces are available through the REST API. Use the stored
+traffic-snapshot endpoint for page history, the live query statistics endpoint
+for a bounded provider lookup, and the sync endpoint to start the same audited
+project synchronization as the app. Live reads and sync use the project's own
+connected analytics accounts.
+
+Connection fields are documented in [Integrations](/integrations).

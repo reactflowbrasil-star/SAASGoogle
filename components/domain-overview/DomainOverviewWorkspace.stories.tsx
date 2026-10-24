@@ -1,0 +1,255 @@
+import { SessionSpendProvider } from "@/components/cost-estimate/SessionSpendProvider";
+import { DateDisplayProvider } from "@/components/dates/DateFormatProvider";
+import { FeatureMessagesProvider } from "@/components/i18n/FeatureMessagesProvider";
+import { domainOverviewFeatureTestMessages } from "@/i18n/test-support/feature-test-messages";
+import type {
+  AnalyzeDomainOverviewAction,
+  LoadDomainHistoryAction,
+  LoadDomainKeywordsPageAction,
+  LoadDomainPagesPageAction,
+  SaveSelectedKeywordsAction,
+} from "@/lib/actions/domain-overview";
+import type { Meta, StoryObj } from "@storybook/react";
+import { userEvent, within } from "storybook/test";
+import { DomainOverviewCacheProvider } from "./DomainOverviewCacheProvider";
+import { DomainOverviewWorkspace } from "./DomainOverviewWorkspace";
+import {
+  domainOverviewHistoryFixture,
+  domainOverviewReportFixture,
+  domainOverviewScopeFixture,
+} from "./fixtures";
+
+const analyzeAction = (async (input: unknown) => {
+  const request = input as { estimateOnly?: boolean };
+  return request.estimateOnly
+    ? {
+        cached: false,
+        estimate: true,
+        estimatedCostCents: 4,
+        freshEstimatedCostCents: 6,
+        historyEstimatedCostCents: 12,
+        historyMode: "lazy",
+        keywordPageEstimatedCostCents: 2,
+        languageCode: "en",
+        locationCode: domainOverviewScopeFixture.providerLocationCode,
+        ok: true,
+        pagePageEstimatedCostCents: 3,
+        provider: "dataforseo",
+        scope: "root",
+        target: "example.com",
+      }
+    : domainOverviewReportFixture;
+}) as AnalyzeDomainOverviewAction;
+const loadingAnalyzeAction = (async (input: unknown) => {
+  const request = input as { estimateOnly?: boolean };
+  if (request.estimateOnly) return analyzeAction(input);
+  return new Promise(() => undefined);
+}) as AnalyzeDomainOverviewAction;
+const loadHistoryAction = (async () => ({
+  cached: false,
+  costCents: 12,
+  data: domainOverviewHistoryFixture,
+  fetchedAt: "2026-08-12T12:00:00.000Z",
+  ok: true,
+})) as LoadDomainHistoryAction;
+const loadKeywordsPageAction = (async () => ({
+  cached: false,
+  costCents: 2,
+  data: { consumedCount: 0, costCents: 2, rows: [], totalCount: 12_940 },
+  fetchedAt: "2026-08-12T12:00:00.000Z",
+  ok: true,
+})) as LoadDomainKeywordsPageAction;
+const loadPagesPageAction = (async () => ({
+  cached: false,
+  costCents: 3,
+  data: { consumedCount: 0, costCents: 3, rows: [], totalCount: 1_204 },
+  fetchedAt: "2026-08-12T12:00:00.000Z",
+  ok: true,
+})) as LoadDomainPagesPageAction;
+const saveSelectedKeywordsAction = (async (input: unknown) => {
+  const rows = (input as { rows: unknown[] }).rows;
+  return { created: [], duplicateCount: 0, savedCount: rows.length };
+}) as SaveSelectedKeywordsAction;
+
+const trackedScopes = [
+  {
+    countryCode: "ES",
+    countryName: "Spain",
+    languageCode: "es",
+    languageLabel: "Spanish",
+    providerLocationCode: 2724,
+    researchAvailable: true,
+  },
+  {
+    countryCode: "ES",
+    countryName: "Spain",
+    languageCode: "en",
+    languageLabel: "English",
+    providerLocationCode: 2724,
+    researchAvailable: false,
+  },
+];
+
+const catalogScopes = [
+  {
+    ...trackedScopes[0],
+    countryCode: "US",
+    countryName: "United States",
+    languageCode: "en",
+    languageLabel: "English",
+    providerLocationCode: 2840,
+  },
+];
+
+const meta = {
+  component: DomainOverviewWorkspace,
+  decorators: [
+    (Story) => (
+      <FeatureMessagesProvider
+        locale="en"
+        messages={domainOverviewFeatureTestMessages}
+        timeZone="UTC"
+      >
+        <DateDisplayProvider>
+          <SessionSpendProvider>
+            <div className="min-h-screen bg-bg p-4 text-fg sm:p-6">
+              <Story />
+            </div>
+          </SessionSpendProvider>
+        </DateDisplayProvider>
+      </FeatureMessagesProvider>
+    ),
+  ],
+  parameters: { layout: "fullscreen", nextjs: { appDirectory: true } },
+  title: "Domain Overview/Workspace",
+} satisfies Meta<typeof DomainOverviewWorkspace>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+const common = {
+  analyzeAction,
+  context: {
+    catalogScopes,
+    competitorDomains: ["competitor-one.example.com", "competitor-two.example.com"],
+    costContext: { capCents: 5000, spentCents: 1419 },
+    defaultTarget: "example.com",
+    providerStatus: "connected" as const,
+    recentTargets: [],
+    trackedScopes,
+  },
+  initialEstimate: {
+    cached: false,
+    costCents: 4,
+    freshCostCents: 6,
+    historyCostCents: 12,
+    keywordPageCostCents: 2,
+    loading: false,
+    pagePageCostCents: 3,
+    valid: true,
+  },
+  loadHistoryAction,
+  loadKeywordsPageAction,
+  loadPagesPageAction,
+  researchScope: trackedScopes[0],
+  projectId: "prj_story",
+  projectRef: "prj_story",
+  saveSelectedKeywordsAction,
+};
+
+export const Idle: Story = {
+  args: {
+    ...common,
+    initialEstimate: {
+      cached: false,
+      costCents: null,
+      freshCostCents: null,
+      historyCostCents: null,
+      keywordPageCostCents: null,
+      loading: false,
+      pagePageCostCents: null,
+      valid: false,
+    },
+    initialOutcome: null,
+  },
+};
+
+export const DemoNewLookup: Story = {
+  args: {
+    ...Idle.args,
+    context: {
+      ...common.context,
+      recentTargets: [
+        {
+          cachedUntil: new Date(Date.now() + 29 * 86_400_000).toISOString(),
+          fetchedAt: new Date(Date.now() - 86_400_000).toISOString(),
+          languageCode: trackedScopes[0].languageCode,
+          locationCode: trackedScopes[0].providerLocationCode,
+          scope: "root",
+          target: "example.com",
+        },
+      ],
+    },
+  },
+  decorators: [
+    (Story) => (
+      <DomainOverviewCacheProvider ttlSeconds={2_592_000}>
+        <Story />
+      </DomainOverviewCacheProvider>
+    ),
+  ],
+};
+
+export const Results: Story = {
+  args: {
+    ...common,
+    context: {
+      ...common.context,
+      recentTargets: [
+        {
+          cachedUntil: "2026-08-13T12:00:00.000Z",
+          fetchedAt: "2026-08-12T12:00:00.000Z",
+          languageCode: "en",
+          locationCode: domainOverviewScopeFixture.providerLocationCode,
+          scope: "root",
+          target: "other.example.com",
+        },
+      ],
+    },
+    initialOutcome: domainOverviewReportFixture,
+    initialScope: "root",
+    initialTarget: domainOverviewReportFixture.target,
+  },
+};
+
+export const Loading: Story = {
+  args: {
+    ...common,
+    analyzeAction: loadingAnalyzeAction,
+    initialOutcome: null,
+    initialScope: "root",
+    initialTarget: "example.com",
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.click(within(canvasElement).getByRole("button", { name: /analyze domain/i }));
+  },
+};
+
+export const NoData: Story = {
+  args: {
+    ...common,
+    initialOutcome: { ...domainOverviewReportFixture, overview: null, state: "no_data" },
+    initialTarget: "new.example.com",
+  },
+};
+
+export const ProviderMissing: Story = {
+  args: {
+    ...Idle.args,
+    context: {
+      ...common.context,
+      providerStatus: "no_provider",
+      supportingProviders: ["DataForSEO"],
+    },
+  },
+};

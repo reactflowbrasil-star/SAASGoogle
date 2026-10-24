@@ -1,0 +1,196 @@
+import {
+  authFeatureTestMessages,
+  renderWithFeatureMessages,
+} from "@/i18n/test-support/render-with-feature-messages";
+import { appRootPath } from "@/lib/routing/app-path";
+import { routerMock } from "@/tests/next-navigation";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { TwoFactorChallengeForm } from "./TwoFactorChallengeForm";
+
+function render(
+  ui: ReactElement,
+  options: Parameters<typeof renderWithFeatureMessages>[1] = { messages: authFeatureTestMessages },
+) {
+  return renderWithFeatureMessages(ui, options);
+}
+
+const mocks = vi.hoisted(() => ({
+  verifyBackupCode: vi.fn(),
+  verifyTotp: vi.fn(),
+}));
+
+vi.mock("@/lib/auth/client", () => ({
+  authClient: {
+    twoFactor: {
+      verifyBackupCode: mocks.verifyBackupCode,
+      verifyTotp: mocks.verifyTotp,
+    },
+  },
+}));
+
+describe("TwoFactorChallengeForm", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("promotes a pending sign-in after a current authenticator code", async () => {
+    mocks.verifyTotp.mockResolvedValue({ data: { token: "session" }, error: null });
+    const returnTo = "/oauth/consent?client_id=client_1&scope=openid";
+    const { container } = render(<TwoFactorChallengeForm returnTo={returnTo} />);
+
+    expect(container.querySelector("form")).toBeNull();
+    expect(screen.getByRole("button", { name: "Verify and continue" })).toHaveAttribute(
+      "type",
+      "button",
+    );
+    fireEvent.change(screen.getByLabelText("Authenticator code"), {
+      target: { value: "123456" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
+
+    await waitFor(() => expect(mocks.verifyTotp).toHaveBeenCalledWith({ code: "123456" }));
+    expect(routerMock.replace).toHaveBeenCalledWith(returnTo);
+    expect(routerMock.refresh).toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: "Signing in..." })).toBeDisabled();
+    expect(screen.getByLabelText("Authenticator code")).toBeDisabled();
+  });
+
+  it("submits the current challenge with the Enter key after hydration", async () => {
+    mocks.verifyTotp.mockResolvedValue({ data: { token: "session" }, error: null });
+    render(<TwoFactorChallengeForm />);
+
+    const input = screen.getByLabelText("Authenticator code");
+    fireEvent.change(input, { target: { value: "123456" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(mocks.verifyTotp).toHaveBeenCalledWith({ code: "123456" }));
+    expect(routerMock.replace).toHaveBeenCalledWith(appRootPath());
+  });
+
+  it("promotes a pending sign-in after an unused backup code", async () => {
+    mocks.verifyBackupCode.mockResolvedValue({ data: { token: "session" }, error: null });
+    const returnTo = "/oauth/consent?client_id=client_1&scope=openid";
+    render(<TwoFactorChallengeForm returnTo={returnTo} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Backup code" }));
+    fireEvent.change(screen.getByLabelText("Backup code"), {
+      target: { value: "abcde-12345" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
+
+    await waitFor(() =>
+      expect(mocks.verifyBackupCode).toHaveBeenCalledWith({ code: "abcde-12345" }),
+    );
+    expect(routerMock.replace).toHaveBeenCalledWith(returnTo);
+  });
+
+  it("falls back to the signed-in home for an unsafe destination", async () => {
+    mocks.verifyTotp.mockResolvedValue({ data: { token: "session" }, error: null });
+    render(<TwoFactorChallengeForm returnTo="https://evil.example.com" />);
+
+    fireEvent.change(screen.getByLabelText("Authenticator code"), {
+      target: { value: "123456" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
+
+    await waitFor(() => expect(routerMock.replace).toHaveBeenCalledWith(appRootPath()));
+  });
+
+  it("keeps the return destination when cancelling back to sign in", () => {
+    render(<TwoFactorChallengeForm returnTo="/oauth/consent?client_id=client_1&scope=openid" />);
+
+    expect(screen.getByRole("link", { name: "Cancel and return to sign in" })).toHaveAttribute(
+      "href",
+      "/login?next=%2Foauth%2Fconsent%3Fclient_id%3Dclient_1%26scope%3Dopenid",
+    );
+  });
+
+  it("keeps the default cancellation URL clean", () => {
+    render(<TwoFactorChallengeForm />);
+
+    expect(screen.getByRole("link", { name: "Cancel and return to sign in" })).toHaveAttribute(
+      "href",
+      "/login",
+    );
+  });
+
+  it("rejects a consumed backup code without creating client navigation", async () => {
+    mocks.verifyBackupCode.mockResolvedValue({
+      data: null,
+      error: { code: "INVALID_BACKUP_CODE" },
+    });
+    render(<TwoFactorChallengeForm />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Backup code" }));
+    fireEvent.change(screen.getByLabelText("Backup code"), {
+      target: { value: "used1-code1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
+
+    expect(
+      await screen.findByText("That code is invalid, expired, or already used."),
+    ).toBeInTheDocument();
+    expect(routerMock.replace).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Backup code")).toHaveValue("");
+  });
+
+  it("explains an expired sign-in instead of blaming the authenticator code", async () => {
+    mocks.verifyTotp.mockResolvedValue({
+      data: null,
+      error: { code: "INVALID_TWO_FACTOR_COOKIE" },
+    });
+    render(<TwoFactorChallengeForm />);
+    fireEvent.change(screen.getByLabelText("Authenticator code"), {
+      target: { value: "123456" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
+
+    expect(
+      await screen.findByText(
+        "Your sign-in has expired. Return to sign in and request a new email code.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("That code is invalid, expired, or already used."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Verify and continue" })).toBeDisabled();
+    expect(screen.getByRole("link", { name: "Cancel and return to sign in" })).toHaveAttribute(
+      "href",
+      "/login",
+    );
+    expect(routerMock.replace).not.toHaveBeenCalled();
+  });
+
+  it("keeps empty and too-long backup-code validation distinct", async () => {
+    render(<TwoFactorChallengeForm />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Backup code" }));
+    fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
+    expect(await screen.findByText("Enter a backup code.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Backup code"), {
+      target: { value: "x".repeat(129) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
+    expect(await screen.findByText("Enter a valid backup code.")).toBeInTheDocument();
+  });
+
+  it("uses injected non-English messages for distinct backup-code validation", async () => {
+    const messages = structuredClone(authFeatureTestMessages);
+    messages.auth.twoFactor.validation.backupInvalid = "Wpisz poprawny kod zapasowy.";
+    messages.auth.twoFactor.validation.backupRequired = "Wpisz kod zapasowy.";
+    render(<TwoFactorChallengeForm />, { locale: "pl", messages });
+
+    fireEvent.click(screen.getByRole("button", { name: "Backup code" }));
+    fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
+    expect(await screen.findByText("Wpisz kod zapasowy.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Backup code"), {
+      target: { value: "x".repeat(129) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify and continue" }));
+    expect(await screen.findByText("Wpisz poprawny kod zapasowy.")).toBeInTheDocument();
+  });
+});

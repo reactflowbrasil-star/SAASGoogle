@@ -1,0 +1,66 @@
+import { skillArchivePath, skillCatalog } from "@/lib/agent-ready/skill-catalog";
+
+export const API_VERSION = "v1";
+
+export function curlExample(origin: string) {
+  return `curl -H "Authorization: Bearer $BISIBILITY_API_KEY" \\\n  ${origin}/api/${API_VERSION}/keywords`;
+}
+
+export type AgentInstall = {
+  caveat?: true;
+  command: (mcpUrl: string) => string;
+  icon: "cube" | "dots-three" | "monitor" | "terminal";
+  id: "claude-code" | "chatgpt" | "grok-bot" | "codex" | "cursor" | "claude-desktop" | "other";
+};
+
+export const AGENTS = [
+  {
+    command: (mcpUrl) => `claude mcp add --scope user --transport http bisibility \\\n  ${mcpUrl}`,
+    icon: "terminal",
+    id: "claude-code",
+  },
+  {
+    command: (mcpUrl) => `codex mcp add bisibility --url ${mcpUrl}`,
+    icon: "terminal",
+    id: "codex",
+  },
+  {
+    command: (mcpUrl) =>
+      `{\n  "mcpServers": {\n    "bisibility": {\n      "url": "${mcpUrl}"\n    }\n  }\n}`,
+    icon: "cube",
+    id: "cursor",
+  },
+  {
+    caveat: true,
+    command: (mcpUrl) => mcpUrl,
+    icon: "dots-three",
+    id: "chatgpt",
+  },
+  {
+    caveat: true,
+    command: (mcpUrl) => `Add the bisibility MCP server: ${mcpUrl}`,
+    icon: "dots-three",
+    id: "grok-bot",
+  },
+  {
+    caveat: true,
+    command: (mcpUrl) => mcpUrl,
+    icon: "monitor",
+    id: "claude-desktop",
+  },
+  {
+    command: (mcpUrl) => mcpUrl,
+    icon: "dots-three",
+    id: "other",
+  },
+] satisfies readonly AgentInstall[];
+
+export const SKILLS = [
+  ...skillCatalog.filter((skill) => skill.status !== "coming-soon"),
+  ...skillCatalog.filter((skill) => skill.status === "coming-soon"),
+].map((skill) => ({
+  name: skill.slug,
+  archivePath: skillArchivePath(skill),
+  status: skill.status,
+  plugin: skill.channels.plugin,
+}));

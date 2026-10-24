@@ -1,0 +1,273 @@
+import "server-only";
+import type { DateFormat } from "@/lib/dates/format";
+import { prisma } from "@/lib/db/prisma";
+import { isSelfHost } from "@/lib/deployment/deployment";
+import { centsToDollars } from "@/lib/format/currency";
+import {
+  type ActiveIntegrationKind,
+  INTEGRATION_CATEGORY_COPY,
+} from "@/lib/integrations/category-copy";
+import { providerCredentialFieldsFor } from "@/lib/integrations/credential-fields";
+import { providerIcon } from "@/lib/integrations/provider-icon";
+import { readableProviderIdentity } from "@/lib/integrations/provider-identity";
+import { COST_ESTIMATE_PER_CHECK_HELP } from "@/lib/integrations/settings-copy";
+import type {
+  GoogleOAuthSetup,
+  IntegrationCategoryData as IntegrationCategory,
+  IntegrationProviderData as IntegrationProvider,
+  ProviderStatusKind,
+} from "@/lib/integrations/types";
+import { rankCheckRateSelection, withRankCheckManualRate } from "@/lib/provider-rates/manual-rate";
+import { PROVIDER_CATALOG, tintFor } from "@/lib/providers/registry";
+import { requireReadableProject } from "@/lib/queries/_auth";
+import { loadGscConsumerStatuses } from "@/lib/queries/integration-consumer-status";
+import {
+  displayedProviderLogin,
+  type ProviderConnectionRow,
+  providerActivities,
+  providerDescription,
+  providerMeta,
+} from "@/lib/queries/integration-provider-drawer";
+import { getRequestProjectDefaults } from "@/lib/queries/workspace-request-data";
+import {
+  compareProviderChainEntries,
+  primaryProviderConnection,
+  providerChainOrderBy,
+} from "@/lib/rank-check/provider-chain-order";
+import { DEFAULT_SERP_DEPTH } from "@/lib/serp/constants";
+
+type SyncFailure = NonNullable<IntegrationProvider["syncFailure"]>;
+type ConsumerStatuses = IntegrationProvider["consumerStatuses"];
+
+export type IntegrationsView = {
+  categories: IntegrationCategory[];
+  connectionCount: number;
+  timeZone: string;
+};
+
+const activeIntegrationKinds = [
+  "serp",
+  "analytics",
+] as const satisfies readonly ActiveIntegrationKind[];
+
+function statusFor(itemStatus: ProviderStatusKind, connection?: ProviderConnectionRow) {
+  return connection?.status ?? itemStatus;
+}
+
+function compareConnection(a: ProviderConnectionRow, b: ProviderConnectionRow) {
+  const enabledDelta = Number(b.enabled) - Number(a.enabled);
+  return enabledDelta || compareProviderChainEntries(a, b);
+}
+
+function orderedCatalog(kind: ActiveIntegrationKind, connections: ProviderConnectionRow[]) {
+  const connectedIds = new Set(
+    connections.filter((row) => row.kind === kind).map((row) => row.provider),
+  );
+  const connectedCatalog = connections
+    .filter((row) => row.kind === kind)
+    .sort(compareConnection)
+    .flatMap((row) => {
+      const item = PROVIDER_CATALOG.find((provider) => provider.id === row.provider);
+      return item ? [{ connection: row, item }] : [];
+    });
+  const remainingCatalog = PROVIDER_CATALOG.filter(
+    (item) => item.kind === kind && !connectedIds.has(item.id),
+  ).map((item) => ({ connection: undefined, item }));
+
+  return [...connectedCatalog, ...remainingCatalog];
+}
+
+function integrationProvider(
+  kind: ActiveIntegrationKind,
+  row: ReturnType<typeof orderedCatalog>[number],
+  now: Date,
+  primaryProvider: string | null,
+  googleOAuth?: GoogleOAuthSetup,
+  syncFailure?: SyncFailure,
+  consumerStatuses?: ConsumerStatuses,
+): IntegrationProvider {
+  const { connection, item } = row;
+  const cost = connection?.costPerCheckCents;
+  const primary = connection?.provider === primaryProvider;
+  const connected = connection?.status === "connected";
+  // Only the non-secret identity fields (login, endpoint) may reach the client;
+  // password and apiKey stay server-side and are kept out of drawer defaults.
+  const identity = readableProviderIdentity(
+    connection?.credentialSource === "hosted" ? null : connection?.credentialsEncrypted,
+  );
+  const credentials =
+    identity.state === "readable" ? { endpoint: identity.endpoint, login: identity.login } : {};
+  const displayedLogin = displayedProviderLogin(item.id, credentials.login);
+
+  return {
+    connectionId: connection?.publicId,
+    connectionUpdatedAt: connection?.updatedAt.toISOString(),
+    credentialSource: connection ? (connection.credentialSource ?? "own") : undefined,
+    hasStoredCredentials: Boolean(connection?.credentialsEncrypted),
+    credentialIssue: identity.state === "unreadable" ? "unreadable" : undefined,
+    consumerStatuses,
+    description:
+      item.id === "gsc"
+        ? "One read-only Google connection for Search Insights and traffic enrichment."
+        : providerDescription(item),
+    drawer: {
+      accountEmail: identity.state === "readable" ? identity.accountEmail : undefined,
+      activities: kind === "serp" ? providerActivities(connection, now) : [],
+      costHelp: COST_ESTIMATE_PER_CHECK_HELP,
+      credentialFields: providerCredentialFieldsFor(item.id, {
+        connected: connected && connection?.credentialSource !== "hosted",
+      }),
+      defaults: {
+        costPerCheck: cost == null ? undefined : centsToDollars(Number(cost)),
+        depth: `Top ${DEFAULT_SERP_DEPTH}`,
+        device: "Desktop",
+        endpoint: credentials.endpoint ?? "",
+        language: "English",
+        locationKey: "US",
+        login: displayedLogin ?? "",
+        secret: "",
+      },
+      envHint:
+        isSelfHost && item.id !== "local-sequence"
+          ? "Credentials can also be configured through environment variables."
+          : undefined,
+      googleOAuth: item.id === (googleOAuth?.provider ?? "gsc") ? googleOAuth : undefined,
+    },
+    enabled: connection?.enabled,
+    icon: providerIcon(item.id, item.kind),
+    id: item.id,
+    kind,
+    logoDomain: item.logoDomain,
+    meta:
+      item.id === "gsc"
+        ? []
+        : providerMeta(item, connection, { ...credentials, login: displayedLogin }, now),
+    name: item.label,
+    neverSynced:
+      kind === "analytics" &&
+      connected &&
+      connection.enabled &&
+      connection.lastUsedAt === null &&
+      !syncFailure
+        ? true
+        : undefined,
+    primary: primary || undefined,
+    priority: connection?.priority,
+    secondaryAction:
+      connection?.status === "connected" && connection.credentialSource !== "hosted"
+        ? "Test"
+        : undefined,
+    status: statusFor(item.defaultStatus, connection),
+    syncFailure: connection?.status === "needs_reauth" ? undefined : syncFailure,
+    tint: `var(--${tintFor(item.id)})`,
+  };
+}
+
+async function loadProviderConnections(projectId: string) {
+  const connections = await prisma.providerConnection.findMany({
+    include: { rates: rankCheckRateSelection },
+    orderBy: providerChainOrderBy(),
+    where: { projectId },
+  });
+  return connections.map(withRankCheckManualRate);
+}
+
+async function categoriesForProject(
+  projectId: string,
+  now: Date,
+  googleOAuth?: GoogleOAuthSetup,
+  dateFormat: DateFormat = "month_first",
+): Promise<IntegrationCategory[]> {
+  const connections = await loadProviderConnections(projectId);
+  const [runs, gscConsumerStatuses] = await Promise.all([
+    prisma.operationalRun.findMany({
+      orderBy: { startedAt: "desc" },
+      select: { connectionId: true, errorClass: true, startedAt: true, status: true },
+      where: { kind: "traffic_sync", projectId },
+    }),
+    loadGscConsumerStatuses(projectId, connections, now, dateFormat),
+  ]);
+  const failuresByConnection = new Map<string, SyncFailure>();
+  for (const connection of connections) {
+    if (connection.kind !== "analytics") continue;
+    const connectionRuns = runs.filter(
+      (run) =>
+        run.connectionId === connection.id &&
+        (!connection.firstSyncRequestedAt || run.startedAt >= connection.firstSyncRequestedAt),
+    );
+    if (connectionRuns[0]?.status !== "failed") continue;
+    const firstNonFailure = connectionRuns.findIndex((run) => run.status !== "failed");
+    const failedRuns =
+      firstNonFailure === -1 ? connectionRuns : connectionRuns.slice(0, firstNonFailure);
+    const oldest = failedRuns.at(-1);
+    if (!oldest) continue;
+    failuresByConnection.set(connection.id, {
+      consecutiveFailures: failedRuns.length,
+      errorClass: connectionRuns[0]?.errorClass ?? "unknown",
+      since: oldest.startedAt.toISOString(),
+    });
+  }
+  const dataCategories = activeIntegrationKinds.map((kind) => {
+    const copy = INTEGRATION_CATEGORY_COPY[kind];
+    const primaryProvider = primaryProviderConnection(connections, kind)?.provider ?? null;
+    return {
+      description: copy.description,
+      eyebrow: copy.eyebrow,
+      id: kind,
+      providers: orderedCatalog(kind, connections).map((row) =>
+        integrationProvider(
+          kind,
+          row,
+          now,
+          primaryProvider,
+          googleOAuth,
+          row.connection ? failuresByConnection.get(row.connection.id) : undefined,
+          row.item.id === "gsc" ? gscConsumerStatuses : undefined,
+        ),
+      ),
+      title: copy.title,
+    };
+  });
+
+  return dataCategories;
+}
+
+export async function getIntegrationsView(
+  projectId: string,
+  options: { dateFormat?: DateFormat; googleOAuth?: GoogleOAuthSetup; now?: Date } = {},
+): Promise<IntegrationsView> {
+  const { project } = await requireReadableProject(projectId);
+  const now = options.now ?? new Date();
+  const [connectionCount, categories, defaults] = await Promise.all([
+    prisma.providerConnection.count({
+      where: { projectId: project.id, status: "connected" },
+    }),
+    categoriesForProject(project.id, now, options.googleOAuth, options.dateFormat),
+    getRequestProjectDefaults(project.id),
+  ]);
+
+  return { categories, connectionCount, timeZone: defaults?.timezone ?? "UTC" };
+}
+
+export async function getIntegrationCategories(
+  projectId: string,
+  options: { dateFormat?: DateFormat; googleOAuth?: GoogleOAuthSetup; now?: Date } = {},
+): Promise<IntegrationCategory[]> {
+  const { project } = await requireReadableProject(projectId);
+  return categoriesForProject(
+    project.id,
+    options.now ?? new Date(),
+    options.googleOAuth,
+    options.dateFormat,
+  );
+}
+
+export async function isProviderConnected(projectId: string, provider: string) {
+  const { project } = await requireReadableProject(projectId);
+  const connection = await prisma.providerConnection.findUnique({
+    select: { enabled: true, status: true },
+    where: { projectId_provider: { projectId: project.id, provider } },
+  });
+
+  return Boolean(connection?.enabled && connection.status === "connected");
+}

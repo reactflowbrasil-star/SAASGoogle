@@ -1,0 +1,247 @@
+"use client";
+
+import { ActionNotice } from "@/components/integrations/ConnectDrawerControls";
+import { ConnectDrawerOauthSelection } from "@/components/integrations/ConnectDrawerOauthSelection";
+import type { Notice } from "@/components/integrations/ConnectDrawerSchema";
+import { providerActionErrorNotice } from "@/components/integrations/ConnectDrawerSchema";
+import { ConnectedGoogleAccountFooter } from "@/components/integrations/ConnectedGoogleAccountFooter";
+import { Button } from "@/components/ui/Button";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { InlineCallout } from "@/components/ui/InlineCallout";
+import { ModuleMark } from "@/components/ui/ModuleMark";
+import type {
+  cancelGooglePropertySelection,
+  completeGooglePropertySelection,
+  disconnectGoogleSearchConsole,
+} from "@/lib/actions/providers";
+import {
+  type GooglePropertyFailure,
+  googlePropertyFailureMessage,
+} from "@/lib/integrations/google-property-failure";
+import { defaultGoogleProperty } from "@/lib/integrations/google-property-grouping";
+import type { GoogleOAuthSetup } from "@/lib/integrations/types";
+import { googleInstallUrl } from "@/lib/providers/analytics/google-install-url";
+import { asProjectRef, searchConsolePath } from "@/lib/routing/app-path";
+import type { SearchSyncPreflightPlan } from "@/lib/search-insights/sync/plan";
+import { actionErrorMessage } from "@/lib/ui/action-error";
+import { GoogleLogoIcon as GoogleLogo } from "@phosphor-icons/react/dist/csr/GoogleLogo";
+import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { useState, useTransition } from "react";
+import { SearchInsightsGa4PropertyPicker } from "./SearchInsightsGa4PropertyPicker";
+
+export type CancelGooglePropertySelectionAction = typeof cancelGooglePropertySelection;
+export type CompleteGooglePropertySelectionAction = typeof completeGooglePropertySelection;
+export type DisconnectGoogleSearchConsoleAction = typeof disconnectGoogleSearchConsole;
+type SearchSyncSelection = Pick<SearchSyncPreflightPlan, "pace" | "retentionMonths">;
+
+export type SearchInsightsOauthReturnProps = {
+  cancelAction: CancelGooglePropertySelectionAction;
+  completeAction: CompleteGooglePropertySelectionAction;
+  disconnectAction: DisconnectGoogleSearchConsoleAction;
+  projectId: string;
+  setup: GoogleOAuthSetup;
+  syncPlan?: SearchSyncPreflightPlan;
+};
+
+/**
+ * The consent screen returns to this module rather than to Integrations, so the property
+ * choice has to be finishable here. Search Console is the module's own flow; the analytics
+ * provider comes back through the same seam and uses the local GA4 picker.
+ */
+export function SearchInsightsOauthReturn({
+  cancelAction,
+  completeAction,
+  disconnectAction,
+  projectId,
+  setup,
+  syncPlan,
+}: Readonly<SearchInsightsOauthReturnProps>) {
+  const router = useRouter();
+  const t = useTranslations("projectSearchInsights.copy");
+  const isGa4 = setup.provider === "ga4";
+  const [property, setProperty] = useState(
+    defaultGoogleProperty({
+      options: setup.properties,
+      preferred: setup.preferredProperty,
+      projectDomain: setup.projectDomain ?? "",
+    }),
+  );
+  const [propertyError, setPropertyError] = useState<string | null>(null);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [authorizationFailure, setAuthorizationFailure] = useState<GooglePropertyFailure | null>(
+    null,
+  );
+  const [manualEntry, setManualEntry] = useState(
+    isGa4 && Boolean(setup.error) && setup.properties.length === 0,
+  );
+  const [retrying, startRetry] = useTransition();
+  const [settling, startSettling] = useTransition();
+  const [pending, setPending] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [disconnectOpen, setDisconnectOpen] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectFailure, setDisconnectFailure] = useState<Notice | null>(null);
+  async function cancel() {
+    setCancelling(true);
+    try {
+      await cancelAction({ projectId });
+      router.refresh();
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  async function disconnect() {
+    setDisconnecting(true);
+    try {
+      await disconnectAction({ projectId });
+      setDisconnectFailure(null);
+      setDisconnectOpen(false);
+      router.refresh();
+    } catch (error) {
+      setDisconnectFailure(providerActionErrorNotice(error));
+      throw error;
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
+  /**
+   * The connection is made by the time the action resolves, but the screen that replaces this one
+   * only arrives with the next server render. Clearing `pending` here - as a `finally` did - hands
+   * back an idle button on the screen the customer just left, which reads as a dropped click and
+   * invites a second submit that starts a second connection. The refresh runs inside a transition
+   * instead, so the control stays busy until that render commits, and only a failure gives it back.
+   */
+  async function select(selection?: SearchSyncSelection) {
+    setPending(true);
+    setPropertyError(null);
+    setSelectionError(null);
+    try {
+      const result = await completeAction({
+        ...(isGa4 ? {} : selection),
+        projectId,
+        property,
+      });
+      if ("status" in result && result.status !== "saved") {
+        const failure = result.failure ?? { reason: "auth", action: "reconnect" };
+        setSelectionError(googlePropertyFailureMessage(failure, t));
+        if (result.status === "reauth_required") setAuthorizationFailure(failure);
+        setPending(false);
+        return;
+      }
+      startSettling(() => {
+        router.refresh();
+      });
+    } catch (error) {
+      setPropertyError(actionErrorMessage(error, t("selectFailed")));
+      setPending(false);
+    }
+  }
+
+  const switchAccountHref = googleInstallUrl({
+    projectId,
+    provider: isGa4 ? "ga4" : "gsc",
+    returnPath: searchConsolePath(asProjectRef(projectId)),
+  });
+
+  return (
+    <div
+      className={isGa4 ? "w-full" : "w-full max-w-[676px]"}
+      data-testid="search-insights-oauth-return"
+    >
+      {!isGa4 && syncPlan ? (
+        <header className="mx-auto mb-6 flex max-w-[520px] flex-col items-center text-center">
+          <ModuleMark
+            bordered
+            className="mb-4"
+            icon={GoogleLogo}
+            label={t("googleLogo")}
+            variant="soft"
+          />
+          <h1 className="m-0 text-[22px] font-semibold tracking-[-0.35px] text-fg">
+            {t("gscSelectionTitle")}
+          </h1>
+          <p className="m-0 mt-2.5 text-[13.5px] leading-6 text-fg-muted">
+            {t("gscSelectionBody")}
+          </p>
+        </header>
+      ) : null}
+      {selectionError && !authorizationFailure ? (
+        <InlineCallout tint="yellow">{selectionError}</InlineCallout>
+      ) : null}
+      {authorizationFailure || setup.requiresReauth ? (
+        <div className="flex flex-col gap-3 rounded-card border border-border p-4">
+          <InlineCallout tint="yellow">
+            {authorizationFailure
+              ? googlePropertyFailureMessage(authorizationFailure, t)
+              : setup.failure
+                ? googlePropertyFailureMessage(setup.failure, t)
+                : t("reauthRequired")}
+          </InlineCallout>
+          <div className="flex justify-end gap-2">
+            <Button loading={cancelling} onClick={() => void cancel()} variant="ghost">
+              {t("notNow")}
+            </Button>
+            <Button href={switchAccountHref} variant="secondary">
+              {t("tryConnectingAgain")}
+            </Button>
+          </div>
+        </div>
+      ) : isGa4 ? (
+        <SearchInsightsGa4PropertyPicker
+          cancelling={cancelling}
+          manualEntry={manualEntry}
+          onCancel={() => void cancel()}
+          onManualEntryChange={setManualEntry}
+          onPropertyChange={setProperty}
+          onPropertyErrorChange={setPropertyError}
+          onRetry={setup.error ? () => startRetry(() => router.refresh()) : undefined}
+          onSelect={() => void select()}
+          pending={pending || settling}
+          property={property}
+          propertyError={propertyError}
+          retrying={retrying}
+          setup={setup}
+        />
+      ) : syncPlan ? (
+        <ConnectDrawerOauthSelection
+          accountFooter={
+            <ConnectedGoogleAccountFooter
+              accountEmail={setup.accountEmail}
+              layout="standalone"
+              onDisconnect={() => {
+                setDisconnectFailure(null);
+                setDisconnectOpen(true);
+              }}
+              switchAccountHref={switchAccountHref}
+            />
+          }
+          allowManualEntry={false}
+          isGa4={false}
+          manualEntry={false}
+          onManualEntryChange={() => undefined}
+          onPropertyChange={setProperty}
+          onPropertyErrorChange={setPropertyError}
+          onSelect={(selection) => void select(selection)}
+          pending={pending || settling}
+          property={property}
+          propertyError={propertyError}
+          readOnly={false}
+          setup={setup}
+          syncPlan={syncPlan}
+        />
+      ) : null}
+
+      <ConfirmModal
+        busy={disconnecting}
+        failureDetail={disconnectFailure ? <ActionNotice notice={disconnectFailure} /> : undefined}
+        kind="removeSearchConsoleConnection"
+        onClose={() => setDisconnectOpen(false)}
+        onConfirm={disconnect}
+        open={disconnectOpen}
+      />
+    </div>
+  );
+}

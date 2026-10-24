@@ -1,0 +1,639 @@
+import { APP_REQUEST_ORIGIN } from "@/lib/provider-usage/surface";
+import { DeploymentAdmissionExhaustedError } from "@/lib/providers/execution-extension-errors";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ProviderLookupSignal } from "./paid-call";
+import { researchKeywords } from "./service";
+
+const connectionPublicId = "conn_a00000000000000000000000";
+
+const mocks = vi.hoisted(() => ({
+  ideas: vi.fn(),
+  paidCall: vi.fn(),
+  project: vi.fn(),
+  rateContext: vi.fn(),
+  related: vi.fn(),
+  readCache: vi.fn(),
+  snapshot: vi.fn(),
+  suggestions: vi.fn(),
+  withCache: vi.fn(),
+}));
+
+const cacheKeySpy = vi.fn();
+
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/db/prisma", () => ({
+  prisma: {
+    providerConnection: {
+      findUnique: vi.fn(async () => ({
+        credentialSource: "own",
+        credentialsEncrypted: "secret",
+        projectId: "project_1",
+        provider: "dataforseo",
+        enabled: true,
+        status: "connected",
+        rates: [],
+        project: { ownerId: "owner_1" },
+      })),
+    },
+    $queryRaw: vi.fn(async () => []),
+  },
+}));
+vi.mock("@/lib/provider-rates/connection-context", () => ({
+  loadProviderRateContext: mocks.rateContext,
+}));
+vi.mock("./context", () => ({
+  connectionResources: () => [
+    { id: connectionPublicId, label: "DataForSEO", provider: "dataforseo" },
+  ],
+  eligibleResearchConnections: (project: { eligible: unknown[] }) => project.eligible,
+  keywordResearchProject: mocks.project,
+  normalizeResearchKeyword: (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase(),
+  researchLocation: (_project: unknown, overrideKey?: string) =>
+    Promise.resolve({
+      key: overrideKey ?? "US",
+      value: {
+        gl: (overrideKey ?? "US").slice(0, 2).toLowerCase(),
+        hl: overrideKey?.split("@")[1] ?? "en",
+        primaryGeoCode: null,
+        primaryGeoName: "United States",
+        secondaryGeoName: "United States",
+      },
+    }),
+}));
+vi.mock("./cache", () => ({
+  keywordResearchCachedUntil: (fetchedAts: string | string[]) => {
+    const values = (Array.isArray(fetchedAts) ? fetchedAts : [fetchedAts]).map((value) =>
+      new Date(value).getTime(),
+    );
+    return new Date(Math.min(...values) + 12 * 60 * 60 * 1000).toISOString();
+  },
+  keywordResearchCacheKey: (input: { source: string }) => {
+    cacheKeySpy(input);
+    return `kr:${input.source}`;
+  },
+  readKeywordResearchCache: mocks.readCache,
+  withKeywordResearchCache: mocks.withCache,
+}));
+vi.mock("./paid-call", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./paid-call")>()),
+  paidProviderCall: mocks.paidCall,
+}));
+vi.mock("./metrics", () => ({ fetchKeywordMetrics: vi.fn() }));
+vi.mock("./snapshot", () => ({ maybePersistKeywordResearchSnapshot: mocks.snapshot }));
+
+const provider = {
+  fetchKeywordIdeas: mocks.ideas,
+  fetchKeywordSuggestions: mocks.suggestions,
+  fetchRelatedKeywords: mocks.related,
+  id: "dataforseo",
+  label: "DataForSEO",
+};
+const project = {
+  eligible: [
+    {
+      connection: {
+        credentialsEncrypted: "secret",
+        id: "connection_1",
+        provider: "dataforseo",
+        publicId: connectionPublicId,
+      },
+      provider,
+    },
+  ],
+  id: "project_1",
+  publicId: "prj_abcdefghijklmnopqrstuvwx",
+  keywords: [{ locationRef: { canonicalKey: "US" }, text: "tracked keyword" }],
+  savedKeywords: [],
+};
+
+function row(keyword: string) {
+  return {
+    competition: null,
+    cpcCents: null,
+    difficulty: null,
+    intent: null,
+    keyword,
+    monthlyTrend: [],
+    searchVolume: null,
+  };
+}
+
+function run(overrides: Partial<Parameters<typeof researchKeywords>[0]> = {}) {
+  return researchKeywords({
+    includeClickstream: false,
+    mode: "auto",
+    origin: APP_REQUEST_ORIGIN,
+    projectId: "project_1",
+    resultLimit: 2,
+    seed: "Seed",
+    ...overrides,
+  });
+}
+
+describe("keyword research service", () => {
+  it.each(["auto", "related", "suggestions", "ideas"] as const)(
+    "zero cap refuses a %s cache miss with its price before paid work",
+    async (mode) => {
+      await expect(run({ maxCostCents: 0, mode })).resolves.toMatchObject({
+        ok: false,
+        reason: "cost_limit_exceeded",
+        estimatedCostCents: expect.any(Number),
+      });
+      expect(mocks.paidCall).not.toHaveBeenCalled();
+      expect(mocks.related).not.toHaveBeenCalled();
+      expect(mocks.suggestions).not.toHaveBeenCalled();
+      expect(mocks.ideas).not.toHaveBeenCalled();
+      expect(mocks.snapshot).not.toHaveBeenCalled();
+    },
+  );
+
+  it("zero cap returns cached research for free", async () => {
+    mocks.withCache.mockResolvedValue({
+      cached: true,
+      status: "success",
+      value: {
+        costCents: 3,
+        fetchedAt: "2026-10-11T10:00:00.000Z",
+        rows: [row("Alpha")],
+      },
+    });
+    await expect(run({ maxCostCents: 0, mode: "ideas" })).resolves.toMatchObject({
+      ok: true,
+      cached: true,
+      costCents: 0,
+      rows: [{ keyword: "Alpha" }],
+      sources: [{ cached: true, costCents: 0 }],
+    });
+    expect(mocks.paidCall).not.toHaveBeenCalled();
+  });
+
+  it("passes the exact remaining request consent to each source", async () => {
+    mocks.related.mockResolvedValue({ costCents: 1.55, rows: [row("seed"), row("Alpha")] });
+    await expect(run({ maxCostCents: 3.65 })).resolves.toMatchObject({ ok: true, costCents: 3.55 });
+    expect(mocks.paidCall).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ maxCostCents: 3.65 }),
+    );
+    expect(mocks.paidCall).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ maxCostCents: 2.1 }),
+    );
+  });
+
+  it("retains paid retry cost when a later source exceeds its consent", async () => {
+    mocks.paidCall
+      .mockImplementationOnce(({ call }: { call: (credentials: object) => Promise<unknown> }) =>
+        call({}),
+      )
+      .mockRejectedValueOnce(
+        new ProviderLookupSignal({
+          ok: false,
+          reason: "cost_limit_exceeded",
+          estimatedCostCents: 3,
+          costCents: 0.4,
+        }),
+      );
+    await expect(run({ maxCostCents: 5 })).resolves.toMatchObject({
+      ok: true,
+      costCents: 1.4,
+      sources: expect.arrayContaining([
+        expect.objectContaining({ source: "suggestion", costCents: 0.4, reason: "cost_limit" }),
+      ]),
+    });
+    expect(mocks.ideas).not.toHaveBeenCalled();
+  });
+  beforeEach(() => {
+    vi.setSystemTime(new Date("2026-10-11T12:00:00Z"));
+    vi.clearAllMocks();
+    mocks.project.mockResolvedValue(project);
+    mocks.rateContext.mockResolvedValue({ entries: [], manualAmountCents: null });
+    mocks.readCache.mockResolvedValue(null);
+    mocks.withCache.mockImplementation(async ({ load }: { load: () => Promise<unknown> }) => ({
+      cached: false,
+      status: "success",
+      value: await load(),
+    }));
+    mocks.paidCall.mockImplementation(
+      ({ call }: { call: (credentials: object) => Promise<unknown> }) => call({}),
+    );
+    mocks.related.mockResolvedValue({ costCents: 1, rows: [row("seed"), row("Alpha")] });
+    mocks.suggestions.mockResolvedValue({ costCents: 2, rows: [row("alpha"), row("Beta")] });
+    mocks.ideas.mockResolvedValue({ costCents: 3, rows: [row("Gamma")] });
+  });
+
+  it("auto cascades, excludes the seed, deduplicates, and stops at the limit", async () => {
+    await expect(run()).resolves.toMatchObject({
+      cached: false,
+      costCents: 3,
+      ok: true,
+      rows: [
+        { alreadyTracked: false, keyword: "Alpha", source: "related" },
+        { alreadyTracked: false, keyword: "Beta", source: "suggestion" },
+      ],
+      sources: [
+        { costCents: 1, returned: 2, source: "related", status: "ok" },
+        { costCents: 2, returned: 2, source: "suggestion", status: "ok" },
+        { reason: "result_limit", source: "idea", status: "skipped" },
+      ],
+    });
+    expect(mocks.ideas).not.toHaveBeenCalled();
+  });
+
+  it("persists successful partial and zero-row results only after the paid outcome", async () => {
+    mocks.paidCall
+      .mockImplementationOnce(({ call }: { call: (credentials: object) => Promise<unknown> }) =>
+        call({}),
+      )
+      .mockRejectedValueOnce(new Error("provider unavailable"));
+    await run();
+    expect(mocks.snapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: expect.objectContaining({
+          sources: expect.arrayContaining([expect.objectContaining({ status: "failed" })]),
+        }),
+        successfulFetchedAts: [expect.any(String)],
+      }),
+    );
+
+    mocks.snapshot.mockClear();
+    mocks.ideas.mockResolvedValue({ costCents: 1, rows: [] });
+    await run({ mode: "ideas" });
+    expect(mocks.snapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: expect.objectContaining({ rows: [] }),
+        successfulFetchedAts: [expect.any(String)],
+      }),
+    );
+  });
+
+  it("still returns a paid outcome when snapshot persistence fails", async () => {
+    mocks.snapshot.mockRejectedValueOnce(new Error("unique constraint"));
+    await expect(run()).resolves.toMatchObject({ costCents: 3, ok: true });
+  });
+
+  it("never asks the snapshot writer to save estimates or all-failed work", async () => {
+    await run({ estimateOnly: true });
+    mocks.paidCall.mockRejectedValueOnce(
+      new ProviderLookupSignal({ ok: false, reason: "no_source" }),
+    );
+    await run({ mode: "ideas" });
+    expect(mocks.snapshot).not.toHaveBeenCalled();
+  });
+
+  it("keys on the resolved SerpRankLocation, not the city-level canonical key", async () => {
+    await run();
+    expect(cacheKeySpy).toHaveBeenCalled();
+    for (const input of cacheKeySpy.mock.calls.map((call) => call[0])) {
+      expect(input.location).toEqual(
+        expect.objectContaining({ gl: "us", hl: "en", primaryGeoName: "United States" }),
+      );
+      expect(typeof input.location).toBe("object");
+      expect(input.locationKey).toBeUndefined();
+    }
+  });
+
+  it("selects by public ID while keeping the internal ID for provider work", async () => {
+    await expect(run({ connectionId: connectionPublicId })).resolves.toMatchObject({
+      connections: [{ id: connectionPublicId }],
+      ok: true,
+    });
+    expect(mocks.paidCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connection: expect.objectContaining({ id: "connection_1" }),
+      }),
+    );
+  });
+
+  it.each(["connection_1", "key_a00000000000000000000000"])(
+    "rejects non-public connection selection %s",
+    async (connectionId) => {
+      await expect(run({ connectionId })).rejects.toMatchObject({ code: "invalid_public_id" });
+      expect(mocks.paidCall).not.toHaveBeenCalled();
+    },
+  );
+
+  it("annotates tracked rows and marks per-source cache diagnostics", async () => {
+    mocks.withCache.mockResolvedValue({
+      cached: true,
+      status: "success",
+      value: {
+        costCents: 1,
+        fetchedAt: "2026-07-22T10:00:00.000Z",
+        rows: [row("Tracked Keyword")],
+      },
+    });
+    await expect(run({ mode: "ideas" })).resolves.toMatchObject({
+      cached: true,
+      rows: [{ alreadyTracked: true }],
+      sources: [{ cached: true }],
+    });
+    expect(mocks.paidCall).not.toHaveBeenCalled();
+  });
+
+  it("does not annotate the same tracked text from another country-language pair", async () => {
+    mocks.project.mockResolvedValue({
+      ...project,
+      keywords: [{ locationRef: { canonicalKey: "GB" }, text: "tracked keyword" }],
+    });
+    mocks.withCache.mockResolvedValue({
+      cached: true,
+      status: "success",
+      value: {
+        costCents: 1,
+        fetchedAt: "2026-07-22T10:00:00.000Z",
+        rows: [row("Tracked Keyword")],
+      },
+    });
+
+    await expect(run({ mode: "ideas" })).resolves.toMatchObject({
+      rows: [{ alreadyTracked: false }],
+    });
+  });
+
+  it("annotates saved rows by normalized text and active location", async () => {
+    mocks.project.mockResolvedValue({
+      ...project,
+      savedKeywords: [
+        {
+          countryCode: "US",
+          languageCode: "en",
+          location: "US",
+          normalizedText: "saved keyword",
+        },
+        {
+          countryCode: "GB",
+          languageCode: "en",
+          location: "GB",
+          normalizedText: "other scope",
+        },
+      ],
+    });
+    mocks.withCache.mockResolvedValue({
+      cached: true,
+      status: "success",
+      value: {
+        costCents: 1,
+        fetchedAt: "2026-07-22T10:00:00.000Z",
+        rows: [row("Saved   Keyword"), row("Other Scope")],
+      },
+    });
+
+    await expect(run({ mode: "ideas" })).resolves.toMatchObject({
+      rows: [
+        { alreadySaved: true, keyword: "Saved   Keyword" },
+        { alreadySaved: false, keyword: "Other Scope" },
+      ],
+    });
+  });
+
+  it("does not annotate the same saved text from another language pair", async () => {
+    mocks.project.mockResolvedValue({
+      ...project,
+      savedKeywords: [
+        {
+          countryCode: "CA",
+          languageCode: "en",
+          location: "CA",
+          normalizedText: "saved keyword",
+        },
+      ],
+    });
+    mocks.withCache.mockResolvedValue({
+      cached: true,
+      status: "success",
+      value: {
+        costCents: 1,
+        fetchedAt: "2026-07-22T10:00:00.000Z",
+        rows: [row("Saved keyword")],
+      },
+    });
+
+    await expect(run({ locationKey: "CA@fr", mode: "ideas" })).resolves.toMatchObject({
+      rows: [{ alreadySaved: false, keyword: "Saved keyword" }],
+    });
+  });
+
+  it("rejects an unsupported pair before rates, cache, or provider work", async () => {
+    await expect(run({ locationKey: "ES@en" })).resolves.toEqual({
+      ok: false,
+      reason: "unsupported_location",
+    });
+
+    expect(mocks.rateContext).not.toHaveBeenCalled();
+    expect(mocks.readCache).not.toHaveBeenCalled();
+    expect(mocks.withCache).not.toHaveBeenCalled();
+    expect(mocks.paidCall).not.toHaveBeenCalled();
+    expect(mocks.related).not.toHaveBeenCalled();
+    expect(mocks.suggestions).not.toHaveBeenCalled();
+    expect(mocks.ideas).not.toHaveBeenCalled();
+  });
+
+  it("returns the earliest server cache expiry across successful sources", async () => {
+    mocks.withCache
+      .mockResolvedValueOnce({
+        cached: true,
+        status: "success",
+        value: {
+          costCents: 1,
+          fetchedAt: "2026-07-22T10:15:00.000Z",
+          rows: [row("Alpha")],
+        },
+      })
+      .mockResolvedValueOnce({
+        cached: true,
+        status: "success",
+        value: {
+          costCents: 2,
+          fetchedAt: "2026-07-22T10:00:00.000Z",
+          rows: [row("Beta")],
+        },
+      })
+      .mockResolvedValueOnce({
+        cached: true,
+        status: "success",
+        value: {
+          costCents: 3,
+          fetchedAt: "2026-07-22T10:30:00.000Z",
+          rows: [row("Gamma")],
+        },
+      });
+
+    await expect(run({ resultLimit: 10 })).resolves.toMatchObject({
+      cachedUntil: "2026-07-22T22:00:00.000Z",
+      fetchedAt: "2026-07-22T10:30:00.000Z",
+      ok: true,
+    });
+  });
+
+  it("returns partial success when a later source exhausts the budget", async () => {
+    mocks.paidCall
+      .mockImplementationOnce(({ call }: { call: (credentials: object) => Promise<unknown> }) =>
+        call({}),
+      )
+      .mockRejectedValueOnce(new ProviderLookupSignal({ ok: false, reason: "budget_exhausted" }));
+    const outcome = await run();
+    expect(outcome).toMatchObject({
+      ok: true,
+      rows: [{ keyword: "Alpha" }],
+      sources: [
+        { source: "related", status: "ok" },
+        { reason: "budget_exhausted", source: "suggestion", status: "failed" },
+        { reason: "previous_source_failed", source: "idea", status: "skipped" },
+      ],
+    });
+    expect(
+      outcome.ok && "cachedUntil" in outcome
+        ? new Date(outcome.cachedUntil).getTime()
+        : Number.POSITIVE_INFINITY,
+    ).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("propagates deployment admission after an earlier paid source succeeded", async () => {
+    const admission = new DeploymentAdmissionExhaustedError("balance");
+    mocks.paidCall
+      .mockImplementationOnce(({ call }: { call: (credentials: object) => Promise<unknown> }) =>
+        call({}),
+      )
+      .mockRejectedValueOnce(admission);
+
+    await expect(run()).rejects.toBe(admission);
+    expect(mocks.snapshot).not.toHaveBeenCalled();
+  });
+
+  it("returns partial success when a later source has an unexpected provider failure", async () => {
+    mocks.paidCall
+      .mockImplementationOnce(({ call }: { call: (credentials: object) => Promise<unknown> }) =>
+        call({}),
+      )
+      .mockRejectedValueOnce(new Error("provider unavailable"));
+    await expect(run()).resolves.toMatchObject({
+      ok: true,
+      sources: [
+        { source: "related", status: "ok" },
+        { reason: "provider_error", source: "suggestion", status: "failed" },
+        { reason: "previous_source_failed", source: "idea", status: "skipped" },
+      ],
+    });
+  });
+
+  it("reuses a successful source after partial failure and does not add another ledgered call", async () => {
+    const sourceCache = new Map<string, unknown>();
+    mocks.withCache.mockImplementation(
+      async ({ key, load }: { key: string; load: () => Promise<unknown> }) => {
+        if (sourceCache.has(key)) {
+          return { cached: true, status: "success", value: sourceCache.get(key) };
+        }
+        const value = await load();
+        sourceCache.set(key, value);
+        return { cached: false, status: "success", value };
+      },
+    );
+    let ledgerRows = 0;
+    mocks.paidCall.mockImplementation(async ({ call }) => {
+      if (ledgerRows === 1) {
+        ledgerRows += 1;
+        throw new ProviderLookupSignal({ ok: false, reason: "budget_exhausted" });
+      }
+      const value = await call({});
+      ledgerRows += 1;
+      return value;
+    });
+    await run();
+    await run();
+    expect(mocks.related).toHaveBeenCalledOnce();
+    expect(ledgerRows).toBe(3);
+  });
+
+  it("returns the plain error when the first source fails", async () => {
+    mocks.paidCall.mockRejectedValueOnce(
+      new ProviderLookupSignal({ ok: false, reason: "budget_exhausted" }),
+    );
+    await expect(run()).resolves.toEqual({ ok: false, reason: "budget_exhausted" });
+  });
+
+  it("estimates each uncached source without calling the provider", async () => {
+    const outcome = await run({ estimateOnly: true });
+    expect(outcome).toMatchObject({
+      cached: false,
+      estimate: true,
+      ok: true,
+      sources: [
+        { cached: false, costCents: expect.any(Number), source: "related" },
+        { cached: false, costCents: expect.any(Number), source: "suggestion" },
+        { cached: false, costCents: expect.any(Number), source: "idea" },
+      ],
+    });
+    // A dry run must not look like an empty result: no rows, fetch time, or source statuses.
+    expect(outcome).not.toHaveProperty("rows");
+    expect(outcome).not.toHaveProperty("fetchedAt");
+    expect(outcome.ok && outcome.sources[0]).not.toHaveProperty("status");
+    expect(mocks.paidCall).not.toHaveBeenCalled();
+  });
+
+  it("stops auto mode at max cost and returns partial success", async () => {
+    await expect(run({ maxCostCents: 2 })).resolves.toMatchObject({
+      ok: true,
+      sources: [
+        { source: "related", status: "ok" },
+        { reason: "cost_limit", source: "suggestion", status: "skipped" },
+        { reason: "cost_limit", source: "idea", status: "skipped" },
+      ],
+    });
+    expect(mocks.suggestions).not.toHaveBeenCalled();
+  });
+
+  it("returns an empty auto estimate guard response when the first source exceeds max cost", async () => {
+    await expect(run({ maxCostCents: 1 })).resolves.toMatchObject({
+      ok: true,
+      rows: [],
+      sources: [
+        { reason: "cost_limit", source: "related", status: "skipped" },
+        { reason: "cost_limit", source: "suggestion", status: "skipped" },
+        { reason: "cost_limit", source: "idea", status: "skipped" },
+      ],
+    });
+    expect(mocks.paidCall).not.toHaveBeenCalled();
+  });
+
+  it("returns 422 outcome when a sole research source exceeds max cost", async () => {
+    await expect(run({ maxCostCents: 1, mode: "related" })).resolves.toEqual({
+      estimatedCostCents: 1.224,
+      ok: false,
+      reason: "cost_limit_exceeded",
+    });
+  });
+
+  it.each(["budget_exhausted", "needs_reauth", "rate_limited", "unsupported_location"] as const)(
+    "maps %s without caching an error",
+    async (reason) => {
+      mocks.paidCall.mockRejectedValue(
+        new ProviderLookupSignal({ ok: false, reason, resetAt: 123 }),
+      );
+      await expect(run()).resolves.toMatchObject({ ok: false, reason });
+    },
+  );
+
+  it("rejects an ineligible connection", async () => {
+    await expect(run({ connectionId: "conn_b00000000000000000000000" })).resolves.toEqual({
+      ok: false,
+      reason: "no_source",
+    });
+  });
+
+  it("threads the paying request origin into the source call", async () => {
+    const origin = {
+      credential: { id: "key_1", kind: "project_key" as const },
+      source: "sdk" as const,
+    };
+    await run({ origin });
+
+    expect(mocks.paidCall).toHaveBeenCalled();
+    for (const [input] of mocks.paidCall.mock.calls) {
+      expect(input).toMatchObject({
+        credential: { id: "key_1", kind: "project_key" },
+        source: "sdk",
+        trigger: "manual",
+      });
+    }
+  });
+});

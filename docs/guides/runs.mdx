@@ -1,0 +1,165 @@
+---
+title: "Run rank checks"
+description: "Start a rank check, find the result, and filter runs by source and status."
+---
+
+A rank-check run is one tracked execution over a selection of keyword targets. A
+run can be started manually, created by a schedule, retried, or started through
+the app API. It groups the work and its results in one place.
+
+## Start a check and find the result
+
+1. Open **Rank Tracker** and select the keywords to check.
+2. Select **Run checks** (or **Run check** for one keyword), review the selected
+   depth and estimated cost, then select **Start run**. From Overview you can
+   also select **Run first check**.
+3. Watch progress in **Runs**. Set **Status** to **Running** to see only the
+   runs that are checking targets.
+4. When the run finishes, open it from **Runs** to read positions, ranking
+   URLs, and per-target outcomes.
+
+To start one future occurrence immediately, or to skip it, open **Runs** and
+set **Status** to **Planned**. These controls change that one occurrence, not
+the schedule. Edit the [schedule](/guides/schedules) to change cadence or
+membership.
+
+A [single check](/api/checks) retrieves one current position for one keyword
+target. A run coordinates multiple checks, including the targets that are still
+waiting, the ones that finished, and the final result of the whole selection.
+
+## Read the timeline
+
+The project Runs table combines rank checks and Search Console imports. Each row
+shows the task and scope, its recorded date, status with progress, and actions.
+AI tracking retains its own run history.
+
+**Start time passed** contains waiting work whose recorded start or retry time has passed.
+**Scheduled later** contains waiting work with a future date. An unstarted
+scheduled occurrence shows **Past scheduled time**, with elapsed full days when
+at least one day has passed. This describes the recorded timing; it does not
+mean that the run started or that its status changed.
+
+**Needs attention** filters blocked work and past failures. Current waiting
+blockers remain separate from terminal failures in **History**. Open
+**Review issue** to inspect a current blocker. Viewing it does not start checks
+or change a schedule. If accounting is unresolved, review usage; a monthly
+budget reset alone may not resolve the block. A missing or uncertain budget is
+not displayed as a zero-dollar cap.
+
+## Filter runs
+
+**Runs** lists every execution. Use **Source** to show rank checks, Search
+Console imports, or both. The **Status** filter uses the same words as the
+status chips in the table, grouped by source. Hover a chip to read what it
+means, or select the info icon next to the **Status** column header to see
+every status.
+
+Rank checks:
+
+| Status | API value | Meaning |
+| - | - | - |
+| Planned | `planned` | The run waits for its scheduled time. |
+| Blocked | `blocked` | A problem, such as a used-up budget or a missing provider, stops the run. |
+| Queued | `queued` | The run is accepted and waits for its first check. |
+| Running | `running` | The run is checking its targets. |
+| Cancelling | `cancelling` | The run stops when its started checks finish. |
+| Succeeded | `succeeded` | Every target got a result. |
+| Partial | `partial` | Some targets got a result, and others did not. |
+| Deferred | `deferred` | The run postponed its targets and charged nothing for them. |
+| Failed | `failed` | No target got a result because its checks failed or were skipped. |
+| Cancelled | `cancelled` | The run stopped on request and keeps the results it already got. |
+| Not confirmed | `not_confirmed` | The run finished, but it has no recorded result. |
+
+Search Console imports:
+
+| Status | API value | Meaning |
+| - | - | - |
+| Queued | `queued` | The import waits to start. |
+| Importing | `importing` | The import is getting search data from Google. |
+| Paused | `paused` | A user paused the import until someone resumes it. |
+| Waiting for Google | `waiting_for_google` | Google limits requests, and the import resumes by itself when it can. |
+| Reconnect required | `reconnect_required` | The import needs you to reconnect Search Console. |
+| Waiting for data | `waiting_for_data` | Google has no final search data for this property yet. |
+| Delayed | `delayed` | The import cannot continue because its worker is unavailable. |
+| Failed | `failed` | The last import attempt failed and needs a retry. |
+| Completed | `completed` | The import finished. |
+| Status unavailable | `status_unavailable` | The app cannot read the current import state right now. |
+
+Selecting a status in the app also sets **Source**. When you request
+`GET /api/runs` with `source=all`, `queued` and `failed` match both rank
+checks and Search Console imports, and `cancelled` matches rank checks.
+
+`GET /api/runs` also accepts these group values for `status`. The app menu no
+longer lists them.
+
+| Group value | What you see |
+| - | - |
+| `active` | Runs that are queued, running, or cancelling, and imports that are queued, importing, waiting for data, or waiting for Google. |
+| `attention` | Blocked runs, failed runs, and imports that are paused, failed, or need a reconnect. |
+| `finished` | Terminal runs you can inspect or retry. |
+
+**Rank Tracker → Runs** uses a different control: **Planned** and **History**,
+not the status filter. Planned lists the next seven days, soonest first.
+Per-row labels there are **Scheduled** or **Planned**. Use the project **Runs**
+page when you need to filter by status.
+
+When a completed run is `partial`, you can retry its failed or deferred targets
+as a new run. The original run and its results are retained.
+
+## Run status
+
+Status describes where the run is in its lifecycle. A run has one of these
+statuses:
+
+| Status | Meaning |
+| - | - |
+| `planned` | A scheduled occurrence is waiting for its planned time. |
+| `blocked` | The run cannot advance at the moment. Inspect its detail for the reason. |
+| `queued` | The run has been accepted and is waiting to start. |
+| `running` | At least one target has started; processing may include gaps before later targets. |
+| `cancelling` | Cancellation was requested and the run is waiting for its remaining work to settle. |
+| `completed` | The run finished processing and has a final outcome. |
+| `cancelled` | The run was cancelled. Results already completed remain available. |
+
+`completed` and `cancelled` are terminal statuses. A terminal run can have
+completed results and, where applicable, a final outcome.
+
+Schedules with no fixed time keep their checks spread across the day (or their
+longer interval). Before the first target starts, the run stays `queued` and
+shows **First check in**. Elapsed time starts with the first target, not when
+the schedule creates the run. Duration excludes that initial wait but includes
+gaps between targets. **No fixed time** remains visible when editing a schedule;
+saving other settings does not assign it a fixed hour.
+
+## Outcomes
+
+Outcome answers a different question from status: what happened across all of a
+run's targets. It is set when the run reaches its terminal state.
+
+| Outcome | Meaning |
+| - | - |
+| `succeeded` | Every target that was not cancelled completed. |
+| `partial` | At least one target completed, but one or more other non-cancelled targets did not. |
+| `failed` | No target completed and at least one target failed, was blocked, or was skipped. |
+| `deferred` | No target ran, or no target completed and the non-cancelled targets were deferred. |
+
+For example, a run that has both completed and failed targets is `partial`, not
+`failed`. Cancelled targets do not prevent the remaining completed targets from
+producing `succeeded`.
+
+## Target status
+
+Each target in a run has its own status. Target status is one of `queued`,
+`running`, `completed`, `failed`, `deferred`, `cancelled`, `skipped`, or
+`blocked`. Use it to see which target needs attention without losing the
+overall run result.
+
+### Not confirmed
+
+`Not confirmed` is a special display label for a blocked target whose send
+could not be confirmed. It is not a failure. It is not counted as spend, and it
+is not retried automatically because the check might already have been sent.
+Run the target again if you need a fresh result.
+
+A run containing a Not confirmed target can never finish with `succeeded`: the
+target remains unfinished for outcome calculation.

@@ -1,0 +1,314 @@
+import { experimentalModuleKeys } from "@/lib/settings/experimental-modules";
+import { describe, expect, it } from "vitest";
+import {
+  landingSegments,
+  navItemGroups,
+  navItemHref,
+  navItems,
+  primaryNavEntries,
+} from "./nav-items";
+
+const allExperimentalModules = experimentalModuleKeys;
+
+describe("navItems", () => {
+  it("omits experimental modules until their keys are enabled", () => {
+    const disabled = navItems("prj_example");
+    const competitorsOnly = navItems("prj_example", undefined, ["competitors"]);
+
+    expect(disabled.map((item) => item.label)).not.toContain("Timeline");
+    expect(disabled.map((item) => item.label)).not.toContain("Competitors");
+    expect(
+      navItems("prj_example", undefined, allExperimentalModules).map((item) => item.label),
+    ).not.toContain("Timeline");
+    expect(competitorsOnly.find((item) => item.label === "Competitors")).toMatchObject({
+      badge: "experimental",
+      group: "tracking",
+      scope: "market",
+    });
+    expect(competitorsOnly.map((item) => item.label)).not.toContain("Timeline");
+  });
+
+  it("keeps the grouped rail in its settled flat order", () => {
+    expect(
+      navItems("prj_example", undefined, allExperimentalModules).map((item) => item.label),
+    ).toEqual([
+      "Dashboard",
+      "Rank Tracker",
+      "AI Tracking",
+      "Competitors",
+      "Keyword Research",
+      "Domain Overview",
+      "Backlinks",
+      "AI Visibility",
+      "Prompt Explorer",
+      "Site Audit",
+      "Search Console",
+      "Agent Reports",
+      "Markets",
+      "Alerts",
+      "Runs",
+      "Integrations",
+      "Install",
+      "Settings",
+    ]);
+  });
+
+  it("groups existing destinations by purpose while keeping Dashboard standalone", () => {
+    const items = navItems("prj_example", undefined, allExperimentalModules);
+    expect(navItemGroups.map((group) => [group.id, group.label, group.tag])).toEqual([
+      ["tracking", "Tracking", "TRACKING"],
+      ["research", "Research & audits", "RESEARCH"],
+      ["reports", "Data & reports", "DATA"],
+      ["project", "Project", "PROJECT"],
+    ]);
+    expect(items.filter((item) => item.group === null).map((item) => item.label)).toEqual([
+      "Dashboard",
+    ]);
+    expect(items.filter((item) => item.group === "tracking").map((item) => item.label)).toEqual([
+      "Rank Tracker",
+      "AI Tracking",
+      "Competitors",
+    ]);
+    expect(items.filter((item) => item.group === "research").map((item) => item.label)).toEqual([
+      "Keyword Research",
+      "Domain Overview",
+      "Backlinks",
+      "AI Visibility",
+      "Prompt Explorer",
+      "Site Audit",
+    ]);
+    expect(items.filter((item) => item.group === "reports").map((item) => item.label)).toEqual([
+      "Search Console",
+      "Agent Reports",
+    ]);
+    expect(items.filter((item) => item.group === "project").map((item) => item.label)).toEqual([
+      "Markets",
+      "Alerts",
+      "Runs",
+      "Integrations",
+      "Install",
+      "Settings",
+    ]);
+    expect(items).toHaveLength(18);
+    expect(
+      items.some((item) => item.label === "Project Context" || item.label === "Analytics"),
+    ).toBe(false);
+    expect(items.find((item) => item.label === "Settings")).toMatchObject({
+      activeHrefs: ["/app/prj_example/context"],
+      href: "/app/prj_example/settings",
+    });
+  });
+
+  it("keeps group help in tooltips and short captions on the collapsed rail", () => {
+    for (const group of navItemGroups) {
+      expect(group.tooltip.length).toBeGreaterThan(0);
+      expect(group.tag).toMatch(/^[A-Z]+$/);
+      expect(group.tag.length).toBeLessThanOrEqual(8);
+    }
+    expect(navItemGroups.map((group) => group.tooltip)).toEqual([
+      "Track rankings and AI performance over time.",
+      "Explore keywords, websites and AI responses.",
+      "Review connected search data and saved reports.",
+      "Project configuration and shared operations.",
+    ]);
+  });
+
+  it("keeps Install and Integrations in Project without making them landing preferences", () => {
+    const items = navItems("prj_example", undefined, allExperimentalModules);
+    const install = items.find((item) => item.label === "Install");
+    const integrations = items.find((item) => item.label === "Integrations");
+
+    expect(install).toMatchObject({
+      group: "project",
+      href: "/app/prj_example/install",
+      scope: "project",
+    });
+    expect(install?.icon.displayName).toBe("SparkleIcon");
+    expect(integrations?.group).toBe("project");
+    expect(integrations?.scope).toBe("project");
+  });
+
+  it("keeps the hrefs whose segment does not follow from the label", () => {
+    const items = navItems("prj_example", undefined, allExperimentalModules);
+
+    const searchConsole = items.find((item) => item.label === "Search Console");
+    expect(searchConsole?.href).toBe("/app/prj_example/search-console");
+    expect(items.find((item) => item.label === "Rank Tracker")?.href).toBe(
+      "/app/prj_example/rank-tracker",
+    );
+    expect(items.find((item) => item.label === "Rank Tracker")?.icon.displayName).toBe(
+      "RankingIcon",
+    );
+  });
+
+  it("keeps Timeline available as a landing preference without placing it in the rail", () => {
+    expect(primaryNavEntries.find((item) => item.segment === "timeline")?.icon.displayName).toBe(
+      "ClockCounterClockwiseIcon",
+    );
+    expect(navItems("prj_example", undefined, allExperimentalModules)).not.toContainEqual(
+      expect.objectContaining({ label: "Timeline" }),
+    );
+  });
+
+  it("uses the siren icon for Alerts", () => {
+    expect(
+      navItems("prj_example", undefined, allExperimentalModules).find(
+        (item) => item.label === "Alerts",
+      )?.icon.displayName,
+    ).toBe("SirenIcon");
+    expect(
+      navItems("prj_example", undefined, allExperimentalModules).find(
+        (item) => item.label === "Alerts",
+      ),
+    ).toMatchObject({
+      group: "project",
+      scope: "project",
+    });
+  });
+
+  it("gives Markets the folded map and leaves the globe to Domain Overview", () => {
+    const items = navItems("prj_example", undefined, allExperimentalModules);
+    const markets = items.find((item) => item.label === "Markets");
+
+    expect(markets).toMatchObject({ group: "project", href: "/app/prj_example/markets" });
+    expect(markets?.icon.displayName).toBe("MapTrifoldIcon");
+    expect(items.find((item) => item.label === "Domain Overview")?.icon.displayName).toBe(
+      "GlobeIcon",
+    );
+  });
+
+  it("gives Search Console the rising chart rather than the vendor logo", () => {
+    expect(
+      navItems("prj_example", undefined, allExperimentalModules).find(
+        (item) => item.label === "Search Console",
+      )?.icon.displayName,
+    ).toBe("ChartLineUpIcon");
+  });
+
+  it("keeps module maturity labels out of navigation while retaining experimental access", () => {
+    const items = navItems("prj_example", undefined, allExperimentalModules);
+
+    expect(items.filter((item) => item.badge).map((item) => [item.label, item.badge])).toEqual([
+      ["Competitors", "experimental"],
+    ]);
+    expect(items.find((item) => item.label === "Search Console")?.badge).toBeUndefined();
+    expect(items.find((item) => item.label === "Alerts")?.badge).toBeUndefined();
+  });
+
+  it("carries no count on any rail row", () => {
+    const keys = new Set(
+      navItems("prj_example", undefined, allExperimentalModules).flatMap((item) =>
+        Object.keys(item),
+      ),
+    );
+
+    expect([...keys].filter((key) => /count/iu.test(key))).toEqual([]);
+    expect([...keys].sort()).toEqual([
+      "activeHrefs",
+      "badge",
+      "group",
+      "href",
+      "icon",
+      "label",
+      "scope",
+    ]);
+  });
+
+  it("gives every rail row a scope", () => {
+    expect(
+      Object.fromEntries(
+        navItems("prj_example", undefined, allExperimentalModules).map((item) => [
+          item.label,
+          item.scope,
+        ]),
+      ),
+    ).toEqual({
+      Dashboard: "level",
+      "AI Visibility": "own-axis",
+      "Prompt Explorer": "own-axis",
+      "AI Tracking": "own-axis",
+      "Site Audit": "own-axis",
+      "Agent Reports": "project",
+      Alerts: "project",
+      "Rank Tracker": "market",
+      Competitors: "market",
+      "Keyword Research": "own-axis",
+      "Domain Overview": "own-axis",
+      Backlinks: "own-axis",
+      "Search Console": "own-axis",
+      Markets: "project",
+      Runs: "project",
+      Integrations: "project",
+      Install: "project",
+      Settings: "project",
+    });
+  });
+
+  it("resolves every href at the project route when no context exists", () => {
+    for (const item of navItems("prj_example", undefined, allExperimentalModules)) {
+      expect(item.href.startsWith("/app/prj_example/")).toBe(true);
+      expect(item.href.split("/")).toHaveLength(4);
+    }
+    // An empty context is the same as none: nothing has been switched into yet.
+    expect(navItems("prj_example", {}, allExperimentalModules).map((item) => item.href)).toEqual(
+      navItems("prj_example", undefined, allExperimentalModules).map((item) => item.href),
+    );
+  });
+
+  it("points only routed market rows into the market a context supplies", () => {
+    const context = { marketSegments: ["m", "pmkt_example"] } as const;
+    const hrefs = Object.fromEntries(
+      navItems("prj_example", context, allExperimentalModules).map((item) => [
+        item.label,
+        item.href,
+      ]),
+    );
+
+    expect(hrefs.Dashboard).toBe("/app/prj_example/dashboard");
+    expect(hrefs.Alerts).toBe("/app/prj_example/alerts?f=market:pmkt_example");
+    expect(hrefs.Alerts).not.toContain("/m/pmkt_example/alerts");
+    expect(hrefs["Rank Tracker"]).toBe("/app/prj_example/m/pmkt_example/rank-tracker");
+    expect(hrefs.Competitors).toBe("/app/prj_example/competitors");
+    expect(hrefs.Backlinks).toBe("/app/prj_example/backlinks");
+    expect(hrefs.Markets).toBe("/app/prj_example/markets");
+  });
+
+  it("resolves one href from a scope and a segment", () => {
+    expect(navItemHref({ scope: "market", segment: "competitors" }, "prj_example")).toBe(
+      "/app/prj_example/competitors",
+    );
+    expect(
+      navItemHref({ scope: "market", segment: "competitors" }, "prj_example", {
+        marketSegments: ["m", "pmkt_example"],
+      }),
+    ).toBe("/app/prj_example/competitors");
+  });
+
+  it("keeps landing preferences to their original eight route segments", () => {
+    expect(landingSegments).toEqual([
+      "dashboard",
+      "search-console",
+      "keyword-research",
+      "domain-overview",
+      "rank-tracker",
+      "backlinks",
+      "competitors",
+      "timeline",
+    ]);
+    expect(landingSegments).not.toContain("install");
+    expect(landingSegments).not.toContain("integrations");
+    expect(landingSegments).not.toContain("markets");
+  });
+
+  it("keeps landing preferences independent from rail entries", () => {
+    expect(primaryNavEntries.map((entry) => entry.segment)).toEqual([...landingSegments]);
+    expect(primaryNavEntries.find((entry) => entry.segment === "timeline")?.label).toBe("Timeline");
+    expect(
+      navItems("prj_example", undefined, allExperimentalModules).map((item) => item.label),
+    ).not.toContain("Timeline");
+    for (const entry of primaryNavEntries) {
+      expect(entry.label.length).toBeGreaterThan(0);
+      expect(entry.icon).toBeDefined();
+    }
+  });
+});

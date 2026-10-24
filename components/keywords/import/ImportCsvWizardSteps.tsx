@@ -1,0 +1,293 @@
+import { Button } from "@/components/ui/Button";
+import {
+  keywordImportTemplateColumns,
+  keywordImportTemplateCsv,
+} from "@/lib/keywords/import-csv-template";
+import { ArrowRightIcon as ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
+import { CheckIcon as Check } from "@phosphor-icons/react/dist/csr/Check";
+import { CheckCircleIcon as CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
+import { CloudArrowUpIcon as CloudArrowUp } from "@phosphor-icons/react/dist/csr/CloudArrowUp";
+import { DownloadSimpleIcon as DownloadSimple } from "@phosphor-icons/react/dist/csr/DownloadSimple";
+import { FileCsvIcon as FileCsv } from "@phosphor-icons/react/dist/csr/FileCsv";
+import { FolderOpenIcon as FolderOpen } from "@phosphor-icons/react/dist/csr/FolderOpen";
+import { InfoIcon as Info } from "@phosphor-icons/react/dist/csr/Info";
+import { TableIcon as Table } from "@phosphor-icons/react/dist/csr/Table";
+import { useTranslations } from "next-intl";
+
+export { DoneStep } from "./ImportCsvWizardDoneStep";
+
+const mapRows = [
+  ["keyword", "Keyword", "required"],
+  ["target_url", "Target URL", ""],
+  ["tags", "Tags", ""],
+  ["country", "Country", ""],
+  ["language", "Language", ""],
+  ["device", "Device", ""],
+  ["notes", "Ignore this column", ""],
+] as const;
+const previewRows = [
+  ["edge function analytics", "/analytics", "US", ""],
+  ["llms.txt seo", "/blog/llms-txt", "US", ""],
+  ["vector search ranking", "/search", "US", "DUP"],
+  ["open source analytics", "/", "GB", ""],
+] as const;
+
+export function ImportStepper({ step }: Readonly<{ step: number }>) {
+  const t = useTranslations("projectRankTracker.keywordImport.csvWizard.steps");
+  const steps = [t("template"), t("upload"), t("map"), t("review"), t("done")];
+  return (
+    <div className="mt-4.5 flex items-center">
+      {steps.map((label, index) => {
+        const number = index + 1;
+        const current = number === step;
+        const completed = number < step;
+        return (
+          <div className="flex min-w-0 flex-1 items-center" key={label}>
+            <span className="flex w-[54px] shrink-0 flex-col items-center gap-1.5">
+              <span
+                className="grid h-[26px] w-[26px] place-items-center rounded-full border-[1.5px] font-sans tabular-nums text-[11px] font-semibold"
+                style={{
+                  backgroundColor: current
+                    ? "var(--accent-solid)"
+                    : completed
+                      ? "var(--accent-soft)"
+                      : "var(--bg-sunken)",
+                  borderColor: current ? "var(--accent-solid)" : "transparent",
+                  color: current
+                    ? "var(--accent-on-solid)"
+                    : completed
+                      ? "var(--accent-text)"
+                      : "var(--fg-muted)",
+                }}
+              >
+                {completed ? <Check aria-hidden size={15} weight="regular" /> : number}
+              </span>
+              <span
+                className="whitespace-nowrap text-[10px] font-normal"
+                style={{ color: number === step ? "var(--fg)" : "var(--fg-muted)" }}
+              >
+                {label}
+              </span>
+            </span>
+            {number < steps.length ? (
+              <span
+                className="mb-5 h-0.5 flex-1 rounded-full"
+                style={{ backgroundColor: number < step ? "var(--accent)" : "var(--border)" }}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function TemplateStep() {
+  return (
+    <div>
+      <h3 className="m-0 text-[15px] font-semibold">Start from the template</h3>
+      <p className="m-0 mt-1.5 text-[13px] leading-[1.55] text-fg-muted">
+        Download the CSV template, fill in your keywords, then upload it on the next step. Only{" "}
+        <code className="font-mono text-[12px] text-accent-text">keyword</code> is required.
+      </p>
+      <Button
+        size="lg"
+        startIcon={<DownloadSimple size={16} weight="regular" />}
+        style={{ marginTop: "16px" }}
+        type="button"
+        variant="primary"
+      >
+        Download template.csv
+      </Button>
+      <div className="mt-4.5 overflow-hidden rounded-control border border-border">
+        <div className="flex items-center justify-between bg-code-bg px-[13px] py-2 font-sans tabular-nums text-[10.5px] text-code-faint">
+          <span>template.csv</span>
+          <span className="text-green-text">UTF-8</span>
+        </div>
+        <pre className="m-0 overflow-x-auto bg-code-bg px-[15px] py-[13px] font-mono text-[11.5px] leading-[1.75] text-code-fg">
+          {keywordImportTemplateCsv}
+        </pre>
+      </div>
+      <div className="mt-4.5 flex flex-wrap gap-1.5">
+        {keywordImportTemplateColumns.map((column) => {
+          const item = column === "keyword" ? "keyword*" : column;
+          return (
+            <span
+              className="rounded-control bg-bg-sunken px-[9px] py-[3px] font-sans tabular-nums text-[11px] text-fg-muted first:bg-accent-soft first:font-semibold first:text-accent-text"
+              key={item}
+            >
+              {item}
+            </span>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex items-center gap-[7px] text-[12px] text-fg-muted">
+        <Info weight="regular" size={14} />
+        Blank columns are ignored. Tags are semicolon-separated.
+      </div>
+    </div>
+  );
+}
+
+export function UploadStep() {
+  return (
+    <div>
+      <h3 className="m-0 text-[15px] font-semibold">Upload your file</h3>
+      <p className="m-0 mt-1.5 text-[13px] text-fg-muted">
+        CSV or XLSX. CSV must be UTF-8 and cannot contain replacement characters (�).
+      </p>
+      <div className="mt-4 flex flex-col items-center gap-2.5 rounded-card border border-dashed border-border bg-bg px-6 py-[38px] text-center">
+        <span className="grid h-[46px] w-[46px] place-items-center rounded-card bg-accent-soft text-accent-solid">
+          <CloudArrowUp size={24} weight="regular" />
+        </span>
+        <div className="text-[13.5px] font-semibold">Drag and drop your CSV here</div>
+        <div className="text-[12px] text-fg-muted">or</div>
+        <Button
+          startIcon={<FolderOpen weight="regular" size={15} />}
+          type="button"
+          variant="secondary"
+        >
+          Browse files
+        </Button>
+      </div>
+      <div className="mt-3.5 flex items-center gap-3 rounded-control border border-border bg-bg-elev px-[15px] py-[13px]">
+        <span className="grid h-9 w-9 place-items-center rounded-control text-green-text [background:color-mix(in_srgb,var(--green)_12%,transparent)]">
+          <FileCsv size={19} weight="regular" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-semibold">acme-keywords-q2.csv</span>
+          <span className="block font-sans tabular-nums text-[11px] text-fg-muted">
+            248 rows · 5 columns · 18 KB
+          </span>
+        </span>
+        <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-green-text">
+          <CheckCircle size={14} weight="regular" />
+          Parsed
+        </span>
+      </div>
+    </div>
+  );
+}
+
+export function MapStep() {
+  return (
+    <div>
+      <h3 className="m-0 text-[15px] font-semibold">Map columns</h3>
+      <p className="m-0 mt-1.5 text-[13px] text-fg-muted">We matched your columns automatically.</p>
+      <div className="mt-4 overflow-hidden rounded-card border border-border">
+        <div className="grid grid-cols-[1fr_24px_1fr] gap-2.5 bg-bg-sunken px-[15px] py-[9px] font-sans tabular-nums text-[10px] uppercase tracking-[0.5px] text-fg-muted">
+          <span>CSV column</span>
+          <span />
+          <span>bisibility field</span>
+        </div>
+        {mapRows.map(([csv, field, req]) => (
+          <div
+            className="grid grid-cols-[1fr_24px_1fr] items-center gap-2.5 border-t border-border px-[15px] py-[11px]"
+            key={csv}
+          >
+            <span className="inline-flex min-w-0 items-center gap-[7px] font-sans tabular-nums text-[12.5px]">
+              <Table weight="regular" className="shrink-0 text-fg-muted" size={14} />
+              <span className="truncate">{csv}</span>
+            </span>
+            <ArrowRight className="text-fg-muted" size={13} weight="regular" />
+            <span className="inline-flex items-center justify-between gap-2 rounded-control border border-border bg-bg-elev px-[11px] py-[7px] text-[12.5px] font-medium">
+              {field}
+              {req ? (
+                <span className="font-sans tabular-nums text-[10px] text-accent-text">{req}</span>
+              ) : null}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3.5 flex items-center gap-2 text-[12px] font-semibold text-green-text">
+        <CheckCircle size={14} weight="regular" />
+        All required fields mapped
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {["Country US", "Device Desktop", "Refresh Daily"].map((item) => (
+          <span
+            className="rounded-control border border-border bg-bg-elev px-[11px] py-1.5 text-[12px]"
+            key={item}
+          >
+            {item}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function ReviewStep({
+  duplicateMode,
+  setDuplicateMode,
+}: Readonly<{
+  duplicateMode: string;
+  setDuplicateMode: (value: string) => void;
+}>) {
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="m-0 text-[15px] font-semibold">Review and confirm</h3>
+        <div className="flex gap-2 font-sans tabular-nums text-[11px]">
+          <span className="rounded-full px-[9px] py-[3px] font-semibold text-green-text [background:color-mix(in_srgb,var(--green)_12%,transparent)]">
+            245 new
+          </span>
+          <span className="rounded-full px-[9px] py-[3px] font-semibold text-yellow-text [background:color-mix(in_srgb,var(--yellow)_14%,transparent)]">
+            3 duplicates
+          </span>
+        </div>
+      </div>
+      <div className="mt-3.5 flex items-center gap-2.5 rounded-control border border-border bg-bg px-3.5 py-3">
+        <span className="text-[12.5px] text-fg-muted">Duplicates:</span>
+        <div className="flex rounded-control border border-border bg-bg-elev p-[3px]">
+          {["skip", "overwrite"].map((value) => (
+            <button
+              className="rounded-control px-[13px] py-1.5 text-[12px] font-semibold"
+              key={value}
+              onClick={() => setDuplicateMode(value)}
+              style={{
+                backgroundColor: duplicateMode === value ? "var(--accent)" : "transparent",
+                color: duplicateMode === value ? "#fff" : "var(--fg-muted)",
+              }}
+              type="button"
+            >
+              {value === "skip" ? "Skip" : "Overwrite"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="mt-3.5 overflow-hidden rounded-card border border-border">
+        <div className="grid grid-cols-[1.7fr_1.3fr_50px_64px] gap-2 bg-bg-sunken px-3.5 py-[9px] font-sans tabular-nums text-[10px] uppercase tracking-[0.4px] text-fg-muted">
+          <span>Keyword</span>
+          <span>Target URL</span>
+          <span>Geo</span>
+          <span />
+        </div>
+        {previewRows.map(([keyword, url, country, dup]) => (
+          <div
+            className="grid grid-cols-[1.7fr_1.3fr_50px_64px] items-center gap-2 border-t border-border px-3.5 py-2.5 text-[12.5px]"
+            key={keyword}
+          >
+            <span className="truncate font-medium">{keyword}</span>
+            <span className="truncate font-sans tabular-nums text-[11.5px] text-fg-muted">
+              {url}
+            </span>
+            <span className="font-sans tabular-nums text-[11px] text-fg-muted">{country}</span>
+            {dup ? (
+              <span className="rounded-control px-[7px] py-0.5 font-sans tabular-nums text-[9.5px] font-semibold text-yellow-text [background:color-mix(in_srgb,var(--yellow)_14%,transparent)]">
+                {dup}
+              </span>
+            ) : null}
+          </div>
+        ))}
+        <div className="border-t border-border px-3.5 py-[9px] text-center font-sans tabular-nums text-[11px] text-fg-muted">
+          + 244 more rows
+        </div>
+      </div>
+      <div className="mt-3.5 flex items-center gap-2 text-[12px] text-fg-muted">
+        <Info weight="regular" size={14} />
+        History is not back-filled.
+      </div>
+    </div>
+  );
+}

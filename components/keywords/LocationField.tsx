@@ -1,0 +1,225 @@
+"use client";
+
+import {
+  LocationClearButton,
+  locationFieldClassByVariant,
+  locationFieldLabelClass,
+} from "@/components/keywords/location-field-parts";
+import { locationKeyHandler } from "@/components/keywords/location-key-handler";
+import {
+  EMPTY_LOCATION_HINT_LENGTH,
+  type LocationFieldValue,
+  type LocationSuggestion,
+  useLocationSearch,
+} from "@/components/keywords/location-picker-data";
+import { AnchoredList as Popper } from "@/components/ui/AnchoredList";
+import { CountryFlag } from "@/components/ui/CountryFlag";
+import { FieldLabel } from "@/components/ui/FieldLabel";
+import { Input } from "@/components/ui/Input";
+import { regionDisplayName } from "@/lib/i18n/display-names";
+import { cn } from "@/lib/ui/cn";
+import { CaretDownIcon as CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
+import { MapPinIcon as MapPin } from "@phosphor-icons/react/dist/csr/MapPin";
+import { useLocale } from "next-intl";
+import { type FocusEvent, useId, useRef, useState } from "react";
+import {
+  type LocationFieldMessages,
+  LocationResults,
+  locationOptionDomId,
+} from "./location-field-results";
+
+export type { LocationFieldMessages } from "./location-field-results";
+export type { LocationFieldValue };
+
+type LocationFieldProps = {
+  value: LocationFieldValue;
+  onChange: (value: LocationFieldValue) => void;
+  projectId?: string | null;
+  error?: string;
+  help?: string;
+  idPrefix?: string;
+  disabled?: boolean;
+  label?: string;
+  /** Keep the label for screen readers only - for compact single-row layouts. */
+  labelHidden?: boolean;
+  placeholder?: string;
+  /** "form" is the drawer/form field look; "toolbar" is compact; "research" matches its market control. */
+  variant?: "form" | "toolbar" | "research";
+  controlClassName?: string;
+  /** Feature-owned copy for the shared location search control. */
+  messages: LocationFieldMessages;
+};
+
+export function LocationField({
+  value,
+  onChange,
+  projectId = null,
+  error,
+  help,
+  idPrefix,
+  disabled = false,
+  label = "Location",
+  labelHidden = false,
+  placeholder = "Search country, region, or city",
+  messages,
+  variant = "form",
+  controlClassName,
+}: Readonly<LocationFieldProps>) {
+  const locale = useLocale();
+  const fieldClass = locationFieldClassByVariant[variant];
+  const reactId = useId();
+  const prefix = idPrefix ?? reactId;
+  const [draft, setDraft] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const anchorRef = useRef<HTMLSpanElement | null>(null);
+  const listboxRef = useRef<HTMLDivElement | null>(null);
+  const { clear, lastCompletedTerm, loading, search, suggestions } = useLocationSearch(projectId);
+  const places = suggestions.filter((suggestion) => suggestion.kind !== "country");
+  const countries = suggestions.filter((suggestion) => suggestion.kind === "country");
+  const options = [...countries, ...places];
+  // A persisted country label is the English display name; the viewer reads their own.
+  const selectedName = regionDisplayName(value.countryCode, value.displayName, locale);
+  const currentInput = draft ?? selectedName;
+  const hasOptions = options.length > 0;
+  const listId = `${prefix}-location-list`;
+  const visible = expanded && (hasOptions || loading || Boolean(lastCompletedTerm));
+  const normalizedActiveIndex = activeIndex >= 0 && activeIndex < options.length ? activeIndex : -1;
+  const activeOption = normalizedActiveIndex >= 0 ? options[normalizedActiveIndex] : undefined;
+  const showEmpty =
+    expanded &&
+    !loading &&
+    options.length === 0 &&
+    (lastCompletedTerm?.length ?? 0) >= EMPTY_LOCATION_HINT_LENGTH;
+
+  function selectOption(option: LocationSuggestion) {
+    clear();
+    setDraft(null);
+    setExpanded(false);
+    setActiveIndex(-1);
+    onChange({
+      canonicalKey: option.canonicalKey,
+      cityName: option.cityName,
+      countryCode: option.countryCode,
+      displayName: option.displayName,
+      hl: option.hl,
+      kind: option.kind,
+      languageCode: option.languageCode,
+      languageLabel: option.languageLabel,
+      regionName: option.regionName,
+    });
+  }
+
+  function handleInput(next: string) {
+    setDraft(next);
+    setExpanded(true);
+    setActiveIndex(-1);
+    search(next);
+  }
+
+  const handleKeyDown = locationKeyHandler({
+    activeOption,
+    clear,
+    draft,
+    locations: options,
+    selectOption,
+    setActiveIndex,
+    setDraft,
+    setExpanded,
+  });
+
+  function handleBlur(event: FocusEvent<HTMLFieldSetElement>) {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node) {
+      if (event.currentTarget.contains(nextTarget)) return;
+      if (listboxRef.current?.contains(nextTarget)) return;
+    }
+    setDraft(null);
+    setExpanded(false);
+    setActiveIndex(-1);
+  }
+
+  function clearDraft() {
+    clear();
+    setDraft(null);
+    setExpanded(false);
+    setActiveIndex(-1);
+  }
+
+  return (
+    <fieldset className={locationFieldLabelClass} onBlur={handleBlur}>
+      <FieldLabel
+        className={labelHidden ? "sr-only" : undefined}
+        help={help}
+        htmlFor={`${prefix}-location`}
+        label={label}
+      />
+      <div>
+        <span className="relative flex items-center" ref={anchorRef}>
+          {variant === "research" ? (
+            <CountryFlag
+              className="pointer-events-none absolute left-2.5 h-3 w-4 rounded-[2px] shadow-sm"
+              code={value.countryCode}
+              fallback="globe"
+            />
+          ) : (
+            <MapPin
+              className="pointer-events-none absolute left-2.5 text-fg-muted"
+              size={14}
+              weight="regular"
+            />
+          )}
+          <Input
+            aria-activedescendant={
+              normalizedActiveIndex >= 0
+                ? locationOptionDomId(listId, normalizedActiveIndex)
+                : undefined
+            }
+            aria-autocomplete="list"
+            aria-controls={visible ? listId : undefined}
+            aria-expanded={visible}
+            aria-label={label}
+            autoComplete="off"
+            className={cn(fieldClass, controlClassName, "normal-case tracking-normal")}
+            disabled={disabled}
+            id={`${prefix}-location`}
+            onChange={(event) => handleInput(event.target.value)}
+            onFocus={() => setExpanded(true)}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            role="combobox"
+            value={currentInput}
+          />
+          {draft !== null ? (
+            <LocationClearButton ariaLabel={messages.clearSearch} onClick={clearDraft} />
+          ) : null}
+          {draft === null && variant === "research" ? (
+            <CaretDown
+              aria-hidden
+              className="pointer-events-none absolute right-3 text-fg-muted"
+              data-location-field-caret
+              data-testid="location-field-caret"
+              size={11}
+              weight="regular"
+            />
+          ) : null}
+        </span>
+        <Popper anchorEl={anchorRef.current} open={visible} ref={listboxRef}>
+          <LocationResults
+            activeOption={activeOption}
+            places={places}
+            countries={countries}
+            hasOptions={hasOptions}
+            listId={listId}
+            loading={loading}
+            messages={messages}
+            onPick={selectOption}
+            showEmpty={showEmpty}
+            visible={visible}
+          />
+        </Popper>
+      </div>
+      {error ? <span className="normal-case text-red-text">{error}</span> : null}
+    </fieldset>
+  );
+}

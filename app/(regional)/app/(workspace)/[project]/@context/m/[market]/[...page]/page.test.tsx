@@ -1,0 +1,114 @@
+import { KeywordHeaderContextBoundary } from "@/components/keywords/KeywordHeaderContextBoundary";
+import { RankTrackerHeaderContext } from "@/components/keywords/RankTrackerHeaderContext";
+import { HEADER_CONTEXT_LABEL } from "@/components/shell/HeaderContextSlot";
+import { renderWithShellMessages as render } from "@/i18n/test-support/render-with-feature-messages";
+import { asMarketRef, asProjectRef, marketPath } from "@/lib/routing/app-path";
+import { setNavigationState } from "@/tests/next-navigation";
+import { screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  listHeaderMarkets: vi.fn(),
+  resolveProjectAccess: vi.fn(),
+  personalContext: vi.fn(),
+}));
+
+vi.mock("@/lib/queries/_auth", () => ({ resolveProjectAccess: mocks.resolveProjectAccess }));
+vi.mock("@/lib/queries/rank-tracker-personal-context", () => ({
+  loadRankTrackerPersonalContext: mocks.personalContext,
+}));
+vi.mock("@/lib/queries/header-markets", () => ({ listHeaderMarkets: mocks.listHeaderMarkets }));
+vi.mock("@/components/ui/Tooltip", () => import("@/tests/tooltip-stub"));
+vi.mock("@/i18n/document-locale.server", () => ({
+  resolveRegionalDocumentLocale: () => Promise.resolve({ locale: "en", timeZone: "UTC" }),
+}));
+
+import NoHeaderContext from "../../../default";
+import HeaderContextRoute from "./page";
+
+const PROJECT = asProjectRef("prj_example");
+const MARKET = asMarketRef("pmkt_us");
+
+async function renderRoute(page: string[]) {
+  setNavigationState({ pathname: marketPath(PROJECT, MARKET, ...page) });
+  const element = await HeaderContextRoute({
+    params: Promise.resolve({ market: MARKET, page, project: PROJECT }),
+  });
+  // Resolve the async server boundary before handing its client subtree to jsdom.
+  render(
+    element.type === KeywordHeaderContextBoundary
+      ? await KeywordHeaderContextBoundary(element.props)
+      : element,
+  );
+}
+
+describe("header context slot route", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.personalContext.mockResolvedValue({
+      state: { lens: { device: "all", locationId: null }, filters: {}, search: "" },
+    });
+    mocks.listHeaderMarkets.mockResolvedValue([
+      {
+        countryCode: "US",
+        keywordCount: 12,
+        languageCode: "en",
+        name: "United States",
+        ref: MARKET,
+      },
+    ]);
+    mocks.resolveProjectAccess.mockResolvedValue({
+      isSample: false,
+      mode: "member",
+      projectId: "project_internal_1",
+      publicId: PROJECT,
+    });
+  });
+
+  it("reads the market list and renders the switcher for the market in the URL", async () => {
+    await renderRoute(["rank-tracker"]);
+
+    expect(mocks.listHeaderMarkets).toHaveBeenCalledWith(PROJECT);
+    expect(screen.getByRole("group", { name: HEADER_CONTEXT_LABEL })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "United States" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Device scope" })).toBeInTheDocument();
+  });
+
+  it("registers the device control only for the rank tracker list", async () => {
+    const element = await HeaderContextRoute({
+      params: Promise.resolve({ market: MARKET, page: ["domain-overview"], project: PROJECT }),
+    });
+    expect(element?.type).not.toBe(RankTrackerHeaderContext);
+  });
+
+  it("covers a deeper market page through the same catch-all", async () => {
+    // One slot shadows the whole market subtree, the scope-correcting fallback included, so a
+    // new market section never has to remember to bring a switcher with it.
+    await renderRoute(["rank-tracker", "kw_1"]);
+
+    expect(screen.getByRole("group", { name: HEADER_CONTEXT_LABEL })).toBeInTheDocument();
+  });
+
+  it("reads nothing on a project-scoped route, which matches the default instead", () => {
+    // This is the whole point of resolving the slot as a route: `default.tsx` renders nothing,
+    // and rendering nothing is what keeps the market read off every page that cannot show it.
+    expect(NoHeaderContext()).toBeNull();
+    expect(mocks.listHeaderMarkets).not.toHaveBeenCalled();
+  });
+});
+
+it("resolves a private view URL through the same personal scope as the table", async () => {
+  const search = { view: "viw_abcdefghijklmnopqrstuvwx" };
+  const state = {
+    lens: { device: "mobile", locationId: "krakow" },
+    filters: {},
+    search: "service",
+  };
+  mocks.personalContext.mockResolvedValue({ state });
+  const result = await HeaderContextRoute({
+    params: Promise.resolve({ market: MARKET, page: ["rank-tracker"], project: PROJECT }),
+    searchParams: Promise.resolve(search),
+  });
+  expect(mocks.personalContext).toHaveBeenCalledWith(PROJECT, search);
+  expect(result.props.children.props.savedView).toMatchObject(state);
+});

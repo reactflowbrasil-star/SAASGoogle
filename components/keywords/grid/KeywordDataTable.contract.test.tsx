@@ -1,0 +1,213 @@
+import { emptyKeywordFilters } from "@/lib/keywords/keyword-filter-model";
+import { presentReportSummary } from "@/lib/rank-reports/presentation";
+import { asMarketRef } from "@/lib/routing/app-path";
+import { routerMock, setNavigationState } from "@/tests/next-navigation";
+import { stubResizeObserver } from "@/tests/observers";
+import { fireEvent, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { groupedPendingRows, pendingRows, renderPendingGrid } from "./KeywordsGrid.test-helpers";
+import { wholeScopeReport } from "./keyword-rank-quality.test-fixture";
+
+function renderedKeywordOrder(keywords: readonly string[]) {
+  const body = screen.getByTestId("rank-tracker-keywords-body");
+  return [...body.querySelectorAll<HTMLElement>('[role="row"][data-depth="0"]')].flatMap((row) =>
+    keywords.filter((keyword) => row.textContent?.includes(keyword)),
+  );
+}
+
+function renderScopedMarketGrid() {
+  setNavigationState({ pathname: "/app/prj_1/m/pmkt_us/rank-tracker" });
+  renderPendingGrid(
+    {
+      matchedTargetCount: 75,
+      page: 2,
+      pageCount: 3,
+      query: {
+        filters: emptyKeywordFilters,
+        grouped: false,
+        lens: { device: "all", locationId: "loc_us" },
+        page: 2,
+        pageSize: 25,
+        savedViewId: null,
+        search: "",
+        sort: { direction: "asc", field: "position" },
+      },
+    },
+    { locationId: "loc_us", ref: asMarketRef("pmkt_us") },
+  );
+}
+
+function expectScopedMarketNavigation() {
+  expect(routerMock.push).toHaveBeenLastCalledWith(
+    expect.stringMatching(/^\/app\/prj_1\/m\/pmkt_us\/rank-tracker\?/),
+  );
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  localStorage.clear();
+  setNavigationState({ pathname: "/app/prj_1/rank-tracker" });
+  stubResizeObserver();
+});
+
+describe("KeywordDataTable server contract", () => {
+  it("ignores a previously saved Device width and keeps tracking context after the keyword", () => {
+    renderPendingGrid();
+    const key = "bv:data-table:rank-tracker-keywords:v1";
+    fireEvent(
+      window,
+      new StorageEvent("storage", {
+        key,
+        newValue: JSON.stringify({
+          columnSizing: { device: 200, keyword: 320 },
+          columnVisibility: {},
+        }),
+      }),
+    );
+    const table = screen.getByTestId("rank-tracker-keywords");
+    try {
+      expect(
+        screen.getAllByRole("columnheader").some((header) => header.dataset.columnId === "device"),
+      ).toBe(false);
+      expect(table.style.getPropertyValue("--dt-col-keyword")).toBe("320px");
+      expect(
+        screen
+          .getAllByRole("columnheader")
+          .slice(1, 6)
+          .map((header) => header.dataset.columnId),
+      ).toEqual(["keyword", "frequency", "position", "change", "location"]);
+    } finally {
+      fireEvent(window, new StorageEvent("storage", { key, newValue: null }));
+    }
+  });
+
+  it("navigates sorting instead of reordering the loaded page in the browser", () => {
+    const rows = pendingRows();
+    const loadedKeywordOrder = rows.map((row) => row.keyword);
+    renderPendingGrid({ rows });
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort Position descending" }));
+
+    expect(routerMock.push).toHaveBeenCalledWith(expect.stringMatching(/dir=desc.*page=1/));
+    expect(renderedKeywordOrder(loadedKeywordOrder)).toEqual(loadedKeywordOrder);
+  });
+
+  it("returns cleared server sorting to the keyword A–Z default", () => {
+    renderPendingGrid({
+      query: {
+        filters: emptyKeywordFilters,
+        grouped: false,
+        lens: { device: "all", locationId: null },
+        page: 2,
+        pageSize: 25,
+        savedViewId: null,
+        search: "",
+        sort: { direction: "desc", field: "position" },
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear Position sorting" }));
+
+    const href = String(routerMock.push.mock.calls.at(-1)?.[0]);
+    const params = new URL(href, "https://example.com").searchParams;
+    expect(params.get("sort")).toBe("keyword");
+    expect(params.get("dir")).toBe("asc");
+    expect(params.get("page")).toBe("1");
+  });
+
+  it("disables Device sorting for grouped server results", () => {
+    renderPendingGrid({
+      matchedGroupCount: 1,
+      query: {
+        filters: emptyKeywordFilters,
+        grouped: true,
+        lens: { device: "all", locationId: null },
+        page: 1,
+        pageSize: 25,
+        savedViewId: null,
+        search: "",
+        sort: { direction: "asc", field: "position" },
+      },
+      rows: groupedPendingRows(),
+    });
+
+    expect(screen.queryByRole("button", { name: "Sort Device ascending" })).not.toBeInTheDocument();
+  });
+
+  it("does not expose a separate Device column for flat server results", () => {
+    renderPendingGrid();
+
+    expect(screen.queryByRole("button", { name: "Sort Device ascending" })).not.toBeInTheDocument();
+  });
+
+  it("keeps sorting on the scoped market route", () => {
+    renderScopedMarketGrid();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort Position descending" }));
+    expectScopedMarketNavigation();
+  });
+
+  it("keeps pagination on the scoped market route", () => {
+    renderScopedMarketGrid();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expectScopedMarketNavigation();
+  });
+
+  it("does not offer a manual grouping override on the scoped market route", () => {
+    renderScopedMarketGrid();
+    expect(screen.queryByRole("radio", { name: "Grouped" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Flat" })).not.toBeInTheDocument();
+  });
+
+  it("uses the full filtered server report for grouped summary independent of page children", async () => {
+    const [group] = groupedPendingRows();
+    if (!group) throw new Error("Expected a grouped fixture row");
+    const rows = [
+      {
+        ...group,
+        subRows: group.subRows?.map((row) => ({
+          ...row,
+          positionHistory: [
+            { checkedAt: "2026-08-01T00:00:00.000Z", label: "Aug 1", position: 8 },
+            { checkedAt: "2026-08-08T00:00:00.000Z", label: "Aug 8", position: 4 },
+          ],
+        })),
+      },
+    ];
+    const report = wholeScopeReport();
+    report.metric.counts = { ...report.metric.counts, expected: 100, unknown: 95 };
+    renderPendingGrid({
+      report: presentReportSummary(report),
+      matchedGroupCount: 4,
+      matchedTargetCount: 100,
+      query: {
+        filters: emptyKeywordFilters,
+        grouped: true,
+        lens: { device: "all", locationId: null },
+        page: 1,
+        pageSize: 25,
+        savedViewId: null,
+        search: "",
+        sort: { direction: "asc", field: "position" },
+      },
+      rows,
+    });
+
+    expect(
+      screen.getByRole("status", {
+        name: "Organic visibility: 0.21",
+      }),
+    ).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.hover(screen.getByRole("button", { name: /Explain: Organic visibility/i }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "100 targets; 4 ranked, 1 confirmed absent, 95 unknown",
+    );
+    expect(screen.queryByText(/Current page:/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Grouped|Flat/ })).not.toBeInTheDocument();
+    expect(screen.getByText("100 matching targets")).toBeInTheDocument();
+    expect(screen.getByText("1-4 of 4")).toBeInTheDocument();
+  });
+});

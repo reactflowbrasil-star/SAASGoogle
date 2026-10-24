@@ -1,0 +1,152 @@
+{
+  "projectInstall": {
+    "agents": {
+      "heading": "Agentes de IA",
+      "description": "Elige tu herramienta, copia un comando y pégalo en tu terminal. Con eso ya está todo listo.",
+      "copyCommand": "Copiar el comando de {agent}",
+      "claude-code": {
+        "label": "Claude Code",
+        "hint": "CLI",
+        "note": "Después ejecuta /mcp dentro de Claude Code para iniciar sesión."
+      },
+      "codex": {
+        "label": "Codex",
+        "hint": "CLI",
+        "note": "Codex inicia sesión con el mismo flujo de OAuth."
+      },
+      "cursor": {
+        "label": "Cursor",
+        "hint": "editor",
+        "note": "Ajustes, MCP y después pega esto en mcp.json."
+      },
+      "chatgpt": {
+        "label": "ChatGPT",
+        "hint": "aplicación",
+        "note": "Abre Plugins en ChatGPT, selecciona + y Add custom MCP server. Introduce la URL MCP y elige OAuth.",
+        "caveat": "El acceso depende de las políticas del espacio de trabajo. Esta conexión de bisibility solicita acceso de solo lectura."
+      },
+      "grok-bot": {
+        "label": "Grok Bot",
+        "hint": "asistente",
+        "note": "Pega esto en un chat de Grok Bot, confirma que añades el servidor MCP personalizado y después inicia sesión desde la tarjeta de conexión. La pantalla de consentimiento de bisibility puede nombrar al cliente Cursor y decir que se registró automáticamente; eso es lo esperado para Grok Bot.",
+        "caveat": "Las operaciones de pago, como las comprobaciones de posición y el análisis de backlinks, son herramientas de escritura y se cargan a la fuente de pago de tu proyecto. Pide al bot que confirme el coste antes de ejecutarlas."
+      },
+      "claude-desktop": {
+        "label": "Claude (web y escritorio)",
+        "hint": "conector",
+        "note": "Personalizar, Conectores, Añadir conector personalizado, pega la URL y luego aprueba el inicio de sesión.",
+        "caveat": "Claude expone todas las herramientas. La primera vez pide confirmación antes de cada herramienta de escritura; usa Permitir siempre solo con las herramientas que aceptes que se ejecuten sin supervisión. Research ejecuta las herramientas sin pedir confirmación, así que desactiva allí las herramientas de escritura."
+      },
+      "other": {
+        "label": "Cualquier cliente MCP",
+        "hint": "manual",
+        "note": "HTTP en streaming con inicio de sesión mediante OAuth. Sin clave en la URL."
+      }
+    },
+    "endpoint": {
+      "heading": "Endpoint de MCP",
+      "description": "¿Usas una herramienta que no está en la lista? Pega esta dirección en ella e inicia sesión con tu cuenta de bisibility.",
+      "copy": "Copiar la URL de MCP",
+      "selfHosted": "¿autoalojas bisibility? usa tu propia dirección: '<your-instance>'/api/mcp",
+      "toolScope": "{readOnly} de {total} herramientas están marcadas como de solo lectura. Los clientes y los permisos aprobados pueden limitar su disponibilidad. Las operaciones de pago, como las comprobaciones de posición y el análisis de backlinks, son herramientas de escritura. Los informes guardados y las estimaciones de costes son de solo lectura."
+    },
+    "apiKey": {
+      "heading": "Clave de API",
+      "scope": "ámbito: {scope}",
+      "scopeRead": "Solo lectura",
+      "scopeWrite": "Lectura y escritura",
+      "scopeAdmin": "Acceso completo",
+      "description": "Úsala cuando algo tenga que ejecutarse sin ti, como un script nocturno.{created, select, none {} other { {created}.}}",
+      "created": "Creada el {date}",
+      "manage": "Gestionar en Ajustes, Desarrolladores",
+      "none": "Todavía no hay ninguna clave de API. Los administradores del proyecto pueden crear una en Ajustes → Desarrolladores.",
+      "copyCurl": "Copiar el ejemplo de curl"
+    },
+    "skills": {
+      "heading": "Habilidades",
+      "planned": "previsto",
+      "description": "Descarga archivos de habilidades o usa las del plugin de Claude Code. Las tareas previstas se indican abajo.",
+      "footer": "Descarga un archivo y sigue las instrucciones de tu cliente para instalar skills.",
+      "keyword-import": "Importar y eliminar duplicados",
+      "provider-setup": "Conectar y verificar claves",
+      "weekly-report": "Resumen de cambios",
+      "keyword-clustering": "Agrupar por intención",
+      "seo-audit": "Priorizar mejoras de SEO",
+      "availableCount": "{count, plural, one {# disponible} other {# disponibles}}",
+      "available": "disponibles",
+      "domain-onboarding": "Configurar el primer dominio",
+      "bisibility": "Elegir la habilidad adecuada",
+      "ai-visibility-audit": "Revisar visibilidad en IA",
+      "keyword-opportunity-research": "Descubrir oportunidades de palabras clave",
+      "rank-tracking-report": "Revisar cambios de posiciones",
+      "alert-triage": "Investigar alertas de posiciones",
+      "backlink-profile-analysis": "Evaluar calidad de enlaces",
+      "team-api-governance": "Gestionar acceso a la API",
+      "self-host-health": "Comprobar salud de la instancia",
+      "competitor-analysis": "Comparar rendimiento de competidores",
+      "competitive-landscape": "Analizar el panorama competitivo",
+      "ai-prompt-research": "Explorar consultas de IA",
+      "local-seo": "Mejorar la visibilidad local",
+      "link-prospecting": "Encontrar oportunidades de enlaces",
+      "sitemap-change-watch": "Vigilar cambios del sitemap",
+      "inPlugin": "en el plugin de Claude Code",
+      "project-setup": "Guardar el contexto del proyecto y configurar el seguimiento",
+      "seo-coach": "Elegir la siguiente habilidad SEO"
+    },
+    "chatgptIcon": {
+      "copyUrl": "Copiar la URL del icono",
+      "description": "Usa este icono al añadir bisibility como aplicación MCP personalizada.",
+      "download": "Descargar PNG",
+      "heading": "Icono de la aplicación MCP",
+      "imageAlt": "Icono de la aplicación de bisibility",
+      "meta": "PNG · {width, number} × {height, number} px · {kilobytes} KB ({bytes, number} bytes) · menos de 10 KB"
+    },
+    "gettingStarted": {
+      "addApp": {
+        "copyMcpUrl": "Copiar la URL de MCP para ChatGPT",
+        "description": "Crea el plugin con la URL MCP, elige OAuth e inicia sesión en bisibility. Instala el plugin creado.",
+        "title": "2. Añadir bisibility"
+      },
+      "description": "Conecta bisibility con ChatGPT.",
+      "developerMode": {
+        "description": "Abre Plugins en ChatGPT. Tu espacio de trabajo debe permitir servidores MCP personalizados.",
+        "title": "1. Abre Plugins"
+      },
+      "dismiss": "Ocultar «Cómo empezar»",
+      "firstChat": {
+        "description": "En un chat nuevo, escribe @ y selecciona bisibility. Prueba: \"{prompt}\"",
+        "prompt": {
+          "withChecks": "¿Qué palabras clave han perdido posiciones esta semana?",
+          "withoutChecks": "¿Qué proyectos y palabras clave puedo consultar?"
+        },
+        "title": "3. Iniciar una conversación"
+      },
+      "guideLink": "Guía de configuración de ChatGPT",
+      "heading": "Cómo empezar",
+      "note": "Es posible que el administrador deba permitir servidores MCP personalizados.",
+      "show": "Mostrar cómo empezar",
+      "clientSwitcher": "Asistente de IA",
+      "accessTitle": "Acceso de solo lectura",
+      "accessDescription": "Esta conexión con ChatGPT permite leer datos de proyectos y posiciones. No permite modificar ni eliminar proyectos, gestionar miembros ni crear claves de API.",
+      "claude": {
+        "description": "Conecta bisibility con Claude.",
+        "accessTitle": "Acceso de lectura y escritura",
+        "accessDescription": "Claude puede leer datos y utilizar las herramientas de escritura disponibles, según los permisos que apruebes y los que ya tengas en cada proyecto.",
+        "developerMode": {
+          "title": "1. Abre los conectores",
+          "description": "En Claude, abre Settings → Connectors y selecciona Add custom connector."
+        },
+        "addApp": {
+          "title": "2. Añade bisibility",
+          "description": "Introduce bisibility como nombre y pega la URL de MCP que aparece abajo. Añade el conector, selecciona Connect e inicia sesión en bisibility para revisar los permisos.",
+          "copyMcpUrl": "Copiar URL de MCP para Claude"
+        },
+        "firstChat": {
+          "description": "En un chat nuevo, abre el menú +, elige Connectors y activa bisibility. Prueba: «{prompt}»"
+        },
+        "note": "Es posible que el administrador de tu espacio de trabajo deba añadir o habilitar los conectores personalizados.",
+        "guideLink": "Guía de configuración de Claude"
+      }
+    }
+  }
+}

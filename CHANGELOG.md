@@ -1,0 +1,828 @@
+# Changelog
+
+## [0.41.0] - 2026-10-23
+
+### Fixed
+
+- Fixed single-budget editors to use the full dialog width.
+
+- Place the first-check introduction near the bottom of the screen.
+
+- Keep domain research cache hints consistent with project settings, and show the detected scope beside the analysis action.
+
+## [0.40.0] - 2026-10-23
+
+### Changed
+
+- **Breaking:** Rank schedules upgrade automatically. Stop old workers before updating; resolve any flagged keywords in Schedules.
+
+- Retired scheduler settings no longer block startup; existing maintenance opt-outs stay in effect.
+
+## [0.39.0] - 2026-10-23
+
+### Added
+
+- Add connected-app controls, AI runs, schedule tools, device setup, first-check tips, provider balance evidence and search-performance query filters.
+
+### Changed
+
+- Review payment sources and current prices before paid research and rank checks; show clearer budgets, balances and retained charges across Usage.
+
+- Simplify keyword details, Markets, snapshots, saved views and provider setup; align activity indicators and expand API contracts and MCP setup guidance.
+
+### Fixed
+
+- Fix stale schedules, cancelled runs, Top 20 collection and snapshot recovery; preserve provider card order and settings after saves.
+
+- Strengthen admin and sign-in checks, enforce email timeouts, isolate local auth cookies and update dependencies with security fixes.
+
+## [0.38.0] - 2026-10-20
+
+### Added
+
+- Add iOS app support to the API: OAuth tokens with rotating refresh, `DELETE /me` account deletion, and push alerts with device token endpoints.
+
+- Price the next page of backlink rows with `estimate_only` before any provider request, and cap its spend with `max_cost_cents`.
+
+### Changed
+
+- Make the OpenAPI document client-ready: public-ID path parameters, problem+json errors, per-operation provider cost and accurate response shapes; URLs unchanged.
+
+- Reject unknown `sort` and `status` values on keyword and rank-check lists with 400, and malformed AI tracking run IDs with 422 instead of 404.
+
+### Fixed
+
+- Exit the worker after a graceful shutdown when Redis is configured, instead of staying alive until it is force-killed.
+
+## [0.37.0] - 2026-10-19
+
+### Added
+
+- Add optional activity streaks, shareable badges and account analytics consent controls.
+
+- Add audited historical BYOK recovery and known-cost closeout while retaining missing evidence (CorgiCorner/bisibility#3, thanks @chapter42).
+
+### Changed
+
+- Share schedules across rank and AI tracking; improve overdue run details, blocker guidance, controls, columns, loading states and cache recovery.
+
+### Fixed
+
+- Validate sitemap XML before replacing snapshots and keep site audits working with unsupported document base URLs.
+
+- Improve account/provider recovery, error reports, worker emails, translations and migration validation; reject secret-file and unsupported probe paths.
+
+## [0.36.0] - 2026-10-17
+
+### Added
+
+- Added seven agent workflows with reviewed budgets and writes, plus shared project cache lifetimes and management.
+
+### Changed
+
+- Improved research filters and provider guidance, aligned forms and report editors, and softened panel backgrounds.
+
+### Fixed
+
+- Fixed Google property diagnostics, AI provider filters, domain matching and caching, audit heading extraction and agent workflow examples.
+
+- Fixed report timeouts and workspace navigation, preserved dashboard layouts, and prevented duplicate saved-view creation.
+
+- Fixed backlink cache and pagination, admin recovery and live updates; preserved comparison approvals, consent revisions and local history.
+
+## [0.35.0] - 2026-10-15
+
+### Added
+
+- Added an administrator view of daily email limits, reserved send attempts and remaining capacity.
+
+- Added one-time DataForSEO and SerpApi comparisons with cost review and results separate from tracking history; both providers must be connected.
+
+### Changed
+
+- Kept backlink cache and history separate by provider, with unknown-source labels for older snapshots.
+
+- Improved admin usage, budgets and recovery with compact tables, readable scopes and matching loading states.
+
+### Fixed
+
+- Fixed report layouts, page loaders and concurrent display-setting timeouts, and softened non-control borders.
+
+## [0.34.0] - 2026-10-14
+
+### Added
+
+- Added multilingual Maps and independently priced Local Finder scans with retained history and approved recurring schedules.
+
+- Added saved-location grid centers and point previews, aligned monitor controls, and country flags with searchable AI country selectors.
+
+### Fixed
+
+- Fixed inline rank checks to retain the original credential and matching user identity.
+
+- Fixed retained rank-check run tools in MCP and validation of their run IDs.
+
+## [0.33.0] - 2026-10-14
+
+### Added
+
+- Added personal views, configurable dashboards, ranking reports and optional Local monitoring; recurring scans stay off by default.
+
+- Added administrator task recovery with explicit spending consent and configurable announcement banners with mobile scrolling.
+
+### Changed
+
+- **Breaking:** Organic history repair now requires a project and time window, defaults to dry-run and retains versioned provenance.
+
+- Improved measurement consent, comparisons and exports, identity review, dashboard controls and help, and project-wide display settings.
+
+### Fixed
+
+- Fixed stream reconnection, table layout, onboarding saves, API access, container migrations, business controls and conflicting local identity confirmations.
+
+## [0.32.0] - 2026-10-13
+
+### Changed
+
+- **Breaking:** Usage history storage has changed. Stop the old app and worker, check existing usage dates, and follow the upgrade guide before restarting.
+
+### Fixed
+
+- Spending limits now show project and provider names and retain confirmed zero usage and reservations.
+
+- Clarified connection testing and saving, refreshed fallback lists and removed extra empty-state borders, and cleared outdated sync errors after reconnecting.
+
+- Improved inactive-account sign-in guidance, temporary session recovery and error-page styling when app styles cannot load.
+
+- Fixed project creation on fresh databases by initializing the checked usage ledger before budget writes.
+
+## [0.31.0] - 2026-10-12
+
+### Changed
+
+- **Breaking:** Unified paid-call accounting with project and connection budgets, retained receipts and unknown-cost gates. Follow the documented upgrade and rollback steps.
+
+- Estimates use request-specific catalog prices and custom rates across research, rank checks, schedules and queues, with frozen history windows.
+
+- Provider settings and usage views share compact, accessible controls, scoped details and saved currency and precision choices, with clearer navigation and documentation.
+
+### Fixed
+
+- Fixed provider edits, budget errors, usage privacy and totals, keyboard focus and layout; drafts survive outages and uncertain saves stay blocked.
+
+- Fixed API response envelopes and validation, including partial backlink history and recursive OpenAPI definitions.
+
+## [0.30.0] - 2026-10-09
+
+### Added
+
+- Added recurring AI tracking with editable model suggestions, explicit consent, retained answers, citations and comparable run history.
+
+### Changed
+
+- Runs now group in-progress, upcoming and completed work with chronological pagination, clear dates and status filters.
+
+### Fixed
+
+- Fixed AI tracking consent, schedules, trends and retries, migration admission, rank coverage and backlink history, costs and response validation.
+
+- Fixed crawl targets, robots/base handling, DNS and redirect deadlines, sitemap/hreflang parsing, provider restriction diagnostics and self-host runtime settings.
+
+- Fixed empty scheduled runs, disabled alert email failure counts, research menu focus, table header borders and Reports, Context and Runs page spacing.
+
+## [0.29.0] - 2026-10-08
+
+### Added
+
+- Added durable Meter counters, source/tag budgets, operation pages and allowance alerts, plus project usage views that distinguish pending and unavailable data.
+
+- Added a bounded agent SEO audit skill with saved crawl evidence, prioritized actions and access-controlled reports with provenance.
+
+### Changed
+
+- Keep content-free proof after deletion with no automatic expiry and BYOK attribution; reconcile late receipts, uncharged duplicates and unknown measurements; update dependencies.
+
+### Fixed
+
+- Fixed audit redirects, fetches, failure measurements and coverage; duplicate research headings; pinned-table separators and singular keyword target counts.
+
+- Enforced read-only OAuth grants; fixed SDK, CLI, MCP, ChatGPT, skill-download and webhook setup guidance, plus demo return paths.
+
+## [0.28.0] - 2026-10-04
+
+### Added
+
+- Added AI visibility datasets, multi-model prompt tests, bounded site audits, shared project context and protected agent reports through the app, REST and MCP.
+
+- Keyword details can refresh connected analytics and rank data; completed checks update results, and query details link to Search Console.
+
+### Changed
+
+- Keyword details show market and device context, schedule impact and aligned analytics; recent SERP snapshots can extend results while preserving rank history.
+
+### Fixed
+
+- Fixed research and backlink controls, tables, badges and unsupported targets; Search Console now uses fresh, finalized reporting periods.
+
+- Updated security dependencies and fixed provider deadlines, retaining safe diagnostics without replaying searches whose usage is unconfirmed.
+
+## [0.27.0] - 2026-09-27
+
+### Added
+
+- Self-host administrators with two-factor authentication can save the outbound mail provider, sender, and credentials. Environment variables still win.
+
+- Added manual checks for an entire market, with keyword and device check counts, selectable depth, and safe retries after a lost start response.
+
+- Setup completion plays a short burst of confetti from both sides of the screen.
+
+### Changed
+
+- Self-hosted operations identify missing Slack configuration and explain when the site is up but the worker has no fresh heartbeat.
+
+### Fixed
+
+- Fixed false manual rank-check errors and missing keyword and dashboard history after depth changes or unranked results.
+
+## [0.26.0] - 2026-09-26
+
+### Added
+
+- Separate monthly budgets for app/scheduled checks and API/MCP/SDK usage, with optional `X-Bisibility-Source`, `max_cost_cents`, and 429/Retry-After budget errors.
+
+### Changed
+
+- **Breaking:** Backlinks and keyword research dry runs return cost-only estimates without report fields, rows or source statuses.
+
+- Install explains Claude and ChatGPT setup separately; new ChatGPT OAuth approvals grant read-only access.
+
+- Provider connects honor priority and omitted SERP depth; cost estimates and Plausible domain guidance are corrected.
+
+### Fixed
+
+- Rank Tracker and Runs show assigned schedules, allow overlapping manual checks, keep Search Console paging and full-screen tables, and remember a default project.
+
+## [0.25.0] - 2026-09-18
+
+### Added
+
+- Added read-only endpoints that list and read stored backlinks, domain overview and keyword research reports with a fresh or stale state, without calling a provider.
+
+- Added MCP tools that estimate backlinks, domain overview and keyword research costs with read-only access, and `get_session_profile` for the effective session profile.
+
+### Changed
+
+- Keyword and rank-check responses separate the latest attempt from the latest successful check with a failure code; provider responses and projects state readiness.
+
+- Competitor lists return a market matrix with data state and check dates; search-performance stats accept page, match and metric filters and state their scope.
+
+- Install explains which MCP tools each client exposes, and the capabilities catalog maps every entry to its MCP tool without listing `api_key` inputs.
+
+### Fixed
+
+- Removing a competitor now disables its alert rules so they stop firing, and the Remove competitor dialog describes what removal hides.
+
+## [0.24.0] - 2026-09-16
+
+### Added
+
+- Added Spanish, Japanese and Polish interface languages on typed message catalogs, with automatic detection and a per-user language preference.
+
+- Added a ChatGPT connection guide, a downloadable app icon and a starter prompt that matches the project's progress to the Install page.
+
+### Changed
+
+- Split hosted, API and self-host documentation into audience guides and documented the Concept, Alpha and Beta maturity stages in the roadmap.
+
+- Simplified OAuth approval with app-specific actions, plain-language permissions, explicit API-token risks and optional technical details.
+
+- Release-asset upgrades run without a git checkout when verify.mjs and manifest.mjs sit next to upgrade.sh.
+
+### Fixed
+
+- Purple status text now meets the same contrast guarantee as the other status colors through a new `purple-text` token.
+
+## [0.23.0] - 2026-09-12
+
+### Added
+
+- Added an editable demo mode with separate Owner and read-only Viewer accounts and durable saved research results.
+
+- Added settings search, provider budget autofill from the account balance, deletion of completed runs from history, and a skippable onboarding keyword step.
+
+### Changed
+
+- **Breaking:** Removed Resend contact and segment sync. Waitlist signups are stored only in the database; `RESEND_CONTACTS_API_KEY` and `RESEND_SEGMENT_*` are no longer read.
+
+- Moved market and device controls into the page header, aligned the dashboard and Runs layouts, and moved Top 10 guidance from banners into control tooltips.
+
+- Country and select menus share one control with flags from a cached sprite, a pinned search field, and tracked countries listed first.
+
+- Reorganized documentation with named OpenAPI schemas, generated client references, copyable quickstarts, and hosted and versioning guides.
+
+### Fixed
+
+- Fixed restricted provider accounts shown as out of funds, stored Backlinks and Domain Overview demo pages, demo Owner login codes, and Runs table loading states.
+
+## [0.22.1] - 2026-09-09
+
+Maintenance release. Application behavior is unchanged.
+
+## [0.22.0] - 2026-09-09
+
+- Refined Rank Tracker tables and shared controls with saved layouts, resizing, grouping, bulk actions, keyword suggestions and clearer market navigation.
+
+- Added market management and project competitors, with setup suggestions, SERP comparisons and filtered dashboard results.
+
+- Improved manual checks and schedules, restored interrupted dispatch, and made operational digests clearer about backlog and upcoming work.
+
+- Fixed Search Console imports and period loading; added local pack and AI overview observations to rank checks.
+
+- Added optional read-only demos, setup walkthroughs and consent controls; strengthened project permissions and improved self-hosting security.
+
+## [0.21.0] - 2026-09-05
+
+- Added scheduled rank-check runs with clear recovery, API correlation IDs, fast pickup, and worker-owned launches.
+
+- Improved Search Console with first-day reports, GA4 context, faster queued sync, responsive tables, stored window aggregates, and clear Visibility coverage.
+
+- Added personal date formats and market-aware navigation, polished keyword and tag controls, fixed crawler metadata, and made Timeline and Competitors opt-in per project.
+
+- **Breaking:** API keyword term, market, and device are immutable; pausing or archiving a market cancels queued checks, and changing defaults leaves existing keywords unchanged.
+
+## [0.20.0] - 2026-09-02
+
+- Fixed Search Console Insights so previously imported data continues to unlock reports as the finalized window advances, with clearer coverage status.
+
+- Made Search Console property confirmation reliably land on the queued view, with a refresh action while imports complete.
+
+- Added sorting for all Top queries and Top pages columns across the full result window.
+
+- Improved setup with a durable Finish setup acknowledgement and corrected the landing and onboarding website field styling.
+
+## [0.19.0] - 2026-09-01
+
+- Made Search Console imports unlock useful data sooner, show truthful progress and wait reasons, and keep sync controls and freshness status in one place.
+
+- Added import depth and pace choices before connecting Search Console, safe mid-run replanning, and clear Organic sessions status while GA4 catches up.
+
+- Defined Visibility as a Top-20 metric that excludes shallow, failed, and unmeasured checks while showing measured keyword coverage.
+
+## [0.18.0] - 2026-08-31
+
+- Added a guided project setup checklist and clearer email-delivery failures for sign-in and team invitations.
+
+- Clamped Search Console history imports to available data and retry new properties daily without spending requests on empty dates.
+
+## [0.17.0] - 2026-08-30
+
+- Expanded GCS Insights with 16 months of Search Console history, daily sync, query and page drilldowns, GA4 sessions, and clearer connection controls.
+
+- Unified single and bulk rank checks, with clearer progress and richer stored-result browsing and comparison.
+
+- Grouped navigation into Track, Research, and Connect, and added an Install page with copyable MCP setup and API key guidance.
+
+- Refined responsive layouts, empty states, account and settings feedback, and result browsing across desktop and mobile.
+
+- Fixed a React hydration warning on marketing pages and the workspace shell caused by the pre-paint theme script stamping the shell root before hydration.
+
+## [0.16.0] - 2026-08-28
+
+- Validated the app's location-search endpoint and location-picker consumer responses.
+
+- Hardened sign-in, OAuth return paths, personal tokens, project API keys, and account deactivation against authentication and authorization bypasses.
+
+- Hardened deploy hooks, instance imports, webhook management, and saved-keyword deletion with early body limits and stricter API roles.
+
+- Improved account email-change safeguards, including rate-limited codes, current-address verification, session sign-out, and clearer security notices.
+
+- Made project and team cleanup more reliable, with atomic deletion audits, alert-recipient cleanup, and corrected contributor, webhook, and welcome-email documentation.
+
+## [0.15.0] - 2026-08-26
+
+- Gave interactive edges their own colour token, so inputs, buttons, and chips no longer share the hairline used by separators and card outlines.
+
+- Rounded corners now follow one two-step scale, so controls and cards look consistent everywhere instead of drifting between ten similar values.
+
+- Fixed backlinks and domain overview aggregate preflights to enforce provider connection allocations after allocation initialization.
+
+- Added provider-native allocation persistence and compatibility migration for legacy project spend caps.
+
+- Paid provider requests now carry consistent attribution and record idempotent cost and native usage for per-connection allocation enforcement.
+
+- Redesigned provider spend around per-provider budgets, native-unit spend, and the tightest budget in the app header.
+
+- Added allocation-aware provider spend data, including native-unit usage, provider availability, and per-connection budget updates.
+
+- Refined compact research, market, timeline, backlinks, and tracking controls for more consistent responsive interactions.
+
+## [0.14.0] - 2026-08-25
+
+- Improved self-hosted project transfers and imports with destination checks, clearer job states, import workspaces, and editable keyword CSV mapping.
+
+- Unified in-app provider-cost explanations across Keyword Research, Domain Overview, and Backlinks, including corrected history and row-limit rates.
+
+- Kept required onboarding steps enforceable and clarified provider selection and website setup.
+
+- Made error reporting optional, stabilized notification streams, isolated concurrent local Next.js builds, and aligned keyword dialogs with shared modal styling.
+
+- Upgraded to Next.js 16, which builds with Turbopack by default, and moved the TypeScript 6 dependency to the published `typescript` package.
+
+- Made manual rank checks show honest running, success, and failure states, surface provider billing and credential errors, avoid futile retries, and link notifications to details.
+
+- Completed checks now expose stored search results, including surrounding and missing positions, comparisons between checks, and a link to the full keyword view.
+
+- Added provider tags and cost-ledger attribution for paid lookups and rank checks.
+
+## [0.13.6] - 2026-08-18
+
+- Fixed project favicons after hydration and kept Keyword Research controls within compact dashboard widths.
+
+## [0.13.5] - 2026-08-18
+
+- Docs now list Domain Overview as available with a DataForSEO connection, and the v0.1.0 to v0.2.0 upgrade procedure moved to the legacy upgrades page.
+
+- The OpenAPI document now declares the `X-Bisibility-Project` header and `project` query parameter on personal-token operations that resolve a project.
+
+- The `OPS_HEARTBEAT_TZ` default is now `Etc/UTC`; set the variable explicitly to keep the ops heartbeat digest on a local timezone.
+
+- Corrected the SDK method reference: the released Python and Go SDKs add keywords with `create_keywords` and `CreateKeywords`.
+
+- `upgrade.sh` is published as a versioned, checksummed release asset covered by the distribution manifest and verified before publication.
+
+- `upgrade.sh` defaults to `compose.yaml`, supports repeatable `--compose-file` overlays, detects services from the Compose config, and stops before restart on migration failure.
+
+- Documented current hosted beta resource limits in one canonical page and kept self-host caps opt-in and unlimited by default.
+
+- Slack tenant delivery is classified as an API-only preview; workspace installation and channel management are not yet exposed in the dashboard.
+
+- Clarified routes to the local demo, deployment options, production
+  self-hosting, and the REST API quickstart and reference (CorgiCorner/bisibility#1011).
+
+- Added dedicated self-hosting guides for security, backup and restore,
+  troubleshooting, email delivery, routine operations, and safe upgrades.
+
+- Fixed monospaced text so its muted option controls foreground color instead of making every value appear muted (CorgiCorner/bisibility#1017).
+
+- Standardized motion timing and added restrained pointer press feedback while preserving instant keyboard and reduced-motion behavior (CorgiCorner/bisibility#1017).
+
+- Kept modal, sheet, and menu content mounted through exit transitions so state and focus do not reset before closing animations finish (CorgiCorner/bisibility#1017).
+
+- Improved reduced-motion support for status pulses, switches, disclosures, OTP errors, and loading skeletons without hiding state changes (CorgiCorner/bisibility#1017).
+
+- Made toasts interruptible and accessible, with paused timers on hover, focus, and hidden tabs, retained exit motion, and visible undo errors (CorgiCorner/bisibility#1017).
+
+- Made copy and confirmation feedback truthful, with success shown only after actions complete and clearer pending, error, and undo states (CorgiCorner/bisibility#1017).
+
+- Improved control accessibility, image fallback labels, keyboard radio behavior, and restrained loading reveals with reduced-motion support (CorgiCorner/bisibility#1017).
+
+- Unified tooltips with consistent delays, keyboard and touch support, reduced-motion behavior, accessible hit targets, and clearer disabled reasons (CorgiCorner/bisibility#1017).
+
+- Replaced exact arbitrary spacing and sizing values with equivalent named utilities across application and marketing surfaces.
+
+- Added named typography and geometry roles for consistent headings, body text, controls, cards, and content widths.
+
+- Increased the database connection wait timeout to reduce transient dashboard failures during brief database contention.
+
+- Fixed transparent project and competitor favicons so fallback initials no longer show through the icon.
+
+- Removed the dashboard refresh cadence chip because it could not represent per-keyword schedules truthfully.
+
+- Stabilized the sign-in code resend timer so its countdown and ready state no longer shift the surrounding row.
+
+## [0.13.4] - 2026-08-17
+
+- Fixed MDX syntax that prevented the Markets documentation page and two other docs pages from publishing.
+
+## [0.13.3] - 2026-08-16
+
+- Fixed uneven provider segment fills in the cost calculator.
+
+- Standardized cost calculator links with clear external-link behavior.
+
+- Kept onboarding first checks tied to configured rank-tracking providers.
+
+- Added consistent Gravatar avatars with initials fallbacks across account and team surfaces.
+
+- Unified searchable market selection across keyword, competitor, and domain workflows.
+
+- Improved project favicon detection while preserving initials for missing icons.
+
+- Unified table header colors and typography across app tables and loading states.
+
+## [0.13.2] - 2026-08-16
+
+- The default landing page preference derives from the primary sidebar entries and redirects `/app` to the saved page, migrating legacy `overview` and `keywords` choices.
+
+- Fixed highlight list row spacing so the market chip and note line never overlap at any URL length.
+
+- Dashboard loading skeleton now structurally mirrors the loaded dashboard: toolbar, KPI internals, trend/distribution grid, market rollup, data-source panel, and highlight cards.
+
+- Location suggestions render through a viewport-aware portal and are not clipped by cards, drawers, or viewport edges.
+
+- Unified segmented-control active styling and persisted rank-tracker density preference.
+
+- Team role capabilities and the footnote now have exactly one divider.
+
+- Pending keyword checks now relabel the primary action immediately to the selected result depth.
+
+## [0.13.1] - 2026-08-15
+
+- Cleaned up account and settings navigation, external help links, Rank Tracker search layout, and notification email controls.
+
+- Redesigned the command palette with contextual page actions and direct Rank Tracker action routing.
+
+- Added integration-specific reauthentication guidance without showing mismatched provider copy.
+
+- Added Cmd/Ctrl+Enter primary actions and consistent Escape cancellation to shared modals.
+
+- Fixed notification links from legacy keyword payloads so they open the matching Rank Tracker keyword.
+
+- Disabled Research search until a seed keyword is entered and explained why the action is unavailable.
+
+- Unified status badges across integrations, Rank Tracker, and audit views with the shared StatusPill treatment.
+
+- Market pairs now render one shared chip everywhere, and the language picker groups, sorts and scrolls the full supported language catalog.
+
+- Fixed the market picker discarding a selected language when the language search was narrowed afterwards.
+
+## [0.13.0] - 2026-08-14
+
+- Added project-local timezones and local wall-clock daily and weekly schedules, with editable settings and clearer check-time labels.
+
+- Added location-language markets across rank tracking and research, including market-aware Dashboard rollups, filters, management, and summaries.
+
+- Polished onboarding, Settings, Overview, Tracking, Timeline, Backlinks, Checks, alerts, and keyword views to match the approved design.
+
+- Updated Keyword Research routing and scope messaging, refreshed public positioning, and aligned the demo dashboard with multi-market data.
+
+## [0.12.1] - 2026-08-13
+
+- Fixed alert rows to show the triggering keyword's actual location and device instead of a hardcoded market.
+
+- Added location, language, and device columns to check runs so identical keywords across markets remain distinguishable.
+
+- Disclosed the effective country-language metrics scope and reused country-scoped keyword research cache entries across cities.
+
+- Removed unsupported language and refresh columns from the CSV import wizard's advertised format.
+
+- Aligned the served domain onboarding agent skill with the accepted country and device project defaults.
+
+- Removed the Timezone and Language controls from account preferences, while keeping the internal timezone and language values unchanged when saving remaining visible preferences.
+
+- Updated the transitive nanoid dependency to 3.3.18 to address a denial-of-service vulnerability in custom generators.
+
+## [0.12.0] - 2026-08-13
+
+- Added write-scoped Domain Overview API operations for cache-aware estimates, analysis, history, ranked keywords, and relevant pages, with explicit provider-cost caps.
+
+- Moved check history and upcoming checks into a dedicated Checks tab in Rank Tracker.
+
+- Kept Domain Overview controls visible during analysis, aligned recent searches, and simplified Domain Overview and Backlinks empty states.
+
+## [0.11.0] - 2026-08-13
+
+- Added Domain Overview with provider-backed KPIs, trends, keyword and page tables, cache-aware pricing, shareable URLs, and corrected organic ranked-keyword positions.
+
+## [0.10.0] - 2026-08-12
+
+- Streamlined onboarding with one-field website setup, unified data connections, prefilled provider costs, clearer Search Console actions, keyword imports, and tracking defaults.
+
+- Added property switching for connected Google Search Console and Analytics sources without requiring account reconnection.
+
+- Renamed the dashboard keyword workspace to Rank Tracker at `/rank-tracker`, standardized the Keyword Research title, and made operator Slack alerts easier to scan.
+
+- Added a Discord community link to the signed-in user menu.
+
+## [0.9.0] - 2026-08-11
+
+- Improved Google Search Console and Analytics reliability with reconnect notifications, paused sync during reauthorization, and correct OAuth project callbacks.
+
+- Improved onboarding and self-hosting with clearer provider status, location defaults, deployment links, docs navigation, and a resilient GitHub link.
+
+- **Breaking:** Cloud import endpoints now require `/api/v1/cloud/import`; unversioned `/api/cloud/import` routes have been removed.
+
+## [0.8.1] - 2026-08-11
+
+- Improved onboarding with the SerpApi free allowance, provider selection/status and API password reveal, primary/backup setup, and owned-domain matching.
+
+- Fixed first-run location suggestions and unique accessibility IDs for country and city options (thanks @zft9xgy).
+
+- Added redacted server-side diagnostics and stable failure classification for Google OAuth connection errors.
+
+- Hardened first-run account creation against missing runtime user IDs.
+
+## [0.8.0] - 2026-08-11
+
+- Improved overview accessibility, project favicons, security disclosures, self-hosting documentation and Temporal Compose bootstrapping, and error-report privacy.
+
+- Improved onboarding and provider setup with clearer fallbacks, stored credentials, progress feedback, and actionable OAuth errors.
+
+- Redesigned Settings and keyword detail with clearer navigation, reliable server-rendered loading states, project-scoped inspection limits, SERP pricing, and ranking URL history.
+
+- **Breaking:** Provider connect requests no longer accept `primary` or `priority`; connect first, then PATCH `{"priority":0}` to promote.
+
+## [0.6.1] - 2026-08-09
+
+- Routed Railway deployment links through a stable Bisibility URL so template slug changes no longer break docs or launch buttons.
+
+- Corrected cost calculator copy for the hosted beta and keyword-location-device tracking combinations.
+
+- Polished account and overview UI with a single theme setting, aligned chart axes, an unclipped start date, quieter beta actions, and clearer refresh labels.
+
+- Focused the alternatives closing call to action on the self-hosting or managed-hosting choice.
+
+- Reduced worker container disk usage by excluding build-only dependencies from runtime image layers.
+
+## [0.6.0] - 2026-08-09
+
+- Text, links and status colours meet WCAG AA in both themes.
+
+- Onboarding walks setup one step at a time, and unfinished setup returns to the wizard instead of being skipped.
+
+- The interface calls the tracked entity a project everywhere.
+
+## [0.5.1] - 2026-08-08
+
+- Increased search and workflow timeouts so deep rank checks can finish when valid provider pages respond slowly.
+
+## [0.5.0] - 2026-08-07
+
+- Self-hosted deployments now receive a 404 for all Cloud-only routes.
+
+- Documented Cloud data portability: full-history export and a migration path to self-hosting.
+
+- The workspace sidebar now starts expanded for accounts that never collapsed it; an explicit collapse is still remembered across reloads.
+
+- The collapsed sidebar now shows a dedicated expand control instead of revealing one on hover, and the workspace switcher and account button gained tooltips in that state.
+
+- The theme toggle is now available on the onboarding, sign-in and hosted top-bar surfaces, not only inside the workspace shell.
+
+- Linked the certified Railway template and documented its topology, safe cleanup job, backups,
+  and manual upgrades.
+
+- New signups now go straight into the workspace setup wizard; importing from a self-hosted instance is an option inside its first step.
+
+- **Breaking:** v0.5.0 is fresh-install only: new self-hosted deployments use one compact Prisma baseline, and Railway creates eight roles with two completed jobs.
+
+## [0.4.1] - 2026-08-05
+
+- Packaged provider-secret rotation commands in the production image for documented self-hosted key rotation.
+
+- Made detailed health fail closed when web and worker report different exact source revisions.
+
+- Provisioned required Temporal search attributes for bundled deployments and made external namespace validation fail closed.
+
+## [0.4.0] - 2026-08-05
+
+- Signing in with an existing session now goes straight to the requested page instead of showing the sign-in form again; add `?switch=1` to reach the form.
+
+- A project you cannot open now explains which account you are signed in as and offers an account switch, and the 404 page no longer suggests a route that does not exist.
+
+- Legacy `/app/overview` links, including those in browser extension 0.3.0, now redirect to the workspace entry point instead of returning 404.
+
+- A session whose account no longer exists now ends and returns you to sign-in, and a failed sign-out reports the error instead of appearing to do nothing.
+
+- Aligned landing-page category and feature copy with shipped keyword, backlink, analytics, and signal-timeline capabilities.
+
+- Reconciled public product claims with shipped Share of Voice, team roles, audit logging, signed webhooks, analytics connections, and deploy/CMS signals.
+
+- Added an MIT-licensed Claude Code marketplace plugin with OAuth MCP setup and three cost-gated SEO workflow skills.
+
+- Refreshed alternatives copy, AI-visibility roadmap wording, and the OpenSEO comparison with current pricing, issue, provider, and Domain Overview evidence.
+
+- Merged the feature spec and feature request forms into a single feature request form and renamed spec terminology across contribution docs.
+
+- Seeding with `BISIBILITY_SEED_API_KEY` now requires a generated `bsb_key_live_` or `bsb_key_test_` token, so a passphrase can no longer become a project API key.
+
+- Updated Prisma and Hono dependencies so the installation tree no longer contains the advisory-affected Hono server and middleware versions.
+
+- Added explicit scheduler drivers and versioned Compose overlays for core, external-worker, and bundled Temporal deployments.
+
+- Added a generated separate Temporal PostgreSQL credential for bundled scheduling, with a compatibility fallback for existing installations.
+
+- OAuth access tokens are now issued only for the MCP resource, so an authorization grant can no longer be redeemed for a token addressed to the authorization server.
+
+- Storybook now builds with Vite instead of Webpack, which removes the advisory-affected development-only `elliptic` dependency from the install tree.
+
+- Fixed Docker application builds to use the supported 4 GiB heap ceiling instead of Node's lower container default.
+
+## [0.3.5] - 2026-08-03
+
+- Updated HTTP and URI parsing dependencies to address newly disclosed security advisories.
+
+- Improved OAuth consent and expiry screens with client-specific guidance, clearer API token consequences, and correct retry instructions.
+
+- Fixed the app sidebar showing collapsed, icon-only content at full expanded width after returning to a background tab.
+
+## [0.3.4] - 2026-08-03
+
+- Fixed public CI and snapshot validation to replace inherited Node heap settings with the pinned 4 GiB limit.
+
+## [0.3.3] - 2026-08-02
+
+- Fixed public snapshot validation builds to use a 4 GiB Node heap when the caller has not set a
+  larger limit.
+
+## [0.3.2] - 2026-08-02
+
+- Fixed the public CI contract validator so release security scans pass without constructing
+  regular expressions from validator arguments.
+
+## [0.3.1] - 2026-08-02
+
+- Fixed public CI to exercise PostgreSQL migration settlement retries and identify failing tests in sharded logs.
+
+## [0.3.0] - 2026-08-02
+
+Known issue: Public source CI for this release contained a workflow-validation mismatch. The
+release process and public CI contract were corrected in v0.3.3.
+
+- Preserved OAuth consent and other return destinations when email OTP sign-in requires two-factor
+  verification.
+- **Breaking:** Resend contact and segment sync now requires `RESEND_CONTACTS_API_KEY`;
+  `RESEND_API_KEY` is only for deployments sending email with `EMAIL_PROVIDER=resend`.
+- **Breaking:** `BETTER_AUTH_SECRETS` must list versions in strictly descending order, and any
+  configured `BETTER_AUTH_SECRET` must contain at least 16 characters.
+- Added complete verification modes for rotating Better Auth 2FA envelopes and
+  application-encrypted provider credentials without partial scans.
+- Added REST and hosted MCP operations to list, save, and delete keyword ideas without starting
+  rank tracking.
+- Fixed hosted MCP discovery: the apex uses the regional authorization issuer, REST metadata stays
+  regional, and self-hosted installs keep one origin.
+- Fixed MCP discovery and initialization metadata to report the application package version
+  instead of `0.0.0` when npm lifecycle variables are unavailable.
+
+- Added a canonical cross-language SDK behavior contract covering authentication, timeouts,
+  retries, cancellation, errors, headers, cursor iteration, and sync/async parity.
+
+- Added status-only anonymous `/liveness` and `/readiness` responses, and protected detailed
+  `/health` diagnostics behind API credentials or the optional `INTERNAL_PROBE_TOKEN`.
+
+## [0.2.3] - 2026-07-31
+
+- Fixed release completion when GHCR visibility updates are unavailable but the published images
+  already pass anonymous pull verification.
+
+## [0.2.2] - 2026-07-31
+
+- Fixed public multi-architecture image publication so release builds reliably publish the web and
+  worker images to both Docker Hub and GHCR.
+
+## [0.2.1] - 2026-07-31
+
+- Added immutable standalone Compose, production environment, and secret-generator release assets,
+  so production installs no longer require a source checkout.
+- Expanded the distribution manifest to schema v2, binding release assets by SHA-256 alongside the
+  public web and worker images, with fail-closed verification.
+- Generated the public self-host environment from one registry, with fail-fast public origins,
+  production mode by default, and no retired CDN variables.
+- Replaced deprecated Temporal auto-setup 1.25.2 with Server and Admin Tools 1.31.2 and UI 2.49.1,
+  including explicit idempotent schema and namespace setup.
+- Added `upgrade.sh`, which verifies the target manifest and image revisions before stopping
+  services, applying migrations, and restarting the matched web and worker images.
+- Added API version negotiation through `/capabilities` and `Bisibility-API-Version: v1`; unsupported declared versions return a typed `409`.
+- Added public, version-pinned web and worker images on Docker Hub and GHCR; Compose now pulls them
+  by default, while `docker compose up --build` still builds from source.
+- Added separate `/liveness` and `/readiness` probes so operators can restart only a dead web
+  process and hold traffic until its database and blocking migrations are ready.
+- Added `services.appRevision` and `services.workerRevision` to health reporting so operators can
+  compare the public source revisions baked into web and worker artifacts.
+- Fixed audit payload redaction to record only declared fields and strip credentials, queries, and fragments from declared URLs.
+
+- Redesigned OAuth consent review to identify the account and client, group permissions, show the verified callback, and expire after five minutes.
+- Added restrictive self-host crawl controls: `Disallow: /` and `X-Robots-Tag: noindex` by default, with an explicit indexing opt-in.
+- Fixed migration readiness to require every bundled Prisma migration, active data migration checksum, and public ID contract to be current.
+- Added OAuth 2.1 for hosted MCP with PKCE, dynamic client registration, audience-bound tokens, protected-resource metadata, and tool safety annotations.
+- Fixed hosted MCP routing at `/api/mcp`; regional aliases return `421`, and cloud startup rejects divergent canonical and OAuth origins.
+
+- **Breaking:** Ranking CSV exports add provider, requested depth, and normalization version; history packages must use migration format v6.
+- Standardized rank checks on the best organic match, preserved provider URLs, and prevented comparisons across incompatible depth or normalization.
+
+## [0.2.0] - 2026-07-30
+
+- **Breaking:** Internal services (PostgreSQL, Valkey, Temporal Server) are no longer published on the
+host, and the Temporal UI now binds to `127.0.0.1`. For host access use the shipped
+`docker-compose.debug.yml`; for other bindings see the self-hosting guide.
+
+  Example: `docker compose -f docker-compose.yml -f docker-compose.debug.yml up --build`.
+
+- Fixed fresh installs, which created a database schema that diverged from the data model.
+- Fixed restart policies so the app, PostgreSQL, Valkey, and Temporal services restart unless stopped;
+previously only the optional worker did.
+- Fixed key rotation for provider credentials: `BISIBILITY_SECRETS_KEYS_RETIRED` now reaches the app
+on Compose installs, so retired keys can still decrypt existing secrets, and the rotation scripts
+run on the pinned Node runtime instead of resolving `tsx` from the network.
+- Narrowed the Docker build context so local environment files, keys, certificates, deployment state,
+and private material cannot enter checkout-built images.
+- Corrected the upgrade-path documentation: backup and restore examples now run inside the PostgreSQL
+container, and the rollback instructions warn that returning to 0.1.0 republishes the database and
+cache ports.
+- Corrected inaccurate claims about the contribution policy, CLI and Managed Cloud status, Search
+Console versus GA4 data, and roadmap vocabulary.
+
+## [0.1.0] - 2026-07-30
+
+- Added self-hosted keyword rank tracking with Docker, PostgreSQL, Redis or Valkey, optional Temporal scheduling, and BYO DataForSEO or SerpAPI accounts.
+- Added keyword and backlink research, position history, alerts, Search Console query metrics, GA4 landing-page metrics, and CSV export.
+- Added REST API v1 with OpenAPI, an authenticated MCP endpoint, signed outbound webhooks, scoped API keys, team roles, and audit logging.

@@ -1,0 +1,45 @@
+---
+title: "Team"
+description: "List project members and manage invitations."
+---
+
+Paths are relative to `/api/v1`. Routes accept a project-scoped API key that
+belongs to the project in the path or a personal access token. See
+[Authentication](/authentication) for scopes.
+
+| Method | Path | Purpose |
+| - | - | - |
+| `GET` | `/projects/{project_id}/team/members` | List project members and roles. |
+| `GET` | `/projects/{project_id}/team/invites` | List pending invitations. |
+| `POST` | `/projects/{project_id}/team/invites` | Create or replace an invitation. |
+| `DELETE` | `/projects/{project_id}/team/invites/{invite_id}` | Revoke an invitation through the project route. |
+| `POST` | `/projects/{project_id}/team/invites/{invite_id}/resend` | Resend a pending invitation with a new token and expiration. |
+| `PATCH` | `/projects/{project_id}/team/members/{member_id}` | Change a non-owner member role. Project API keys act as admins; changing an admin-tier member or deleting a project needs an owner's personal access token. |
+| `DELETE` | `/projects/{project_id}/team/members/{member_id}` | Remove a non-owner member. Project API keys act as admins; removing an admin-tier member or deleting a project needs an owner's personal access token. |
+| `DELETE` | `/team/invites/{invite_id}` | Revoke the same invitation through the short route. |
+
+Invite roles are `admin`, `member`, or `viewer`. Creating and revoking invites
+also applies the app's project-role authorization rules; an API key alone does
+not bypass them.
+
+Update a member role with `{ "role": "admin" }`, `{ "role": "member" }`, or
+`{ "role": "viewer" }`. Owner role changes and ownership transfer are not
+available through REST or MCP; use the guarded app workflow. Member removal is
+permanent and clients should confirm the user's intent before calling it.
+
+The generated
+[OpenAPI JSON](https://bisibility.com/api/v1/openapi.json) remains the
+machine-readable source of truth for request and response schemas.
+
+## Related operations
+
+- [`GET /projects/{project_id}/team/members`](/api-reference/team/list-team-members) (`listTeamMembers`)
+- [`PATCH /projects/{project_id}/team/members/{member_id}`](/api-reference/team/change-a-non-owner-team-member-role) (`updateTeamMemberRole`)
+- [`DELETE /projects/{project_id}/team/members/{member_id}`](/api-reference/team/remove-a-non-owner-team-member) (`removeTeamMember`)
+- [`GET /projects/{project_id}/team/invites`](/api-reference/team/list-team-invites) (`listTeamInvites`)
+- [`POST /projects/{project_id}/team/invites`](/api-reference/team/create-a-team-invite) (`createTeamInvite`)
+- [`POST /projects/{project_id}/team/invites/{invite_id}/resend`](/api-reference/team/resend-a-pending-team-invite) (`resendTeamInvite`)
+- [`DELETE /projects/{project_id}/team/invites/{invite_id}`](/api-reference/team/revoke-a-project-team-invite) (`revokeProjectTeamInvite`)
+- [`DELETE /team/invites/{invite_id}`](/api-reference/team/revoke-a-team-invite-by-id) (`revokeTeamInvite`)
+
+Exact request and response schemas live in the generated API Reference.

@@ -1,0 +1,295 @@
+import { serpDeviceValues } from "@/lib/serp/constants";
+import {
+  deprecatedLegacyMarketField,
+  legacyMarketNameOpenApiSchema,
+  primaryLocationKeyDescription,
+} from "./legacy-market-input";
+import { agentSchemas } from "./openapi-agent-components";
+import { alertRuleSchemas } from "./openapi-alert-components";
+import { apiKeySchemas } from "./openapi-api-key-components";
+import { keywordPatchSchema } from "./openapi-keyword-patch";
+import { keywordResearchSchemas } from "./openapi-keyword-research-components";
+import { keywordCheckStateSchemas, keywordMatchSchemas } from "./openapi-keywords";
+import { migrationSchemas } from "./openapi-migration-components";
+import { personalAccessSchemas } from "./openapi-pat-components";
+import { projectSchemas } from "./openapi-project-components";
+import { providerSchemas } from "./openapi-provider-components";
+import { publicIdSchema } from "./openapi-public-id";
+import { resourceSchemas } from "./openapi-resource-components";
+import {
+  keywordScheduleResourceContractSchema,
+  scheduleInputContractSchema,
+} from "./openapi-schedule-schema";
+import { openEnum, sdkName, usdCents } from "./openapi-sdk-schema";
+import { signalSchemas } from "./openapi-signal-components";
+
+const serpDeviceSchema = { enum: serpDeviceValues, type: "string", ...openEnum("Device") };
+const publicIdPattern = "^[a-z]+_[a-z][a-z0-9]{23}$";
+const locationKeySchema = {
+  description:
+    "Canonical country, region, or city key, optionally qualified with @language. The default language normalizes to the unqualified key.",
+  example: "ES/Andalusia/Malaga@en",
+  type: "string",
+};
+const keywordLocationSchema = {
+  description: "Resolved keyword location display name.",
+  example: "Austin, Texas, United States",
+  type: "string",
+};
+// biome-ignore format: grouped fields keep the central schema below the enforced line limit.
+const keywordResourceRequiredFields = [
+  "id", "project_id", "text", "country", "location", "device", "latest_check",
+  "latest_position", "latest_successful_check", "language_code", "language_label",
+  "location_key", "previous_position", "ranking_url", "schedule", "tags", "target_url",
+  "topic", "intent", "created_at", "updated_at",
+];
+
+const problemSchema = {
+  properties: {
+    detail: { type: "string" },
+    details: { additionalProperties: true, type: "object" },
+    docs_url: { type: "string" },
+    errors: {},
+    instance: { type: "string" },
+    status: { type: "integer" },
+    title: { type: "string" },
+    type: { type: "string" },
+  },
+  required: ["type", "title", "status", "detail", "instance", "docs_url"],
+  type: "object",
+};
+
+export const schemas = {
+  PublicIdV3: {
+    description:
+      "Opaque v3 public resource ID. Internal database IDs are never accepted or returned.",
+    pattern: publicIdPattern,
+    type: "string",
+  },
+  ...migrationSchemas,
+  ...keywordMatchSchemas,
+  ...keywordCheckStateSchemas,
+  ...keywordResearchSchemas,
+  ...personalAccessSchemas,
+  ...signalSchemas,
+  ...alertRuleSchemas,
+  ...resourceSchemas,
+  ...apiKeySchemas,
+  Keyword: {
+    properties: {
+      country: keywordLocationSchema,
+      created_at: { format: "date-time", type: "string" },
+      device: serpDeviceSchema,
+      id: {
+        example: "kw_a00000000000000000000000",
+        pattern: "^kw_[a-z][a-z0-9]{23}$",
+        type: "string",
+      },
+      intent: { type: ["string", "null"] },
+      latest_check: { $ref: "#/components/schemas/KeywordLatestCheck" },
+      latest_position: {
+        description:
+          '`latest_position` = `latest_check.position`; it is `null` for failed checks, unknown observation coverage, or absence within the requested depth. Agents that need "the last known ranking" must read `latest_successful_check.position`.',
+        type: ["integer", "null"],
+      },
+      latest_successful_check: { $ref: "#/components/schemas/KeywordLatestSuccessfulCheck" },
+      language_code: { example: "en", type: "string" },
+      language_label: { example: "English", type: "string" },
+      location: keywordLocationSchema,
+      location_key: locationKeySchema,
+      previous_position: {
+        description:
+          "`previous_position` = the position recorded on `latest_check` as its predecessor.",
+        type: ["integer", "null"],
+      },
+      project_id: {
+        example: "prj_a00000000000000000000000",
+        pattern: "^prj_[a-z][a-z0-9]{23}$",
+        type: "string",
+      },
+      ranking_url: { type: ["string", "null"] },
+      schedule: keywordScheduleResourceContractSchema,
+      tags: { items: { type: "string" }, type: "array" },
+      target_url: { type: ["string", "null"] },
+      text: { example: "rank tracker api", type: "string" },
+      topic: { type: ["string", "null"] },
+      updated_at: { format: "date-time", type: "string" },
+    },
+    required: keywordResourceRequiredFields,
+    type: "object",
+  },
+  KeywordCreateItem: {
+    properties: {
+      city: deprecatedLegacyMarketField(
+        "City name resolved within country when location_key is omitted.",
+        { type: ["string", "null"] },
+      ),
+      country: legacyMarketNameOpenApiSchema(
+        "Country market name used when location_key is omitted.",
+      ),
+      device: serpDeviceSchema,
+      intent: { type: ["string", "null"] },
+      keyword: { example: "rank tracker api", type: "string" },
+      language: deprecatedLegacyMarketField(
+        "SERP UI language code combined with country when location_key is omitted; use the @language qualifier on location_key instead.",
+        { example: "en", type: "string" },
+      ),
+      location: legacyMarketNameOpenApiSchema("Backward-compatible alias for country."),
+      location_key: {
+        ...locationKeySchema,
+        description: primaryLocationKeyDescription(
+          "Takes precedence over the deprecated country, language, location, and city fields.",
+        ),
+      },
+      schedule: scheduleInputContractSchema,
+      tags: { items: { type: "string" }, type: "array" },
+      target_url: { type: ["string", "null"] },
+      topic: { type: ["string", "null"] },
+    },
+    required: ["keyword"],
+    type: "object",
+  },
+  KeywordCreateResponse: {
+    properties: {
+      created: { type: "integer" },
+      results: {
+        items: {
+          properties: {
+            keyword: { $ref: "#/components/schemas/Keyword" },
+            status: { enum: ["created", "skipped"], type: "string" },
+            warning: { type: "string" },
+          },
+          required: ["status", "keyword"],
+          type: "object",
+        },
+        type: "array",
+      },
+      skipped: { type: "integer" },
+      warnings: { items: { type: "string" }, type: "array" },
+    },
+    required: ["created", "skipped", "results"],
+    type: "object",
+  },
+  KeywordPatch: keywordPatchSchema,
+  Problem: problemSchema,
+  MeDeletionForbidden: {
+    ...problemSchema,
+    properties: {
+      ...problemSchema.properties,
+      details: {
+        description: "Present when the app must sign in again; absent for insufficient scope.",
+        properties: {
+          code: { const: "reauthentication_required", type: "string" },
+          max_age_seconds: { const: 600, type: "integer" },
+        },
+        required: ["code", "max_age_seconds"],
+        type: "object",
+        ...sdkName("MeDeletionReauthenticationDetails"),
+      },
+    },
+  },
+  ...providerSchemas,
+  ...agentSchemas,
+  ...projectSchemas,
+  RankCheck: {
+    properties: {
+      usage: {
+        description:
+          "Confirmed provider usage; null quantity means unconfirmed and is never inferred from requested depth. Costs may take up to 15 minutes to update.",
+        properties: {
+          quantity: { minimum: 0, type: ["number", "null"] },
+          status: {
+            enum: ["confirmed", "unconfirmed"],
+            type: "string",
+            ...openEnum("UsageStatus"),
+          },
+          unit: { enum: ["operations", "cents"], type: "string", ...openEnum("UsageUnit") },
+        },
+        required: ["quantity", "status", "unit"],
+        type: "object",
+        ...sdkName("RankCheckUsage"),
+      },
+      attempts: {
+        description: "Provider fallback attempts recorded before the final rank-check status.",
+        items: {
+          properties: {
+            message: { type: "string" },
+            provider: { type: "string" },
+          },
+          required: ["provider", "message"],
+          type: "object",
+          ...sdkName("RankCheckAttempt"),
+        },
+        type: ["array", "null"],
+      },
+      checked_at: { format: "date-time", type: "string" },
+      cost_cents: { type: ["number", "null"], ...usdCents },
+      error: { type: ["string", "null"] },
+      error_code: {
+        description:
+          "Stable failure code for this check, or null for rows older than the code taxonomy.",
+        type: ["string", "null"],
+      },
+      id: publicIdSchema("check"),
+      keyword_id: publicIdSchema("kw"),
+      observation_completeness: {
+        description:
+          "Persisted coverage, or null when legacy metadata is absent. Only complete coverage supports absence within depth; a valid positive rank remains valid with truncated coverage.",
+        enum: ["complete", "truncated_by_stop_on_match", "unknown", null],
+        type: ["string", "null"],
+        ...openEnum("ObservationCompleteness"),
+      },
+      position: { type: ["integer", "null"] },
+      previous_position: { type: ["integer", "null"] },
+      provider: { type: "string" },
+      ranking_url: { type: ["string", "null"] },
+      run: {
+        description: "The run that produced this result, or null for a legacy row.",
+        properties: {
+          finished_at: { format: "date-time", type: ["string", "null"] },
+          id: publicIdSchema("rcr"),
+          started_at: { format: "date-time", type: ["string", "null"] },
+          status: { type: "string" },
+          trigger: { type: "string" },
+        },
+        required: ["id", "status", "trigger", "started_at", "finished_at"],
+        type: ["object", "null"],
+        ...sdkName("RankCheckRunReference"),
+      },
+      run_id: {
+        ...publicIdSchema("rcr"),
+        description: "Rank-check run that produced this result, or null for a legacy row.",
+        type: ["string", "null"],
+      },
+      status: {
+        enum: ["completed", "failed", "running"],
+        type: "string",
+        ...openEnum("RankCheckStatus"),
+      },
+    },
+    required: [
+      "id",
+      "keyword_id",
+      "checked_at",
+      "position",
+      "observation_completeness",
+      "previous_position",
+      "provider",
+      "ranking_url",
+      "run_id",
+      "run",
+      "cost_cents",
+      "attempts",
+      "error",
+      "error_code",
+      "status",
+    ],
+    type: "object",
+  },
+  // biome-ignore format: compact schema preserves the central file line cap.
+  RankCheckRunQueued: { properties: { id: publicIdSchema("rcr"), status: { enum: ["queued"], type: "string", ...openEnum("RankCheckQueuedStatus") } }, required: ["id", "status"], type: "object" },
+};
+
+export function ref(name: keyof typeof schemas) {
+  return { $ref: `#/components/schemas/${name}` };
+}

@@ -1,0 +1,43 @@
+---
+title: "API keys"
+description: "Choose a PAT or project route, set scope and expiry, and store the raw token once."
+---
+
+API-key routes require an admin-capable credential. Exact request and response
+schemas live in the **API Reference** tab.
+
+A personal access token can manage keys for an explicit project through
+`POST /projects/{project_id}/api-keys`. Its effective permission for that
+project must be `admin`. The top-level `/api-keys` aliases remain useful for
+project keys and for a PAT when project selection is unambiguous.
+
+## Token lifecycle
+
+The raw token is returned only in the create response. This applies to both
+`createApiKey` and `createProjectApiKey`. Store `token` immediately. It is not
+returned again. List and revoke responses expose `prefix` and `masked_value`,
+never the raw secret.
+
+`scope` accepts `read`, `write`, or `admin`; omitting it defaults to `admin`
+for backward compatibility. `expires_in_days` accepts `30`, `90`, `365`, or
+`null` for no expiry. A key with no expiry, or with `admin` scope, can do
+everything that scope allows until revoked. An agent can create one if you
+allowed that app to create API tokens and the credential it uses can manage
+API keys. The key's expiry is separate from the token that created it. See
+[Agent permissions](/agents/permissions).
+
+`revokeApiKey` requires the complete typed `key_` public ID. The response is the
+revoked API-key resource with `revoked_at` set.
+
+For CI automation with a PAT, create the project key through
+`POST /projects/{project_id}/api-keys` instead of inferring the project.
+
+## Related operations
+
+- [`GET /api-keys`](/api-reference/api-keys/list-api-keys) (`listApiKeys`)
+- [`POST /api-keys`](/api-reference/api-keys/create-an-api-key) (`createApiKey`)
+- [`DELETE /api-keys/{key_id}`](/api-reference/api-keys/revoke-an-api-key) (`revokeApiKey`)
+- [`GET /projects/{project_id}/api-keys`](/api-reference/api-keys/list-project-api-keys) (`listProjectApiKeys`)
+- [`POST /projects/{project_id}/api-keys`](/api-reference/api-keys/create-a-project-api-key) (`createProjectApiKey`)
+
+Exact request and response schemas live in the generated API Reference.

@@ -1,0 +1,47 @@
+import { DOCS_URL, FEEDBACK_URL, GITHUB_URL, MARKETING_URL } from "@/lib/site/site";
+import { BookOpenTextIcon as BookOpenText } from "@phosphor-icons/react/dist/csr/BookOpenText";
+import { ChatCircleDotsIcon as ChatCircleDots } from "@phosphor-icons/react/dist/csr/ChatCircleDots";
+import { GithubLogoIcon as GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
+import { HouseIcon as House } from "@phosphor-icons/react/dist/csr/House";
+import { SignOutIcon as SignOut } from "@phosphor-icons/react/dist/csr/SignOut";
+import { UserCircleIcon as UserCircle } from "@phosphor-icons/react/dist/csr/UserCircle";
+
+export { ArrowUpRightIcon as trailingExternalIcon } from "@phosphor-icons/react/dist/csr/ArrowUpRight";
+
+import type { Icon } from "@phosphor-icons/react/lib";
+
+export type UserMenuLink = {
+  key: "accountSettings" | "docs" | "feedback" | "github" | "homepage" | "signOut";
+  icon: Icon;
+  hostedOnly?: boolean;
+  href?: string;
+  external?: boolean;
+};
+
+// Account / personal section (HANDOFF-2 §6). Project config stays in Settings.
+export const accountLinks = [
+  { key: "accountSettings", href: "/app/account", icon: UserCircle },
+] satisfies UserMenuLink[];
+
+export const resourceLinks = [
+  { key: "docs", href: DOCS_URL, icon: BookOpenText, external: true },
+  // Hosted builds link back to the vendor site without relying on the regional app host.
+  {
+    key: "homepage",
+    href: MARKETING_URL,
+    icon: House,
+    external: true,
+    hostedOnly: true,
+  },
+  { key: "feedback", href: FEEDBACK_URL, icon: ChatCircleDots, external: true },
+] satisfies UserMenuLink[];
+
+export function resourceLinksForDeployment(showHostedLinks: boolean) {
+  return resourceLinks.filter((item) => showHostedLinks || !item.hostedOnly);
+}
+
+export const communityLinks = [
+  { key: "github", href: GITHUB_URL, icon: GithubLogo, external: true },
+] satisfies UserMenuLink[];
+
+export const signOutLink = { key: "signOut", icon: SignOut } satisfies UserMenuLink;

@@ -1,0 +1,152 @@
+{
+  "projectInstall": {
+    "agents": {
+      "heading": "AI エージェント",
+      "description": "ツールを選び、コマンドをコピーしてターミナルに貼り付けてください。セットアップはこれだけです。",
+      "copyCommand": "{agent} のコマンドをコピー",
+      "claude-code": {
+        "label": "Claude Code",
+        "hint": "CLI",
+        "note": "その後、Claude Code で /mcp を実行してサインインしてください。"
+      },
+      "codex": {
+        "label": "Codex",
+        "hint": "CLI",
+        "note": "Codex は同じ OAuth フローでサインインします。"
+      },
+      "cursor": {
+        "label": "Cursor",
+        "hint": "エディター",
+        "note": "設定、MCP と進み、mcp.json に貼り付けてください。"
+      },
+      "chatgpt": {
+        "label": "ChatGPT",
+        "hint": "アプリ",
+        "note": "ChatGPT の Plugins を開き、+、Add custom MCP server の順に選択します。MCP URL と OAuth を指定します。",
+        "caveat": "アクセスはワークスペースのポリシーによって異なります。この bisibility 接続は読み取り専用アクセスを要求します。"
+      },
+      "grok-bot": {
+        "label": "Grok Bot",
+        "hint": "アシスタント",
+        "note": "これを Grok Bot のチャットに貼り付け、カスタム MCP サーバーの追加を確認してから、接続カードでサインインしてください。bisibility の同意画面では、クライアントが Cursor と表示され、自動的に登録されたと示されることがあります。Grok Bot ではそれが想定どおりです。",
+        "caveat": "順位チェックや被リンク分析などの有料操作は書き込みツールで、プロジェクトの支払い元に課金されます。実行する前に、ボットに費用の確認を依頼してください。"
+      },
+      "claude-desktop": {
+        "label": "Claude（ウェブとデスクトップ）",
+        "hint": "コネクター",
+        "note": "カスタマイズ、コネクター、カスタムコネクターを追加の順に進み、この URL を貼り付けてからサインインを承認してください。",
+        "caveat": "Claude はすべてのツールを利用できます。初回は各書き込みツールの実行前に確認を求めます。常に許可は、監視なしで実行しても問題ないと信頼できるツールにのみ使用してください。Research は確認なしでツールを実行するため、そこでは書き込みツールを無効にしてください。"
+      },
+      "other": {
+        "label": "任意の MCP クライアント",
+        "hint": "手動",
+        "note": "OAuth サインインに対応した Streamable HTTP です。URL にキーは含まれません。"
+      }
+    },
+    "endpoint": {
+      "heading": "MCP エンドポイント",
+      "description": "リストにないツールをお使いですか？このアドレスを貼り付けて、bisibility アカウントでサインインしてください。",
+      "copy": "MCP URL をコピー",
+      "selfHosted": "セルフホスティングの場合は、代わりにご自身のアドレスを使用してください: '<your-instance>'/api/mcp",
+      "toolScope": "{total} 個中 {readOnly} 個のツールは読み取り専用です。クライアントと承認されたスコープによって、利用できるツールが制限される場合があります。順位チェックや被リンク分析などの有料操作は書き込みツールです。保存済みレポートと費用見積もりは読み取り専用です。"
+    },
+    "apiKey": {
+      "heading": "API キー",
+      "scope": "スコープ: {scope}",
+      "scopeRead": "読み取り専用",
+      "scopeWrite": "読み取りと書き込み",
+      "scopeAdmin": "フルアクセス",
+      "description": "夜間スクリプトのように、操作なしで実行する処理に使用します。{created, select, none {} other {{created}。}}",
+      "created": "{date}に作成",
+      "manage": "設定、開発者で管理",
+      "none": "API キーはまだありません。プロジェクト管理者は設定 → 開発者で作成できます。",
+      "copyCurl": "curl の例をコピー"
+    },
+    "skills": {
+      "heading": "スキル",
+      "planned": "予定",
+      "description": "スキルのアーカイブをダウンロードするか、Claude Codeプラグインのスキルを使用できます。予定されているタスクは以下に表示されます。",
+      "footer": "アーカイブをダウンロードし、エージェントの手順に従ってスキルをインストールしてください。",
+      "keyword-import": "一括追加と重複除去",
+      "provider-setup": "接続とキーの確認",
+      "weekly-report": "週間変動のまとめ",
+      "keyword-clustering": "検索意図でグループ化",
+      "seo-audit": "SEO改善の優先順位",
+      "availableCount": "{count, plural, other {#件利用可能}}",
+      "available": "利用可能",
+      "domain-onboarding": "最初のドメイン設定",
+      "bisibility": "適切なスキルを選択",
+      "ai-visibility-audit": "AIでの可視性を確認",
+      "keyword-opportunity-research": "キーワードの機会を発見",
+      "rank-tracking-report": "検索順位の変動を確認",
+      "alert-triage": "順位アラートを調査",
+      "backlink-profile-analysis": "被リンクの品質を評価",
+      "team-api-governance": "チームのAPIアクセス管理",
+      "self-host-health": "インスタンスの稼働状況を確認",
+      "competitor-analysis": "競合の成果を比較",
+      "competitive-landscape": "競合環境を分析",
+      "ai-prompt-research": "AIプロンプトを調査",
+      "local-seo": "地域検索の可視性を改善",
+      "link-prospecting": "リンク獲得の機会を発見",
+      "sitemap-change-watch": "サイトマップの変更を監視",
+      "inPlugin": "Claude Codeプラグインに含まれます",
+      "project-setup": "プロジェクト情報の保存と追跡の設定",
+      "seo-coach": "次に使うSEOスキルを選ぶ"
+    },
+    "chatgptIcon": {
+      "copyUrl": "アイコン URL をコピー",
+      "description": "bisibility をカスタム MCP アプリとして追加するときは、このアイコンを使用してください。",
+      "download": "PNG をダウンロード",
+      "heading": "MCP アプリアイコン",
+      "imageAlt": "bisibility のアプリアイコン",
+      "meta": "PNG · {width, number} × {height, number} px · {kilobytes} KB（{bytes, number}バイト） · 10 KB 未満"
+    },
+    "gettingStarted": {
+      "addApp": {
+        "copyMcpUrl": "ChatGPT の MCP URL をコピー",
+        "description": "以下の MCP URL でプラグインを作成し、OAuth を選び bisibility にサインインします。作成したプラグインをインストールします。",
+        "title": "2. bisibility を追加"
+      },
+      "description": "bisibility を ChatGPT に接続します。",
+      "developerMode": {
+        "description": "ChatGPT の Plugins を開きます。ワークスペースでカスタム MCP サーバーが許可されている必要があります。",
+        "title": "1. Plugins を開く"
+      },
+      "dismiss": "開始方法の案内を閉じる",
+      "firstChat": {
+        "description": "新しいチャットで @ を入力し、bisibility を選択します。例: \"{prompt}\"",
+        "prompt": {
+          "withChecks": "今週、順位が下がったキーワードはどれですか？",
+          "withoutChecks": "閲覧できるプロジェクトとキーワードを教えてください。"
+        },
+        "title": "3. 会話を開始"
+      },
+      "guideLink": "ChatGPT セットアップガイド",
+      "heading": "開始方法",
+      "note": "管理者によるカスタム MCP サーバーの許可が必要な場合があります。",
+      "show": "開始方法を表示",
+      "clientSwitcher": "AIアシスタント",
+      "accessTitle": "読み取り専用アクセス",
+      "accessDescription": "このChatGPT接続では、プロジェクトと順位のデータを読み取れます。プロジェクトの変更や削除、メンバーの管理、APIキーの作成はできません。",
+      "claude": {
+        "description": "bisibilityをClaudeに接続します。",
+        "accessTitle": "読み取り・書き込みアクセス",
+        "accessDescription": "Claudeは、承認したスコープと既存のプロジェクト権限の範囲内で、データの読み取りと利用可能な書き込みツールの使用ができます。",
+        "developerMode": {
+          "title": "1. コネクタを開く",
+          "description": "ClaudeでSettings → Connectorsを開き、Add custom connectorを選択します。"
+        },
+        "addApp": {
+          "title": "2. bisibilityを追加",
+          "description": "名前をbisibilityにして、下のMCP URLを貼り付けます。コネクタを追加し、Connectを選択してbisibilityにログインし、権限を確認します。",
+          "copyMcpUrl": "Claude用MCP URLをコピー"
+        },
+        "firstChat": {
+          "description": "新しいチャットで+メニューを開き、Connectorsからbisibilityを有効にします。例：「{prompt}」"
+        },
+        "note": "カスタムコネクタの追加や有効化には、ワークスペース管理者の操作が必要な場合があります。",
+        "guideLink": "Claudeの設定ガイド"
+      }
+    }
+  }
+}

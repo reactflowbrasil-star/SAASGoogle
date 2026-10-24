@@ -1,0 +1,146 @@
+"use client";
+
+import { AppDrawer } from "@/components/ui/AppDrawer";
+import { Button } from "@/components/ui/Button";
+import type { CompetitorFilter, CompetitorMarketData } from "@/lib/competitors/types";
+import { MagnifyingGlassIcon as MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+import { useTranslations } from "next-intl";
+import { useState } from "react";
+
+type ComparisonScopeDrawerProps = {
+  filter: CompetitorFilter;
+  market: CompetitorMarketData;
+  onChange: (filter: CompetitorFilter) => void;
+  onClose: () => void;
+  open: boolean;
+};
+
+export function ComparisonScopeDrawer({
+  filter,
+  market,
+  onChange,
+  onClose,
+  open,
+}: Readonly<ComparisonScopeDrawerProps>) {
+  const t = useTranslations("projectCompetitors.ui");
+  const [search, setSearch] = useState("");
+  const excluded = new Set(filter.excludedKeywordIds);
+  const normalizedSearch = search.trim().toLowerCase();
+  const visible = market.observations.filter(
+    (observation) =>
+      !normalizedSearch ||
+      observation.keyword.toLowerCase().includes(normalizedSearch) ||
+      observation.tags.some((tag) => tag.toLowerCase().includes(normalizedSearch)),
+  );
+  const included = market.observations.filter((observation) => !excluded.has(observation.id));
+  const completed = included.filter((observation) => observation.completed).length;
+
+  function setExcluded(next: Set<string>) {
+    onChange({ ...filter, excludedKeywordIds: [...next].sort() });
+  }
+
+  return (
+    <AppDrawer
+      description={t("comparisonScopeDescription")}
+      footer={
+        <div className="flex items-center justify-between gap-3">
+          <span className="font-sans tabular-nums text-[11px] text-fg-muted">
+            {t("includedExcluded", { excluded: excluded.size, included: included.length })}
+          </span>
+          <Button onClick={onClose}>{t("done")}</Button>
+        </div>
+      }
+      onClose={onClose}
+      open={open}
+      title={t("comparisonScope")}
+    >
+      <div className="grid gap-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {[
+            { label: t("tracked"), value: market.observations.length },
+            { label: t("included"), value: included.length },
+            { label: t("completed"), value: completed },
+            { label: t("pending"), value: included.length - completed },
+          ].map(({ label, value }) => (
+            <span className="rounded-control border border-border bg-bg-sunken p-3" key={label}>
+              <span className="block font-sans tabular-nums text-[9px] uppercase text-fg-muted">
+                {label}
+              </span>
+              <span className="mt-1 block font-sans tabular-nums text-lg font-semibold">
+                {value}
+              </span>
+            </span>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="relative min-w-[220px] flex-1">
+            <MagnifyingGlass
+              weight="regular"
+              aria-hidden
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-muted"
+              size={14}
+            />
+            <input
+              aria-label={t("searchComparisonKeywords")}
+              className="min-h-9 w-full rounded-control border border-border-control bg-transparent pl-9 pr-3 text-[13px] outline-none focus:border-accent"
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={t("searchKeywordsOrTags")}
+              value={search}
+            />
+          </label>
+          <Button onClick={() => setExcluded(new Set())} size="sm" variant="secondary">
+            {t("includeAll")}
+          </Button>
+          <Button
+            onClick={() => setExcluded(new Set([...excluded, ...visible.map((item) => item.id)]))}
+            size="sm"
+            variant="secondary"
+          >
+            {t("excludeVisible")}
+          </Button>
+        </div>
+
+        <div className="overflow-hidden rounded-control border border-border">
+          {visible.map((observation) => {
+            const checked = !excluded.has(observation.id);
+            return (
+              <label
+                className="flex cursor-pointer items-start gap-3 border-border border-b px-3.5 py-3 last:border-b-0 hover:bg-bg-sunken"
+                key={observation.id}
+              >
+                <input
+                  checked={checked}
+                  className="mt-0.5 accent-accent"
+                  onChange={() => {
+                    const next = new Set(excluded);
+                    if (checked) next.add(observation.id);
+                    else next.delete(observation.id);
+                    setExcluded(next);
+                  }}
+                  type="checkbox"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-medium">
+                    {observation.keyword}
+                  </span>
+                  <span className="mt-1 flex flex-wrap items-center gap-1.5 font-sans tabular-nums text-[10px] text-fg-muted">
+                    <span>{observation.completed ? t("checkCompleted") : t("checkPending")}</span>
+                    {observation.tags.map((tag) => (
+                      <span className="rounded bg-bg-sunken px-1.5 py-0.5" key={tag}>
+                        {tag}
+                      </span>
+                    ))}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+          {visible.length === 0 ? (
+            <p className="m-0 px-4 py-6 text-center text-[13px] text-fg-muted">{t("noMatches")}</p>
+          ) : null}
+        </div>
+      </div>
+    </AppDrawer>
+  );
+}

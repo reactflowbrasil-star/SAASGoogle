@@ -1,0 +1,234 @@
+import { requiredRoleFor } from "@/lib/auth/capabilities";
+import { describe, expect, it } from "vitest";
+import { getOpenApiDocument } from "./openapi";
+import { operationPolicy, operationPolicyForRequest, type ProjectAccess } from "./operation-policy";
+import type { ApiScope } from "./scope-policy";
+
+type DocumentedOperation = {
+  method: string;
+  operationId: string;
+  path: string;
+  projectAccess: ProjectAccess;
+  requiredScope: ApiScope;
+};
+
+function usesApiCredential(operation: { security?: object[] }) {
+  return operation.security?.some(
+    (requirement) => "PersonalAccessToken" in requirement || "ProjectApiKey" in requirement,
+  );
+}
+
+function pathSegments(path: string) {
+  return path.split("/").filter(Boolean);
+}
+
+function readOnlyTrackingPost(method: string, path: string[]) {
+  return (
+    method === "POST" &&
+    path[0] === "projects" &&
+    path[2] === "ai-tracking" &&
+    ((path[3] === "runs" && path[4] === "preview" && path.length === 5) ||
+      (path[3] === "suggestions" &&
+        (path.length === 4 || (path[4] === "preview" && path.length === 5))))
+  );
+}
+
+function legacyRequiredScope(method: string, path: string[]): ApiScope {
+  if (readOnlyTrackingPost(method, path)) return "read";
+  if (method === "POST" && path[0] === "projects" && path[2] === "keyword-matches") {
+    return "read";
+  }
+  if (method === "POST" && path[0] === "projects" && path[2] === "keyword-metrics") {
+    return "write";
+  }
+  if (path[0] === "api-keys" || (path[0] === "projects" && path[2] === "api-keys")) {
+    return "admin";
+  }
+  // Device push registration is device plumbing, available to read-scope tokens.
+  if (path[0] === "me" && path[1] === "push-tokens") return "read";
+  if (path[0] === "me" && path[1] === "tokens") {
+    if (method === "DELETE" && path[2] === "current" && path.length === 3) return "read";
+    return "admin";
+  }
+  // Account deletion is destructive and requires an admin-scope personal token.
+  if (method === "DELETE" && path[0] === "me" && path.length === 1) return "admin";
+  if (method === "DELETE" && path[0] === "projects" && path.length === 2) return "admin";
+  if (method === "DELETE" && path[0] === "projects" && path[2] === "webhooks") return "admin";
+  if (path[0] === "projects" && path[2] === "team" && method !== "GET") return "admin";
+  // Team invite revocation is an admin operation on either route shape.
+  if (method === "DELETE" && path[0] === "team" && path[1] === "invites") return "admin";
+  if (
+    method === "GET" &&
+    path[0] === "projects" &&
+    ["backlinks", "keyword-research", "ranked-keyword-suggestions"].includes(path[2])
+  ) {
+    return "write";
+  }
+  return method === "GET" ? "read" : "write";
+}
+
+function legacyProjectAccess(method: string, path: string[]): ProjectAccess {
+  return method === "GET" ||
+    readOnlyTrackingPost(method, path) ||
+    (method === "POST" &&
+      path[0] === "projects" &&
+      ["keyword-matches", "keyword-metrics"].includes(path[2]))
+    ? "read"
+    : "write";
+}
+
+function documentedOperations(): DocumentedOperation[] {
+  const rows: DocumentedOperation[] = [];
+  for (const [path, methods] of Object.entries(getOpenApiDocument().paths)) {
+    for (const [method, candidate] of Object.entries(methods)) {
+      const operation = candidate as { operationId?: string; security?: object[] };
+      if (!operation.operationId || !usesApiCredential(operation)) continue;
+      const upperMethod = method.toUpperCase();
+      const segments = pathSegments(path);
+      rows.push({
+        method: upperMethod,
+        operationId: operation.operationId,
+        path,
+        projectAccess: legacyProjectAccess(upperMethod, segments),
+        requiredScope: legacyRequiredScope(upperMethod, segments),
+      });
+    }
+  }
+  return rows.sort((left, right) => left.operationId.localeCompare(right.operationId));
+}
+
+describe("operation policy", () => {
+  it("declares every authenticated OpenAPI operation exactly once", () => {
+    const before = documentedOperations();
+    const after = Object.entries(operationPolicy)
+      .filter(([operationId]) => operationId !== "revokeCurrentPersonalAccessToken")
+      // `capability` is asserted separately below; the route contract compared here is
+      // method, path, project access and required scope.
+      .map(([operationId, { capability: _capability, ...declared }]) => ({
+        operationId,
+        ...declared,
+      }))
+      .sort((left, right) => left.operationId.localeCompare(right.operationId));
+
+    expect(after).toEqual(before);
+    // Existing rank-run list/detail reads are now documented at the top level.
+    expect(before).toHaveLength(141);
+    const localReads = before.filter(({ path }) => path.includes("/local-monitors/"));
+    expect(localReads).toHaveLength(5);
+    expect(
+      localReads.every(
+        ({ method, requiredScope, projectAccess }) =>
+          method === "GET" && requiredScope === "read" && projectAccess === "read",
+      ),
+    ).toBe(true);
+    expect(
+      before.filter(
+        ({ operationId }) =>
+          operationId === "listRankCheckRuns" || operationId === "getRankCheckRun",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        operationId: "getRankCheckRun",
+        requiredScope: "read",
+        projectAccess: "read",
+      }),
+      expect.objectContaining({
+        operationId: "listRankCheckRuns",
+        requiredScope: "read",
+        projectAccess: "read",
+      }),
+    ]);
+    for (const operation of before) {
+      const runtimePath = pathSegments(operation.path).map((segment) =>
+        segment.startsWith("{") ? "value" : segment,
+      );
+      expect(operationPolicyForRequest(operation.method, runtimePath)?.operationId).toBe(
+        operation.operationId,
+      );
+    }
+  });
+
+  it("preserves the complete required-scope distribution", () => {
+    const counts = documentedOperations().reduce<Record<ApiScope, number>>(
+      (result, operation) => {
+        result[operation.requiredScope] += 1;
+        return result;
+      },
+      { admin: 0, read: 0, write: 0 },
+    );
+
+    expect(counts).toEqual({ admin: 17, read: 59, write: 65 });
+  });
+
+  it("declares self-revocation and prefers it over the token-id route", () => {
+    expect(operationPolicyForRequest("DELETE", ["me", "tokens", "current"])).toMatchObject({
+      operationId: "revokeCurrentPersonalAccessToken",
+      requiredScope: "read",
+    });
+    expect(
+      operationPolicyForRequest("DELETE", ["me", "tokens", "pat_a00000000000000000000000"]),
+    ).toMatchObject({
+      operationId: "revokePersonalAccessToken",
+      requiredScope: "admin",
+    });
+  });
+});
+
+describe("operation capabilities mirror the app authorization table", () => {
+  const adminOrOwnerOnly = [
+    "mintMigrationToken",
+    "connectProvider",
+    "disconnectProvider",
+    "updateProviderSettings",
+    "deleteAlertRule",
+    "removeCompetitor",
+    "removeProjectCompetitor",
+    "testProviderConnection",
+    "createWebhookEndpoint",
+    "updateWebhookEndpoint",
+    "deleteWebhookEndpoint",
+    "revokeTeamInvite",
+    "revokeMigrationToken",
+    "revokeProjectMigrationToken",
+    "deleteKeyword",
+    "deleteProjectSavedKeyword",
+    "deleteProject",
+  ] as const;
+
+  function declaredCapability(name: (typeof adminOrOwnerOnly)[number]) {
+    const capability = operationPolicy[name].capability;
+    if (!capability) {
+      throw new Error(`API operation "${name}" is missing a capability`);
+    }
+    return capability;
+  }
+
+  it.each(adminOrOwnerOnly)("%s declares a capability that needs admin or owner", (name) => {
+    const { action, resourceType } = declaredCapability(name);
+
+    expect(["admin", "owner"]).toContain(requiredRoleFor(action, resourceType));
+  });
+
+  it("deleteProject is owner-only", () => {
+    const { action, resourceType } = declaredCapability("deleteProject");
+
+    expect(requiredRoleFor(action, resourceType)).toBe("owner");
+  });
+
+  it("gates notification preferences at the member tier and escalates in the handler", () => {
+    const capability = operationPolicy.updateNotificationPreferences.capability;
+
+    expect(capability).toEqual({ action: "update", resourceType: "notification_preference" });
+    expect(requiredRoleFor("update", "notification_preference")).toBe("member");
+  });
+
+  it("keeps member-level operations free of a capability gate", () => {
+    expect(operationPolicy.addKeywords.capability).toBeUndefined();
+    expect(operationPolicy.createAlertRule.capability).toBeUndefined();
+    expect(operationPolicy.listKeywords.capability).toBeUndefined();
+  });
+
+  it("requires the admin scope to revoke a team invite", () => {
+    expect(operationPolicy.revokeTeamInvite.requiredScope).toBe("admin");
+  });
+});

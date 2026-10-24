@@ -1,0 +1,153 @@
+import type { NativeUsageEstimate } from "@/lib/cost-estimate/native-usage";
+import { isProjectReadOnly, ProjectReadOnlyError } from "@/lib/deployment/project-write-mode";
+import type { BudgetDenialReason } from "@/lib/metering/budget-denial";
+import type { ObservationCompleteness } from "@/lib/observation/types";
+import { redactOpsText } from "@/lib/ops/redact-text";
+import { ProviderRateLimitedError } from "@/lib/providers/rate-limit";
+import { budgetFailureResult } from "@/lib/rank-check/budget-failure";
+import { RankCheckRunnerError } from "@/lib/rank-check/runner-error";
+import { LaunchRankCheckRunError } from "@/lib/rank-check/runs/launch-types";
+import type { SerpDevice } from "@/lib/serp/constants";
+import type { RankCheckFrequency } from "@/lib/settings/options";
+
+export type FirstCheckCandidate = {
+  previousResult?: Exclude<RunFirstCheckPreviewResult, { status: "failed" }>;
+  device: "desktop" | "mobile";
+  id: string;
+  market: {
+    languageLabel: string;
+    locationLabel: string;
+  };
+  publicId: string;
+  text: string;
+};
+
+export type ListFirstCheckCandidatesResult = {
+  candidates: FirstCheckCandidate[];
+  hasAnalyticsSource: boolean;
+  isSampleProject: boolean;
+  providerReady: boolean;
+};
+
+export type FirstCheckRunPlan = {
+  nativeEstimate?: NativeUsageEstimate;
+  firstTargetEstimate?: NativeUsageEstimate;
+  budget: { capCents: number; spentCents: number };
+  estimatedCostPerCheckCents: number | null;
+  readyCount: number;
+  providers: string[];
+  scope: {
+    depth: number;
+    device: SerpDevice;
+    engine: "google";
+    frequency: RankCheckFrequency;
+    location: string;
+  };
+  providerReady: boolean;
+  isSampleProject: boolean;
+  budgetExhausted: boolean;
+  budgetReason?: BudgetDenialReason;
+};
+
+export type ObservedPosition = {
+  clicks: number;
+  impressions: number;
+  keywordId: string;
+  position: number;
+  text: string;
+};
+
+export type FirstCheckPreviewFailureCode =
+  | "usage_reconciliation_required"
+  | "budget_missing"
+  | "budget_exhausted"
+  | "failed"
+  | "measurement_policy_unconfigured"
+  | "measurement_policy_unsupported"
+  | "no_provider"
+  | "project_read_only"
+  | "rate_limited"
+  | "sample_project"
+  | "unexpected";
+
+export type RunFirstCheckPreviewResult =
+  | {
+      runId: string;
+      status: "queued";
+    }
+  | {
+      observationCompleteness?: ObservationCompleteness | null;
+      position: number | null;
+      recordedCostCents: number | null;
+      requestedDepth?: number;
+      provider: string;
+      rankingUrl: string | null;
+      status: "completed";
+    }
+  | {
+      code: FirstCheckPreviewFailureCode;
+      message: string;
+      status: "failed";
+    };
+
+export function previewFailure(
+  code: FirstCheckPreviewFailureCode,
+  message: string,
+): RunFirstCheckPreviewResult {
+  return { code, message, status: "failed" };
+}
+
+export function isProjectReadOnlyError(error: unknown) {
+  const value = error as { code?: unknown; name?: unknown; project?: { writeMode?: unknown } };
+  return (
+    error instanceof ProjectReadOnlyError ||
+    value.code === "project_read_only" ||
+    value.name === "ProjectReadOnlyError" ||
+    isProjectReadOnly(value.project?.writeMode)
+  );
+}
+
+export function expectedPreviewFailure(error: unknown): RunFirstCheckPreviewResult | null {
+  if (
+    error instanceof LaunchRankCheckRunError &&
+    (error.code === "measurement_policy_unconfigured" ||
+      error.code === "measurement_policy_unsupported")
+  )
+    return previewFailure(error.code, error.message);
+  if (isProjectReadOnlyError(error)) {
+    return previewFailure("project_read_only", "This project is read-only right now.");
+  }
+  const budgetFailure = budgetFailureResult(error);
+  if (budgetFailure)
+    return previewFailure(
+      budgetFailure.code,
+      budgetFailure.code !== "budget_exhausted"
+        ? budgetFailure.message
+        : "Monthly rank-check budget reached.",
+    );
+  if (
+    error instanceof ProviderRateLimitedError ||
+    (error instanceof RankCheckRunnerError && error.code === "provider_rate_limited")
+  ) {
+    return previewFailure("rate_limited", "Provider rate limit reached. Try again shortly.");
+  }
+  if (error instanceof RankCheckRunnerError && error.code === "no_provider_connected") {
+    return previewFailure("no_provider", "Connect a SERP provider before running checks.");
+  }
+  if (error instanceof RankCheckRunnerError) {
+    return previewFailure("failed", "We couldn't run this check. Try again in a moment.");
+  }
+  return null;
+}
+
+export function unexpectedPreviewFailure(
+  error: unknown,
+  context: { keywordId: string; projectId: string },
+): RunFirstCheckPreviewResult {
+  console.error("[rank-check-preview] unexpected failure", {
+    error: redactOpsText(error instanceof Error ? (error.stack ?? error.message) : error, 2_000),
+    keywordId: context.keywordId,
+    projectId: context.projectId,
+  });
+  return previewFailure("unexpected", "Check failed on our side. Retry in a moment.");
+}

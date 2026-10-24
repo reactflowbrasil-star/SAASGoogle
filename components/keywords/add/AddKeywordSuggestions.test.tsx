@@ -1,0 +1,287 @@
+import { paymentQuote } from "@/components/action-payment/payment-test-fixture";
+import { FeatureMessagesProvider } from "@/components/i18n/FeatureMessagesProvider";
+import { ProjectRankTrackerMessages } from "@/components/rank-tracker/ProjectRankTrackerMessages";
+import { ProjectWriteModeProvider } from "@/components/shell/ProjectWriteModeProvider";
+import { mergeMessageCatalogs } from "@/i18n/catalog-contract";
+import rankTrackerMessages from "@/messages/core/en/project-rank-tracker.json";
+import rankTrackerKeywordImportMessages from "@/messages/core/en/project-rank-tracker-keyword-import.json";
+import sharedMessages from "@/messages/core/en/shared.json";
+import { fireEvent, render as renderDom, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AddKeywordDrawer } from "./AddKeywordDrawer";
+import AddKeywordSuggestionsPanel from "./AddKeywordSuggestionsPanel";
+import { useKeywordSuggestionSources } from "./useKeywordSuggestionSources";
+
+function SuggestionsHarness({ onAppendQueries }: { onAppendQueries: (queries: string[]) => void }) {
+  const sources = useKeywordSuggestionSources(projectId);
+  return (
+    <>
+      <button onClick={() => void sources.load()} type="button">
+        Suggestions
+      </button>
+      <AddKeywordSuggestionsPanel
+        currentKeywords=""
+        onAppendQueries={onAppendQueries}
+        projectId={projectId}
+        sourceState={sources}
+      />
+    </>
+  );
+}
+
+const mocks = vi.hoisted(() => ({ sources: vi.fn(), gsc: vi.fn(), ranked: vi.fn(), add: vi.fn() }));
+vi.mock("@/lib/actions/keyword-suggestion-sources", () => ({
+  listKeywordSuggestionSources: mocks.sources,
+}));
+vi.mock("@/lib/actions/keyword-suggest", () => ({ importTopQueries: mocks.gsc }));
+vi.mock("@/lib/actions/ranked-keywords", () => ({ fetchRankedKeywordSuggestions: mocks.ranked }));
+vi.mock("@/lib/actions/keyword", () => ({ addKeywordsMatrix: mocks.add }));
+vi.mock("@/lib/actions/project-market-create", () => ({ createProjectMarket: vi.fn() }));
+vi.mock("@/lib/actions/project-markets", () => ({ addProjectMarkets: vi.fn() }));
+vi.mock("@/lib/actions/action-payment", () => ({
+  assessActionPaymentsAction: async () => ({ allowed: true, reason: null, charges: [] }),
+}));
+
+const projectId = `prj_${"b".repeat(24)}`;
+const connection = { id: `conn_${"a".repeat(24)}`, label: "DataForSEO", provider: "dataforseo" };
+const sources = { domain: "example.com", searchConsole: true, rankedConnections: [connection] };
+const usd = { kind: "currency", code: "USD" } as const;
+const rankedQuote = paymentQuote({
+  charge: { value: "0.02", unit: usd, certainty: "estimate" },
+  option: {
+    id: "route-dataforseo",
+    providerId: "dataforseo",
+    providerLabel: "DataForSEO",
+    connectionId: connection.id,
+    fundingSource: "byok",
+    payableUnit: usd,
+  },
+});
+const projectMarkets = {
+  markets: [
+    {
+      canonicalKey: "US",
+      countryCode: "US",
+      displayName: "United States",
+      id: "pmkt_us",
+      languageCode: "en",
+      languageLabel: "English",
+      monthlyCostCents: 0,
+      researchAvailable: true,
+      status: "active" as const,
+    },
+  ],
+  maxMarkets: 5,
+  monthlyCostCents: 0,
+  perMarketChecks: 1,
+  projectId,
+};
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  mocks.sources.mockResolvedValue(sources);
+  mocks.gsc.mockResolvedValue({ queries: ["existing draft", "new suggestion"] });
+  const rankedPage = {
+    cached: false,
+    connections: [connection],
+    costCents: 2,
+    fetchedAt: "2026-09-08T00:00:00.000Z",
+    offset: 0,
+    totalCount: 1,
+    rows: [
+      {
+        keyword: "tracked in another market",
+        alreadyTracked: true,
+        estimatedTraffic: 12,
+        searchVolume: 200,
+        position: 2,
+      },
+    ],
+  };
+  mocks.ranked.mockImplementation(async (input: { estimateOnly?: boolean }) =>
+    input.estimateOnly
+      ? {
+          ...rankedPage,
+          estimate: true,
+          payment: rankedQuote,
+          paymentOptions: [rankedQuote.option],
+        }
+      : rankedPage,
+  );
+  mocks.add.mockResolvedValue({ created: 2, keywords: [] });
+});
+
+function renderDrawer() {
+  return renderProject(
+    <AddKeywordDrawer
+      addKeywordsAction={vi.fn()}
+      onClose={vi.fn()}
+      open
+      projectId={projectId}
+      projectMarkets={projectMarkets}
+      initialKeyword="existing draft"
+      initialDevices={["mobile"]}
+      initialScheduleFrequency="manual"
+    />,
+  );
+}
+
+function renderProject(children: ReactNode) {
+  return renderDom(<ProjectRankTrackerMessages>{children}</ProjectRankTrackerMessages>);
+}
+
+function renderPolishKeywordImport(children: ReactNode) {
+  const messages = {
+    ...rankTrackerKeywordImportMessages,
+    projectRankTracker: {
+      ...rankTrackerKeywordImportMessages.projectRankTracker,
+      keywordImport: {
+        ...rankTrackerKeywordImportMessages.projectRankTracker.keywordImport,
+        suggestionDrawer: {
+          ...rankTrackerKeywordImportMessages.projectRankTracker.keywordImport.suggestionDrawer,
+          use: "Użyj {count, plural, one {# słowa kluczowego} few {# słów kluczowych} many {# słów kluczowych} other {# słowa kluczowego}}",
+        },
+        topQueries: {
+          ...rankTrackerKeywordImportMessages.projectRankTracker.keywordImport.topQueries,
+          choose: "Wybierz zapytania",
+        },
+      },
+    },
+  };
+  return renderDom(
+    <FeatureMessagesProvider
+      locale="pl"
+      messages={mergeMessageCatalogs(sharedMessages, rankTrackerMessages, messages)}
+      timeZone="UTC"
+    >
+      {children}
+    </FeatureMessagesProvider>,
+  );
+}
+
+/** Price previews may quote DataForSEO, but no paid lookup may run without an accepted quote. */
+function expectOnlyRankedEstimates() {
+  for (const [input] of mocks.ranked.mock.calls) {
+    expect(input).toMatchObject({ estimateOnly: true, requirePayment: true });
+    expect(input).not.toHaveProperty("acceptedPayment");
+  }
+}
+
+describe("Add keyword suggestions", () => {
+  it("loads sources only on demand, then reviews suggestions in Manual without changing tracking settings", async () => {
+    renderDrawer();
+    fireEvent.change(screen.getByLabelText("Target URL"), { target: { value: "/target" } });
+    fireEvent.change(screen.getByLabelText("Tags"), { target: { value: "docs" } });
+    expect(mocks.sources).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("radio", { name: "Suggestions" }));
+    const choose = await screen.findByRole("button", { name: "Choose queries" });
+    expect(mocks.sources).toHaveBeenCalledWith({ projectId });
+    expect(mocks.gsc).not.toHaveBeenCalled();
+    expectOnlyRankedEstimates();
+    expect(screen.queryByRole("button", { name: "Add keywords" })).not.toBeInTheDocument();
+    const form = document.querySelector("#add-keyword-form");
+    if (!form) throw new Error("Missing keyword form");
+    fireEvent.submit(form);
+    await waitFor(() => expect(mocks.add).not.toHaveBeenCalled());
+    fireEvent.click(choose);
+    const useKeywords = await screen.findByRole("button", { name: "Use 1 keyword" });
+    expect(screen.getByRole("checkbox", { name: "existing draft" })).toBeDisabled();
+    expect(screen.getByText("In draft")).toBeVisible();
+    fireEvent.click(useKeywords);
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Manual" })).toBeChecked());
+    expect(screen.getByLabelText("Keywords")).toHaveValue("existing draft\nnew suggestion");
+    expect(screen.getByLabelText("Target URL")).toHaveValue("/target");
+    expect(screen.getByLabelText("Tags")).toHaveValue("docs");
+    expect(mocks.add).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Add keywords" }));
+    await waitFor(() =>
+      expect(mocks.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          keywords: ["existing draft", "new suggestion"],
+          locations: [{ locationKey: "US" }],
+          devices: ["mobile"],
+          targetUrl: "/target",
+          tags: ["docs"],
+          schedule: expect.objectContaining({ frequency: "manual" }),
+        }),
+      ),
+    );
+  });
+
+  it("requests DataForSEO only after its priced action and allows a phrase tracked in another market", async () => {
+    const append = vi.fn();
+    renderProject(<SuggestionsHarness onAppendQueries={append} />);
+    fireEvent.click(screen.getByRole("button", { name: "Suggestions" }));
+    const choose = await screen.findByRole("button", { name: /^Choose keywords/ });
+    await waitFor(() => expect(choose).toHaveTextContent("$0.02"));
+    expectOnlyRankedEstimates();
+    fireEvent.click(choose);
+    const start = await screen.findByRole("button", { name: "Start" });
+    expectOnlyRankedEstimates();
+    fireEvent.click(start);
+    fireEvent.click(await screen.findByRole("button", { name: "Use 1 keyword" }));
+    const paid = mocks.ranked.mock.calls.filter(([input]) => !input.estimateOnly);
+    expect(paid).toEqual([
+      [
+        {
+          acceptedPayment: { quoteToken: rankedQuote.quoteToken },
+          connectionId: connection.id,
+          estimateOnly: false,
+          offset: 0,
+          paymentOptionId: rankedQuote.option.id,
+          projectId,
+          requirePayment: true,
+        },
+      ],
+    ]);
+    expect(append).toHaveBeenCalledWith(["tracked in another market"]);
+    expect(mocks.add).not.toHaveBeenCalled();
+  });
+
+  it("injects its own non-English import messages into the normal keyword flow", async () => {
+    mocks.gsc.mockResolvedValueOnce({ queries: ["nowa fraza"] });
+    renderPolishKeywordImport(<SuggestionsHarness onAppendQueries={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Suggestions" }));
+    const choose = await screen.findByRole("button", { name: "Wybierz zapytania" });
+    fireEvent.click(choose);
+
+    expect(await screen.findByRole("button", { name: "Użyj 1 słowa kluczowego" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Choose queries" })).not.toBeInTheDocument();
+  });
+
+  it("offers integration settings when neither source is connected", async () => {
+    mocks.sources.mockResolvedValue({ ...sources, searchConsole: false, rankedConnections: [] });
+    renderProject(<SuggestionsHarness onAppendQueries={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Suggestions" }));
+    expect(await screen.findByRole("link", { name: "Manage integrations" })).toHaveAttribute(
+      "href",
+      `/app/${projectId}/integrations`,
+    );
+    expect(screen.queryByRole("button", { name: /Choose/ })).not.toBeInTheDocument();
+    expect(mocks.gsc).not.toHaveBeenCalled();
+    expect(mocks.ranked).not.toHaveBeenCalled();
+  });
+
+  it("can retry loading sources after a failure", async () => {
+    mocks.sources.mockRejectedValueOnce(new Error("offline"));
+    renderProject(<SuggestionsHarness onAppendQueries={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Suggestions" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("button", { name: "Choose queries" })).toBeEnabled();
+    expect(mocks.sources).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps provider requests disabled for a read-only project", async () => {
+    renderProject(
+      <ProjectWriteModeProvider projectRef={projectId} writeMode="migration_hold">
+        <SuggestionsHarness onAppendQueries={vi.fn()} />
+      </ProjectWriteModeProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Suggestions" }));
+    expect(await screen.findByRole("button", { name: "Choose queries" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Choose keywords" })).toBeDisabled();
+    expect(mocks.ranked).not.toHaveBeenCalled();
+  });
+});

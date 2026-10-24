@@ -1,0 +1,35 @@
+import {
+  renderWithFeatureMessages,
+  sharedControlTestMessages,
+} from "@/i18n/test-support/render-with-feature-messages";
+import { fireEvent, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { PasswordInput } from "./PasswordInput";
+
+function render(ui: React.ReactElement) {
+  return renderWithFeatureMessages(ui, { messages: sharedControlTestMessages });
+}
+
+describe("PasswordInput", () => {
+  it("toggles password visibility with accessible labels", () => {
+    render(<PasswordInput aria-label="API password" />);
+
+    const input = screen.getByLabelText("API password") as HTMLInputElement;
+    expect(input.type).toBe("password");
+    expect(input).toHaveClass("pr-12");
+
+    fireEvent.click(screen.getByRole("button", { name: "Show password" }));
+    expect(input.type).toBe("text");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide password" }));
+    expect(input.type).toBe("password");
+  });
+
+  it("uses tokenized pointer press feedback without keyboard or reduced-motion transforms", () => {
+    render(<PasswordInput aria-label="API password" />);
+
+    const toggle = screen.getByRole("button", { name: "Show password" });
+    expect(toggle).toHaveClass("duration-[var(--motion-press)]");
+    expect(toggle).toHaveClass("motion-safe:active:not-focus-visible:scale-[0.97]");
+  });
+});

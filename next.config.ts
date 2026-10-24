@@ -1,0 +1,205 @@
+import { resolveSentryBuild } from "@/lib/observability/build-identity";
+import { withSentryConfig } from "@sentry/nextjs";
+import type { NextConfig } from "next";
+import createNextIntlPlugin from "next-intl/plugin";
+import packageJson from "./package.json";
+
+const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
+
+// Server runtime secrets stay in the baked server-only module. Next's `env` below
+// contains only public build identity, which is also inlined into the browser bundle.
+const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN;
+const sentryOrg = process.env.SENTRY_ORG;
+const canUploadSentrySourceMaps = Boolean(sentryAuthToken && sentryOrg);
+// All Next runtimes and uploaded source maps must use the same build-time release.
+const sentryBuild = resolveSentryBuild(process.env, packageJson.version);
+const sentryRelease = sentryBuild.release;
+
+export function resolveNextDistDir(value?: string) {
+  return value?.trim() || ".next";
+}
+
+export function resolveNextOutput(env: Record<string, string | undefined>) {
+  return env.AMPLIFY_HOSTING || env.VERCEL ? undefined : "standalone";
+}
+
+export function isNextBuildMemoryCapped(env: Record<string, string | undefined>) {
+  return Boolean(env.AMPLIFY_HOSTING || env.VERCEL || env.CI || env.NEXT_BUILD_MEMORY_CAPPED);
+}
+
+export function resolveNextBuildCpus(env: Record<string, string | undefined>) {
+  return isNextBuildMemoryCapped(env) ? 2 : undefined;
+}
+
+// The managed hosting build checks types in its own step before `next build` and fails on
+// errors there, so the build does not hold the compiled app in memory while the checker runs.
+export function areTypesCheckedBeforeBuild(env: Record<string, string | undefined>) {
+  return env.NEXT_TYPES_CHECKED_BEFORE_BUILD === "1";
+}
+
+// Hosting targets that need a config branch. Railway, Fly, and Render all run the Docker
+// image, so they are the unflagged default rather than a flag of their own.
+// Every build that runs under a pinned `--max-old-space-size=4096` (amplify.yml and
+// scripts/ci/node-memory-limit.mjs both set it) has to keep the worker cap below. A local
+// dev run has no such cap and should not pay for one.
+const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_APP_VERSION: sentryBuild.version,
+    NEXT_PUBLIC_APP_REVISION: sentryBuild.revision || "",
+    NEXT_PUBLIC_SENTRY_RELEASE: sentryRelease || "",
+  },
+  // Release E2E intentionally reaches the dev server through the IPv4 loopback address.
+  // Next 16 blocks that origin unless it is explicitly allowlisted.
+  allowedDevOrigins: ["127.0.0.1"],
+  // Next 16 generates its own AGENTS.md at the repository root. This repository keeps a
+  // hand-written AGENTS.md carrying the private agent instructions, and a dev or build
+  // run overwrote it.
+  agentRules: false,
+  // Keep framework chrome from intercepting bottom-aligned mobile actions.
+  devIndicators: false,
+  typescript: {
+    ignoreBuildErrors: areTypesCheckedBeforeBuild(process.env),
+  },
+  experimental: {
+    useTypeScriptCli: true,
+    // Managed webpack builds release each compiler process before TypeScript starts.
+    // Sentry/next-intl add a webpack config, so Next cannot enable this worker by default.
+    webpackBuildWorker: isNextBuildMemoryCapped(process.env) ? true : undefined,
+    webpackMemoryOptimizations: isNextBuildMemoryCapped(process.env) ? true : undefined,
+    // Keep managed 8 GB builds below their process limit. More workers made page-data
+    // collection fail with spawn ENOMEM and forced the 2.5x compute rate as a workaround.
+    // The cap is a build-time constraint, so a dev run keeps the full worker pool.
+    cpus: resolveNextBuildCpus(process.env),
+    // Keep icon and chart imports scoped to the components each page uses.
+    // The server icon subpath needs its own entry; this option has no wildcards.
+    optimizePackageImports: ["@phosphor-icons/react", "@phosphor-icons/react/dist/ssr", "recharts"],
+  },
+  // Turbopack infers the project root from the nearest lockfile and finds one in the parent
+  // workspace directory, outside this repository, which makes it warn and widen the file
+  // watching scope. Pinning the root to this directory keeps inference out of the picture.
+  turbopack: {
+    root: import.meta.dirname,
+  },
+  distDir: resolveNextDistDir(process.env.NEXT_DIST_DIR),
+  webpack(config, { dev }) {
+    // Cache serialization can overlap compilation and exceed the managed builder's RAM.
+    if (!dev && isNextBuildMemoryCapped(process.env)) config.cache = false;
+    return config;
+  },
+  outputFileTracingIncludes: {
+    "/activity/badge/*/image": ["./public/achievements/badge-characters-clean.png"],
+    "/api/achievements/badge/*": ["./public/achievements/badge-characters-clean.png"],
+    "/CLA.md": ["./.github/CLA.md"],
+    "/CONTRIBUTING.md": ["./.github/CONTRIBUTING.md"],
+    // Middleware and instrumentation entry names have no leading slash.
+    "**/*": [
+      "./lib/serp/generated/shared-location-catalog.json.gz",
+      "./prisma/migrations/**/*",
+      "./prisma/rds-ca.pem",
+    ],
+  },
+  async headers() {
+    // The CSP deliberately leaves script/style/img unrestricted so the Next runtime,
+    // Sentry, and analytics keep working; tightening script-src needs nonces.
+    const securityHeaders = [
+      ...(process.env.NODE_ENV === "development"
+        ? []
+        : [
+            {
+              key: "Strict-Transport-Security",
+              value: "max-age=63072000; includeSubDomains; preload",
+            },
+          ]),
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "X-Frame-Options", value: "SAMEORIGIN" },
+      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      {
+        key: "Permissions-Policy",
+        value: "camera=(), microphone=(), geolocation=()",
+      },
+      {
+        key: "Content-Security-Policy",
+        value:
+          "frame-ancestors 'self'; object-src 'none'; base-uri 'self'" +
+          (process.env.NODE_ENV === "development" ? "" : "; upgrade-insecure-requests"),
+      },
+    ];
+    return [
+      { headers: securityHeaders, source: "/:path*" },
+      {
+        headers: [
+          {
+            key: "Link",
+            value:
+              '</.well-known/api-catalog>; rel="api-catalog", </api/v1/openapi.json>; rel="service-desc", </#quickstart>; rel="service-doc"',
+          },
+        ],
+        source: "/",
+      },
+      {
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
+          },
+        ],
+        source: "/sitemap.xml",
+      },
+      {
+        // One generated sprite serves every country flag, and it only changes with the country
+        // catalog, so it is worth caching well past a deployment.
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=86400, s-maxage=604800, stale-while-revalidate=604800",
+          },
+        ],
+        source: "/flags.svg",
+      },
+    ];
+  },
+  async redirects() {
+    return [
+      {
+        destination: "https://github.com/CorgiCorner/bisibility/blob/main/CHANGELOG.md",
+        permanent: true,
+        source: "/changelog",
+      },
+      {
+        destination: "/app/:project/keyword-research",
+        permanent: true,
+        source: "/app/:project/research",
+      },
+      {
+        // Retired duplicate of the audit log in settings.
+        destination: "/app/settings/audit",
+        permanent: false,
+        source: "/app/activity",
+      },
+    ];
+  },
+  // `standalone` exists for the Docker targets (Railway, Fly, Render) whose runner image
+  // starts `.next/standalone/server.js`. Amplify's managed SSR build and Vercel's builder
+  // both consume the default `.next` output and never read the standalone tree, so neither
+  // should pay to produce it. deploy/README.md records that Vercel deliberately runs with no
+  // `vercel.json` override, which leaves this line as the only place that distinction lives.
+  output: resolveNextOutput(process.env),
+};
+
+export default withSentryConfig(withNextIntl(nextConfig), {
+  authToken: canUploadSentrySourceMaps ? sentryAuthToken : undefined,
+  org: sentryOrg,
+  project: "bisibility",
+  release: sentryRelease ? { name: sentryRelease } : undefined,
+  silent: !process.env.CI,
+  sourcemaps: {
+    disable: !canUploadSentrySourceMaps,
+    deleteSourcemapsAfterUpload: true,
+  },
+  webpack: {
+    treeshake: {
+      removeDebugLogging: true,
+    },
+  },
+  widenClientFileUpload: canUploadSentrySourceMaps,
+});

@@ -1,0 +1,140 @@
+import type { CheckRunRow } from "@/lib/checks/contract";
+import projectRankTrackerMessages from "@/messages/core/en/project-rank-tracker.json";
+import { createTranslator } from "use-intl/core";
+import { describe, expect, it } from "vitest";
+import {
+  type CheckRunsTranslations,
+  formatAttemptOutcome,
+  formatResult,
+  isInternalErrorString,
+  presentCheckError,
+} from "./check-runs-format";
+
+const now = new Date("2026-07-24T14:45:00.000Z");
+
+const t: CheckRunsTranslations = createTranslator({
+  locale: "en",
+  messages: projectRankTrackerMessages,
+  namespace: "projectRankTracker.checks",
+});
+
+const context = { locale: "en-US", t };
+
+const prismaError =
+  "Invalid `prisma.providerConnection.findMany()` invocation: The column " +
+  "`provider_connections.credentialsHash` does not exist in the current database.";
+
+function failedRun(error: string | null): CheckRunRow {
+  return {
+    attemptCount: 1,
+    storedResults: null,
+    attempts: [],
+    checkedAt: now.toISOString(),
+    costCents: null,
+    degradedToCountry: false,
+    device: "desktop",
+    durationMs: null,
+    error,
+    estimatedCostCents: null,
+    finishedAt: null,
+    id: "run",
+    keyword: "kw",
+    keywordId: "kw",
+    keywordPublicId: "kw",
+    languageLabel: null,
+    location: "Test Location",
+    position: null,
+    previousPosition: null,
+    provider: "dataforseo",
+    providerLabel: "DataForSEO",
+    requestedDepth: 20,
+    researchMetricsAvailable: true,
+    startedAt: null,
+    status: "failed",
+    trigger: "scheduled",
+    viaFallback: false,
+  };
+}
+
+describe("isInternalErrorString", () => {
+  it("flags Prisma invocation dumps", () => {
+    expect(isInternalErrorString(prismaError)).toBe(true);
+  });
+
+  it("flags backticks, newlines, stack traces, and error class names", () => {
+    expect(isInternalErrorString("value `x` bad")).toBe(true);
+    expect(isInternalErrorString("line one\nline two")).toBe(true);
+    expect(isInternalErrorString("boom at handler (/app/x.ts:1:2)")).toBe(true);
+    expect(isInternalErrorString("TypeError: undefined is not a function")).toBe(true);
+  });
+
+  it("flags over-long strings", () => {
+    expect(isInternalErrorString("x".repeat(121))).toBe(true);
+  });
+
+  it("passes concise human messages through", () => {
+    expect(isInternalErrorString("All providers failed")).toBe(false);
+    expect(isInternalErrorString("Check timed out")).toBe(false);
+    expect(isInternalErrorString("Provider quota exceeded")).toBe(false);
+  });
+});
+
+describe("presentCheckError", () => {
+  it("maps internal shapes to a neutral label", () => {
+    expect(presentCheckError(prismaError, t)).toBe("Internal error during check");
+  });
+
+  it("keeps concise messages verbatim (trimmed)", () => {
+    expect(presentCheckError("  All providers failed  ", t)).toBe("All providers failed");
+  });
+});
+
+describe("formatResult", () => {
+  it("uses the terminal failure label for every failed run", () => {
+    expect(formatResult(failedRun(prismaError), now, context)).toBe("All providers failed");
+    expect(formatResult(failedRun("stale running check"), now, context)).toBe(
+      "All providers failed",
+    );
+    expect(formatResult(failedRun("All providers failed"), now, context)).toBe(
+      "All providers failed",
+    );
+    expect(formatResult(failedRun(null), now, context)).toBe("All providers failed");
+  });
+});
+
+describe("formatAttemptOutcome", () => {
+  it("replaces legacy success detail on a failed provider attempt", () => {
+    expect(
+      formatAttemptOutcome(
+        {
+          costCents: null,
+          degradedToCountry: false,
+          detail: "  Ok. ",
+          durationMs: null,
+          outcome: "provider_failed",
+          provider: "provider",
+          providerLabel: "Provider",
+        },
+        { t },
+      ),
+    ).toBe("Provider error");
+  });
+
+  it("marks an inconsistent successful attempt in a failed run as an error", () => {
+    expect(
+      formatAttemptOutcome(
+        {
+          costCents: null,
+          degradedToCountry: false,
+          detail: "Completed",
+          durationMs: null,
+          outcome: "ok",
+          provider: "provider",
+          providerLabel: "Provider",
+        },
+        { t },
+        true,
+      ),
+    ).toBe("Provider error");
+  });
+});

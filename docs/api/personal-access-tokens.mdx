@@ -1,0 +1,102 @@
+---
+title: "Personal access tokens"
+description: "Authenticate as a user across projects and automate account-level operations."
+---
+
+Personal access tokens (PATs) start with `bsb_pat_live_` and act as the user who
+created them. They are account credentials: keep them in a secret store and
+revoke them immediately if they may have leaked.
+
+Project API keys (`bsb_key_live_`) remain scoped to one project. PATs can list and
+create projects, read or update the user profile, mint project API keys, and
+manage webhook endpoints.
+
+## Permission model
+
+Choose a `read`, `write`, or `admin` tier when issuing a token. Inside a
+project, the effective tier is the lower of the token tier and the user's
+membership role. Viewer and auditor memberships cap access at `read`; member
+caps it at `write`; admin and owner allow `admin`. Only the project owner can
+delete a project.
+
+Operations the app reserves for admins (provider connections and connection
+tests, webhook endpoint management, alert rule deletion, keyword deletion,
+competitor removal, migration tokens, invite revocation) require an admin or
+owner membership regardless of token tier.
+Members can update notification preferences, but switching Slack or
+webhook delivery for the project needs an admin.
+
+See [Authentication and project selection](/authentication#project-selection)
+for the exact path, header, query, and single-membership inference precedence.
+
+## Create a token
+
+The settings page at `/app/account/security` can issue a token. The CLI uses
+OAuth Authorization Code with PKCE and exchanges its short-lived OAuth access
+token at the same endpoint.
+
+OAuth access tokens issued for the `/api/mcp` resource authenticate the hosted
+MCP endpoint directly. They are audience-bound and are not accepted as REST API
+credentials.
+
+```http
+POST /api/v1/me/tokens
+Authorization: Bearer <personal_token_or_oauth_access_token>
+Content-Type: application/json
+
+{
+  "name": "CI automation",
+  "scope": "admin",
+  "expires_in_days": 90
+}
+```
+
+`expires_in_days` accepts `30`, `90`, `365`, or `null` for no expiry. Omitting
+`scope` defaults to `read`. A token with no expiry, or with `admin` scope, can
+do everything your role allows until revoked. An app can create one if you
+allowed it to create API tokens. An app registered automatically must use 30
+or 90 days; omitting expiry, no expiry, and 365 days are rejected for that
+app. See [Agent permissions](/agents/permissions). The response includes
+`token` exactly once; only its hash is stored.
+
+## List and revoke tokens
+
+Review OAuth app access in **Account > Security > Connected apps**. Revoking an
+app stops renewal; access already issued can keep working for up to 1 hour.
+API tokens created by the app remain valid unless you revoke them too. When
+retained issuance history identifies those tokens, you can include them in the
+app revocation. Review older or unlinked tokens in the personal tokens section.
+
+```http
+GET /api/v1/me/tokens
+Authorization: Bearer <personal_token>
+```
+
+```http
+DELETE /api/v1/me/tokens/{token_id}
+Authorization: Bearer <personal_token>
+```
+
+Listing, creating, and revoking other tokens requires an admin PAT. Any PAT
+tier may revoke itself using `DELETE /api/v1/me/tokens/current`; the CLI uses
+that route for `bisibility auth logout`.
+
+## User profile
+
+`GET /api/v1/me` returns the user and all project memberships. `PATCH
+/api/v1/me` accepts `{ "name": "New name" }` and requires a write PAT.
+
+## Rate limit
+
+PATs default to 120 requests per minute. Self-hosters can change this with
+`BISIBILITY_PAT_RATE_LIMIT_PER_MINUTE`.
+
+## Related operations
+
+- [`GET /me`](/api-reference/account-access/get-the-authenticated-user) (`getMe`)
+- [`PATCH /me`](/api-reference/account-access/update-the-authenticated-user) (`updateMe`)
+- [`GET /me/tokens`](/api-reference/account-access/list-personal-access-tokens) (`listPersonalAccessTokens`)
+- [`POST /me/tokens`](/api-reference/account-access/create-a-personal-access-token) (`createPersonalAccessToken`)
+- [`DELETE /me/tokens/{token_id}`](/api-reference/account-access/revoke-a-personal-access-token) (`revokePersonalAccessToken`)
+
+Exact request and response schemas live in the generated API Reference.

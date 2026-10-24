@@ -1,0 +1,241 @@
+import { FeatureMessagesProvider } from "@/components/i18n/FeatureMessagesProvider";
+import { ProjectRankTrackerMessages } from "@/components/rank-tracker/ProjectRankTrackerMessages";
+import buttonStyles from "@/components/ui/Button.module.css";
+import messages from "@/messages/core/en/project-rank-tracker.json";
+import { fireEvent, render as renderDom, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { describe, expect, it, vi } from "vitest";
+import { KeywordsFilterBar } from "./KeywordsFilterBar";
+
+function render(children: ReactNode) {
+  return renderDom(<ProjectRankTrackerMessages>{children}</ProjectRankTrackerMessages>);
+}
+
+const baseProps = {
+  columnSizing: {},
+  columns: [],
+  columnVisibility: {},
+  density: "standard" as const,
+  filterChips: [],
+  filterCount: 0,
+  onClearFilters: vi.fn(),
+  onColumnSizingChange: vi.fn(),
+  onColumnVisibilityChange: vi.fn(),
+  onDensityChange: vi.fn(),
+  onOpenExport: vi.fn(),
+  onOpenFilters: vi.fn(),
+  onRefresh: vi.fn(),
+  onRemoveFilter: vi.fn(),
+  onSearchChange: vi.fn(),
+  id: "filter-bar-table",
+  searchValue: "",
+};
+
+describe("KeywordsFilterBar", () => {
+  it("uses an injected non-English scoped message instead of an English fallback", () => {
+    const nonEnglishMessages = {
+      ...messages,
+      projectRankTracker: {
+        ...messages.projectRankTracker,
+        list: {
+          ...messages.projectRankTracker.list,
+          filterBar: {
+            ...messages.projectRankTracker.list.filterBar,
+            activeFilters: "Filtros activos",
+          },
+        },
+      },
+    };
+
+    renderDom(
+      <FeatureMessagesProvider locale="en" messages={nonEnglishMessages} timeZone="UTC">
+        <KeywordsFilterBar {...baseProps} filterCount={1} />
+      </FeatureMessagesProvider>,
+    );
+
+    expect(screen.getByText("Filtros activos")).toBeInTheDocument();
+  });
+
+  it("renders the search via shared ToolbarSearch with a compact outlined surface", () => {
+    render(<KeywordsFilterBar {...baseProps} />);
+
+    const input = screen.getByRole("searchbox", { name: "Search keywords" });
+    expect(input).toHaveAttribute("type", "search");
+    expect(input).toHaveAttribute("id", "keywords-filter");
+    expect(input).toHaveAttribute("placeholder", "Search keywords...");
+
+    const label = input.closest("label");
+    expect(label).toHaveClass(
+      "h-8.5",
+      "rounded-control",
+      "border",
+      "border-border-control",
+      "bg-transparent",
+    );
+    expect(input).toHaveClass("text-[12.5px]");
+  });
+
+  it("calls onSearchChange with the new value when the search input changes", () => {
+    const onSearchChange = vi.fn();
+    render(<KeywordsFilterBar {...baseProps} onSearchChange={onSearchChange} />);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search keywords" }), {
+      target: { value: "rank" },
+    });
+    expect(onSearchChange).toHaveBeenCalledWith("rank");
+  });
+
+  it("does not render the xl vertical divider", () => {
+    const { container } = render(<KeywordsFilterBar {...baseProps} />);
+
+    const dividers = container.querySelectorAll(".w-px.bg-border");
+    expect(dividers).toHaveLength(0);
+  });
+
+  it("omits the desktop context row when no optional controls are present", () => {
+    const { container } = render(<KeywordsFilterBar {...baseProps} />);
+
+    expect(container.querySelector("[data-keywords-toolbar-context]")).not.toBeInTheDocument();
+  });
+
+  it("keeps scope and saved views in one flex row from sm", () => {
+    const { container } = render(
+      <KeywordsFilterBar
+        {...baseProps}
+        savedViewControl={<span>All keywords</span>}
+        scopeControl={<span>All locations</span>}
+      />,
+    );
+
+    const row = container.querySelector("[data-keywords-toolbar-context]");
+    expect(row).toHaveClass("order-2", "flex-row", "flex-wrap", "items-center", "lg:order-1");
+    expect(row).not.toHaveClass("contents");
+    expect(row).not.toHaveClass("flex-nowrap");
+  });
+
+  it("refreshes the table from the context row", () => {
+    const onRefresh = vi.fn();
+    render(
+      <KeywordsFilterBar
+        {...baseProps}
+        scopeControl={<span>All locations</span>}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    const refresh = screen.getByRole("button", { name: "Refresh table" });
+    expect(refresh.querySelector(".lg\\:inline")).toHaveTextContent("Refresh table");
+    expect(refresh.querySelector("svg")).toHaveClass("text-fg-muted");
+    expect(refresh.closest('[data-toolbar-tooltip="true"]')).toHaveAttribute(
+      "data-tooltip-label",
+      "Refresh table",
+    );
+    fireEvent.click(refresh);
+    expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("applies the wider xl search grid template (min 320px)", () => {
+    render(<KeywordsFilterBar {...baseProps} />);
+
+    const label = screen.getByRole("searchbox", { name: "Search keywords" }).closest("label");
+    const grid = label?.parentElement;
+    expect(grid).toHaveClass("xl:grid-cols-[minmax(320px,1fr)_auto]");
+    expect(grid).toHaveClass("lg:grid-cols-[minmax(220px,1fr)_auto]");
+  });
+
+  it("renders filter chips and clear-all, and calls onClearFilters", () => {
+    const onClearFilters = vi.fn();
+    render(
+      <KeywordsFilterBar
+        {...baseProps}
+        filterChips={[
+          { key: "change", label: "Change: Improved" },
+          { key: "lastCheck", label: "Last check: Failed" },
+        ]}
+        filterCount={2}
+        onClearFilters={onClearFilters}
+        searchValue="rank"
+      />,
+    );
+
+    expect(screen.getByText("Change: Improved")).toBeInTheDocument();
+    expect(screen.getByText("Last check: Failed")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear all search and filters" }));
+    expect(onClearFilters).toHaveBeenCalledOnce();
+  });
+
+  it("calls onRemoveFilter with the chip key when a filter chip is clicked", () => {
+    const onRemoveFilter = vi.fn();
+    render(
+      <KeywordsFilterBar
+        {...baseProps}
+        filterChips={[{ key: "change", label: "Change: Improved" }]}
+        filterCount={1}
+        onRemoveFilter={onRemoveFilter}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove filter: Change: Improved" }));
+    expect(onRemoveFilter).toHaveBeenCalledWith("change");
+  });
+
+  it("preserves the chips footprint when only the mobile scope chip is present", () => {
+    render(
+      <KeywordsFilterBar
+        {...baseProps}
+        scopeChip={<span data-testid="scope-chip">Scope: example.com</span>}
+      />,
+    );
+
+    const chipsRow = screen.getByTestId("scope-chip").parentElement;
+    expect(chipsRow).toHaveClass("min-h-7", "overflow-x-auto");
+  });
+
+  it("does not hide the chips row when filters are also active alongside the scope chip", () => {
+    render(
+      <KeywordsFilterBar
+        {...baseProps}
+        filterChips={[{ key: "change", label: "Change: Improved" }]}
+        filterCount={1}
+        scopeChip={<span data-testid="scope-chip">Scope: example.com</span>}
+      />,
+    );
+
+    const chipsRow = screen.getByTestId("scope-chip").parentElement;
+    expect(chipsRow).not.toHaveClass("lg:hidden");
+  });
+});
+
+it("keeps filter clearing on the shared button and invokes the existing clear handler", () => {
+  const onClearFilters = vi.fn();
+  render(<KeywordsFilterBar {...baseProps} filterCount={1} onClearFilters={onClearFilters} />);
+  const clear = screen.getByRole("button", { name: "Clear all search and filters" });
+  expect(clear).toHaveClass(buttonStyles.root, buttonStyles.ghost);
+  fireEvent.click(clear);
+  expect(onClearFilters).toHaveBeenCalledOnce();
+});
+
+it("only renders the chip row while search, filters or a mobile scope need it", () => {
+  const { container, rerender } = render(<KeywordsFilterBar {...baseProps} />);
+  expect(container.querySelector("[data-keywords-filter-chips]")).toBeNull();
+  rerender(
+    <ProjectRankTrackerMessages>
+      <KeywordsFilterBar
+        {...baseProps}
+        searchValue="long search"
+        filterCount={1}
+        filterChips={[{ key: "position", label: "Position: Top 3" }]}
+      />
+    </ProjectRankTrackerMessages>,
+  );
+  const row = container.querySelector("[data-keywords-filter-chips]");
+  expect(row).toHaveClass("min-h-7", "overflow-x-auto");
+  expect(row).not.toHaveClass("h-10", "flex-wrap");
+  rerender(
+    <ProjectRankTrackerMessages>
+      <KeywordsFilterBar {...baseProps} />
+    </ProjectRankTrackerMessages>,
+  );
+  expect(container.querySelector("[data-keywords-filter-chips]")).toBeNull();
+});

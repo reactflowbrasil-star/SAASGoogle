@@ -1,0 +1,261 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  actor: vi.fn(),
+  bound: vi.fn(),
+  providerSpend: vi.fn(),
+  revalidate: vi.fn(),
+  requireProject: vi.fn(),
+  setAllocation: vi.fn(),
+}));
+
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/provider-ui/native-allocation-refresh", () => ({
+  refreshBoundNativeAllocation: mocks.bound,
+}));
+vi.mock("@/lib/actions/_shared", () => ({
+  getActionActor: mocks.actor,
+  parseActionInput: (schema: { parse: (input: unknown) => unknown }, input: unknown) =>
+    schema.parse(input),
+  revalidateBudgetViews: mocks.revalidate,
+  requireProjectScope: mocks.requireProject,
+}));
+vi.mock("@/lib/provider-allocations/service", () => ({
+  setProviderConnectionAllocation: mocks.setAllocation,
+}));
+vi.mock("@/lib/providers/registry", () => ({
+  PROVIDER_CATALOG: [
+    {
+      allocation: {
+        allocationUnit: "cents",
+        billing: "metered",
+        kind: "billable",
+        quotaReset: "none",
+      },
+      defaultStatus: "ready",
+      id: "metered",
+      kind: "serp",
+      label: "Metered",
+    },
+  ],
+}));
+vi.mock("@/lib/queries/provider-spend", () => ({
+  loadProjectProviderSpend: mocks.providerSpend,
+}));
+
+import {
+  refreshProviderConnectionBudgetAction,
+  updateProviderConnectionAllocationAction,
+} from "./provider-allocation";
+
+const project = { id: "project_1", publicId: "prj_abcdefghijklmnopqrstuvwx", ownerId: "user_1" };
+const actor = { id: "user_1", memberships: [], role: "admin" as const };
+const connectionId = "conn_abcdefghijklmnopqrstuvwx";
+
+describe("updateProviderConnectionAllocationAction", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.actor.mockResolvedValue(actor);
+    mocks.requireProject.mockResolvedValue(project);
+    mocks.setAllocation.mockResolvedValue(undefined);
+    mocks.providerSpend.mockResolvedValue({
+      connections: [{ allocation: { amountPerMonth: 2500, unit: "cents" }, connectionId }],
+    });
+  });
+
+  it("lets a non-owner manage limits without reading or returning owner finances", async () => {
+    mocks.requireProject.mockResolvedValue({ ...project, ownerId: "other-owner" });
+    mocks.providerSpend.mockResolvedValue({
+      connections: [{ connectionId, availableAtProvider: { amount: 91 }, used: 31 }],
+    });
+    await expect(
+      updateProviderConnectionAllocationAction(project.publicId, {
+        allocation: { amountDollars: "25.00", unit: "cents" },
+        connectionId,
+      }),
+    ).resolves.toEqual({ connectionId });
+    expect(mocks.setAllocation).toHaveBeenCalledOnce();
+    expect(mocks.revalidate).toHaveBeenCalledOnce();
+    expect(mocks.providerSpend).not.toHaveBeenCalled();
+  });
+
+  it("rejects authorization failures before calling the allocation service", async () => {
+    mocks.requireProject.mockRejectedValueOnce(new Error("Forbidden"));
+
+    await expect(
+      updateProviderConnectionAllocationAction(project.publicId, {
+        allocation: { amountDollars: "25.00", unit: "cents" },
+        connectionId,
+      }),
+    ).rejects.toThrow("Forbidden");
+
+    expect(mocks.setAllocation).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid amounts before reading the actor", async () => {
+    await expect(
+      updateProviderConnectionAllocationAction(project.publicId, {
+        allocation: { amount: 0, unit: "units" },
+        connectionId,
+      }),
+    ).rejects.toThrow();
+
+    expect(mocks.actor).not.toHaveBeenCalled();
+    expect(mocks.setAllocation).not.toHaveBeenCalled();
+  });
+
+  it("passes a null allocation through for no cap", async () => {
+    mocks.providerSpend.mockResolvedValue({ connections: [{ allocation: null, connectionId }] });
+
+    await expect(
+      updateProviderConnectionAllocationAction(project.publicId, {
+        allocation: null,
+        connectionId,
+      }),
+    ).resolves.toEqual({ allocation: null, connectionId });
+
+    expect(mocks.setAllocation).toHaveBeenCalledWith({
+      actor,
+      allocations: { app: null },
+      catalog: expect.arrayContaining([expect.objectContaining({ id: "metered" })]),
+      connectionPublicId: connectionId,
+      projectPublicId: project.publicId,
+    });
+  });
+
+  it("converts dollars to cents, uses the registry catalog, and returns the refreshed row", async () => {
+    await expect(
+      updateProviderConnectionAllocationAction(project.publicId, {
+        allocation: { amountDollars: "25.00", unit: "cents" },
+        connectionId,
+      }),
+    ).resolves.toEqual({ allocation: { amountPerMonth: 2500, unit: "cents" }, connectionId });
+
+    expect(mocks.requireProject).toHaveBeenCalledWith(actor, "manage", project.publicId, {
+      type: "provider_connection",
+    });
+    expect(mocks.setAllocation).toHaveBeenCalledWith({
+      actor,
+      allocations: { app: { amountPerMonth: 2500, unit: "cents" } },
+      catalog: expect.arrayContaining([expect.objectContaining({ id: "metered" })]),
+      connectionPublicId: connectionId,
+      projectPublicId: project.publicId,
+    });
+    expect(mocks.revalidate).toHaveBeenCalledOnce();
+    expect(mocks.providerSpend).toHaveBeenCalledWith(
+      expect.objectContaining({ catalog: expect.any(Array), projectId: "project_1" }),
+    );
+  });
+
+  it("omits the programmatic allocation when the action input has no programmaticAllocation", async () => {
+    await expect(
+      updateProviderConnectionAllocationAction(project.publicId, {
+        allocation: { amountDollars: "25.00", unit: "cents" },
+        connectionId,
+      }),
+    ).resolves.toEqual({ allocation: { amountPerMonth: 2500, unit: "cents" }, connectionId });
+
+    expect(mocks.setAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allocations: { app: { amountPerMonth: 2500, unit: "cents" } },
+      }),
+    );
+    expect("programmatic" in mocks.setAllocation.mock.calls[0][0].allocations).toBe(false);
+  });
+
+  it("converts programmaticAllocation dollars to cents and passes them as allocations.programmatic", async () => {
+    await expect(
+      updateProviderConnectionAllocationAction(project.publicId, {
+        allocation: { amountDollars: "25.00", unit: "cents" },
+        connectionId,
+        programmaticAllocation: { amountDollars: "10.00", unit: "cents" },
+      }),
+    ).resolves.toEqual({ allocation: { amountPerMonth: 2500, unit: "cents" }, connectionId });
+
+    expect(mocks.setAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allocations: {
+          app: { amountPerMonth: 2500, unit: "cents" },
+          programmatic: { amountPerMonth: 1000, unit: "cents" },
+        },
+      }),
+    );
+  });
+
+  it("passes a null programmaticAllocation through as allocations.programmatic", async () => {
+    await expect(
+      updateProviderConnectionAllocationAction(project.publicId, {
+        allocation: { amountDollars: "25.00", unit: "cents" },
+        connectionId,
+        programmaticAllocation: null,
+      }),
+    ).resolves.toEqual({ allocation: { amountPerMonth: 2500, unit: "cents" }, connectionId });
+
+    expect(mocks.setAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allocations: {
+          app: { amountPerMonth: 2500, unit: "cents" },
+          programmatic: null,
+        },
+      }),
+    );
+  });
+});
+
+describe("refreshProviderConnectionBudgetAction", () => {
+  it("refuses a non-owner administrator before reading or refreshing owner finances", async () => {
+    vi.clearAllMocks();
+    mocks.actor.mockResolvedValue(actor);
+    mocks.requireProject.mockResolvedValue({ ...project, ownerId: "other-owner" });
+    mocks.providerSpend.mockResolvedValue({
+      connections: [{ connectionId, availableAtProvider: { amount: 91 }, used: 31 }],
+    });
+    await expect(
+      refreshProviderConnectionBudgetAction(project.publicId, connectionId),
+    ).rejects.toMatchObject({ code: "forbidden" });
+    expect(mocks.providerSpend).not.toHaveBeenCalled();
+    expect(mocks.setAllocation).not.toHaveBeenCalled();
+  });
+  it("requires provider management permission before refreshing the balance", async () => {
+    vi.clearAllMocks();
+    mocks.actor.mockResolvedValue(actor);
+    mocks.requireProject.mockRejectedValueOnce(new Error("Forbidden"));
+    await expect(
+      refreshProviderConnectionBudgetAction(project.publicId, connectionId),
+    ).rejects.toThrow("Forbidden");
+    expect(mocks.providerSpend).not.toHaveBeenCalled();
+  });
+  it("refreshes only the selected connection in the authorized project without saving a budget", async () => {
+    vi.clearAllMocks();
+    mocks.actor.mockResolvedValue(actor);
+    mocks.requireProject.mockResolvedValue(project);
+    const connection = { connectionId, availableAtProvider: { amount: 91 }, used: 31 };
+    mocks.providerSpend.mockResolvedValue({ connections: [connection] });
+    await expect(
+      refreshProviderConnectionBudgetAction(project.publicId, connectionId),
+    ).resolves.toEqual(connection);
+    expect(mocks.providerSpend).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: project.id, refreshConnectionPublicId: connectionId }),
+    );
+    expect(mocks.setAllocation).not.toHaveBeenCalled();
+  });
+});
+
+it("uses the bound native path only when a dialog supplies the expected row identity", async () => {
+  vi.clearAllMocks();
+  mocks.actor.mockResolvedValue(actor);
+  mocks.requireProject.mockResolvedValue(project);
+  const identity = { id: "row", revision: "rev" };
+  mocks.bound.mockResolvedValue({ connectionId, nativeObservation: { identity } });
+  await expect(
+    refreshProviderConnectionBudgetAction(project.publicId, connectionId, identity),
+  ).resolves.toMatchObject({ nativeObservation: { identity } });
+  expect(mocks.bound).toHaveBeenCalledWith(
+    { actor, projectPublicId: project.publicId },
+    connectionId,
+    identity,
+    expect.any(Function),
+  );
+  expect(mocks.providerSpend).not.toHaveBeenCalled();
+  expect(mocks.setAllocation).not.toHaveBeenCalled();
+});

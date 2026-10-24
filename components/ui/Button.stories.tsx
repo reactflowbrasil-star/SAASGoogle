@@ -1,0 +1,51 @@
+import { Button } from "@/components/ui/Button";
+import { withSharedMessages } from "@/i18n/test-support/shared-messages-story-decorator";
+import { PlusIcon as Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { TrashIcon as Trash } from "@phosphor-icons/react/dist/csr/Trash";
+import type { Meta, StoryObj } from "@storybook/react";
+
+const meta = {
+  title: "UI/Button",
+  component: Button,
+  decorators: [
+    withSharedMessages,
+    (Story) => (
+      <div className="flex flex-wrap items-center gap-3 bg-bg p-6 text-fg">
+        <Story />
+      </div>
+    ),
+  ],
+} satisfies Meta<typeof Button>;
+
+export default meta;
+
+type Story = StoryObj<typeof meta>;
+
+export const Default: Story = {
+  render: () => (
+    <>
+      <Button startIcon={<Plus size={15} weight="regular" />}>Add keyword</Button>
+      <Button variant="secondary">Set schedule</Button>
+      <Button variant="outline">Cancel</Button>
+      <Button variant="ghost">Clear</Button>
+      <Button disabled>Add keyword</Button>
+      <Button startIcon={<Trash size={15} weight="regular" />} variant="destructive">
+        Delete
+      </Button>
+      <Button loading loadingLabel="Saving">
+        Save
+      </Button>
+    </>
+  ),
+};
+
+export const Sizes: Story = {
+  render: () => (
+    <>
+      <Button size="xs">Extra small</Button>
+      <Button size="sm">Small</Button>
+      <Button size="md">Medium</Button>
+      <Button size="lg">Large</Button>
+    </>
+  ),
+};

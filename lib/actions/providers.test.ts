@@ -1,0 +1,1342 @@
+import { resetRateLimitStateForTests } from "@/lib/api/ratelimit";
+import { monthlyCostCentsFor } from "@/lib/cost-estimate/project-estimate";
+import { decryptSecret, encryptSecret } from "@/lib/providers/crypto";
+import { clearProviderRateLimitState, consumeProviderLimit } from "@/lib/providers/rate-limit";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  completeGooglePropertySelection,
+  connectProvider,
+  disconnectGoogleSearchConsole,
+  disconnectProvider,
+  loadStoredGoogleProperties,
+  saveStoredGoogleProperty,
+  testConnection,
+  updateProviderCost,
+  updateProviderRate,
+  updateProviderSettings,
+} from "./providers";
+
+const mocks = vi.hoisted(() => {
+  const provider = {
+    fetchKeywordMetrics: vi.fn(),
+    fetchRank: vi.fn(),
+    id: "serpapi",
+    label: "SerpApi",
+    testConnection: vi.fn(),
+  };
+  const analyticsProvider = {
+    id: "plausible",
+    label: "Plausible",
+    queryStats: vi.fn(),
+    testConnection: vi.fn(),
+  };
+
+  return {
+    actor: { id: "user_1" },
+    analyticsProvider,
+    saveBudget: vi.fn(),
+    cancelPendingGoogleOAuth: vi.fn(),
+    completePendingGooglePropertySelection: vi.fn(),
+    getPendingGoogleOAuthProvider: vi.fn(),
+    getActionActor: vi.fn(),
+    loadStoredGoogleProperties: vi.fn(),
+    provider,
+    prisma: {
+      $queryRaw: vi.fn(),
+      $transaction: vi.fn(),
+      project: { findUnique: vi.fn(), updateMany: vi.fn() },
+      providerConnection: {
+        delete: vi.fn(),
+        findMany: vi.fn(),
+        findUnique: vi.fn(),
+        update: vi.fn(),
+        updateMany: vi.fn(),
+        upsert: vi.fn(),
+      },
+      searchAnalyticsDaily: { deleteMany: vi.fn() },
+      searchAnalyticsImport: { deleteMany: vi.fn() },
+      providerConnectionRate: {
+        deleteMany: vi.fn(),
+        findUnique: vi.fn(),
+        upsert: vi.fn(),
+      },
+    },
+    project: { id: "project_1", ownerId: "user_1", publicId: "prj_a00000000000000000000000" },
+    requireProjectScope: vi.fn(),
+    revalidatePath: vi.fn(),
+    readAnalyticsSurfaceFromHeaders: vi.fn(),
+    readConsentFromCookies: vi.fn(),
+    trackServerEvent: vi.fn(),
+    updateSearchSyncSettings: vi.fn(),
+    saveStoredGoogleProperty: vi.fn(),
+    writeAudit: vi.fn(),
+  };
+});
+
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("@/lib/auth/audit", () => ({ writeAudit: mocks.writeAudit }));
+vi.mock("@/lib/db/prisma", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/metering/spending-limit-store", () => ({
+  putSpendingBudget: mocks.saveBudget,
+  readSpendingBudgets: async () => [],
+}));
+
+vi.mock("@/lib/analytics/server", () => ({
+  readAnalyticsSurfaceFromHeaders: mocks.readAnalyticsSurfaceFromHeaders,
+  readConsentFromCookies: mocks.readConsentFromCookies,
+  trackServerEvent: mocks.trackServerEvent,
+}));
+vi.mock("@/lib/providers/registry", () => ({
+  getAnalyticsProvider: vi.fn(() => mocks.analyticsProvider),
+  getSerpProvider: vi.fn(() => mocks.provider),
+  serpProviderCapabilities: vi.fn(() => ({
+    keywordMetrics: true,
+    keywordResearch: true,
+    rankCheck: true,
+    rankedKeywords: true,
+  })),
+  PROVIDER_CATALOG: [
+    {
+      defaultStatus: "ready",
+      id: "dataforseo",
+      allocation: {
+        kind: "billable",
+        billing: "metered",
+        allocationUnit: "cents",
+        quotaReset: "none",
+      },
+      kind: "serp",
+      label: "DataForSEO",
+      requiredCredentials: ["login", "password"],
+    },
+    {
+      defaultStatus: "ready",
+      id: "serpapi",
+      allocation: {
+        kind: "billable",
+        billing: "quota",
+        allocationUnit: "units",
+        quotaReset: "billing_cycle",
+      },
+      kind: "serp",
+      label: "SerpApi",
+      requiredCredentials: ["apiKey"],
+    },
+    {
+      defaultStatus: "optional",
+      allocation: { kind: "non_billable" },
+      id: "gsc",
+      kind: "analytics",
+      label: "Google Search Console",
+    },
+    {
+      defaultStatus: "optional",
+      allocation: { kind: "non_billable" },
+      id: "ga4",
+      kind: "analytics",
+      label: "Google Analytics 4",
+    },
+    {
+      defaultStatus: "optional",
+      id: "plausible",
+      allocation: { kind: "non_billable" },
+      kind: "analytics",
+      label: "Plausible",
+      requiredCredentials: ["apiKey", "login"],
+    },
+  ],
+}));
+vi.mock("@/lib/providers/analytics/google-oauth-pending", () => ({
+  cancelPendingGoogleOAuth: mocks.cancelPendingGoogleOAuth,
+  completePendingGooglePropertySelection: mocks.completePendingGooglePropertySelection,
+  getPendingGoogleOAuthProvider: mocks.getPendingGoogleOAuthProvider,
+}));
+vi.mock("@/lib/providers/analytics/google-stored-property", () => ({
+  loadStoredGoogleProperties: mocks.loadStoredGoogleProperties,
+  saveStoredGoogleProperty: mocks.saveStoredGoogleProperty,
+}));
+vi.mock("./presence-settings", () => ({
+  updateSearchSyncSettings: mocks.updateSearchSyncSettings,
+}));
+vi.mock("./_shared", () => ({
+  getActionActor: mocks.getActionActor,
+  parseActionInput: (schema: { parse: (input: unknown) => unknown }, input: unknown) =>
+    schema.parse(input),
+  requireProjectScope: mocks.requireProjectScope,
+  revalidateKeywordViews: () => {
+    mocks.revalidatePath("/app/rank-tracker");
+  },
+  revalidateProviderViews: () => {
+    mocks.revalidatePath("/app/integrations");
+    mocks.revalidatePath("/app/overview");
+    mocks.revalidatePath("/app/settings");
+    mocks.revalidatePath("/app/settings/audit");
+  },
+}));
+
+function connection(overrides: Record<string, unknown> = {}) {
+  return {
+    credentialSource: "own",
+    rates: [{ feature: "rank_check", amountCents: 0.01 }],
+    credentialsEncrypted: null,
+    enabled: true,
+    id: "conn_1",
+    kind: "serp",
+    priority: 100,
+    provider: "serpapi",
+    publicId: "conn_a00000000000000000000000",
+    status: "connected",
+    ...overrides,
+  };
+}
+
+function nonPlainConnection(overrides: Record<string, unknown> = {}) {
+  class DecimalValue {
+    constructor(readonly value: string) {}
+
+    toString() {
+      return this.value;
+    }
+  }
+
+  return connection({
+    ...overrides,
+    costPerCheckCents: new DecimalValue(String(overrides.costPerCheckCents ?? "1.2300")),
+    createdAt: new Date("2026-07-23T10:00:00.000Z"),
+    credentialsEncrypted: overrides.credentialsEncrypted ?? "encrypted-provider-credentials",
+    updatedAt: new Date("2026-07-23T10:00:00.000Z"),
+  });
+}
+
+describe("provider actions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.saveBudget.mockResolvedValue(undefined);
+    resetRateLimitStateForTests();
+    clearProviderRateLimitState();
+    process.env.REDIS_URL = "";
+    process.env.BISIBILITY_PROVIDER_RATE_LIMIT_DISABLED = "";
+    process.env.BISIBILITY_PROVIDER_RATE_LIMIT_SERPAPI_PER_MINUTE = "";
+    mocks.cancelPendingGoogleOAuth.mockResolvedValue({ status: "cancelled" });
+    mocks.completePendingGooglePropertySelection.mockResolvedValue({
+      property: "sc-domain:example.com",
+    });
+    mocks.getPendingGoogleOAuthProvider.mockResolvedValue("gsc");
+    mocks.getActionActor.mockResolvedValue(mocks.actor);
+    mocks.provider.testConnection.mockResolvedValue({ message: "ok", ok: true });
+    mocks.analyticsProvider.testConnection.mockResolvedValue({ message: "ok", ok: true });
+    mocks.requireProjectScope.mockResolvedValue(mocks.project);
+    mocks.loadStoredGoogleProperties.mockResolvedValue({ properties: [], provider: "gsc" });
+    mocks.saveStoredGoogleProperty.mockResolvedValue({
+      property: "sc-domain:example.com",
+      status: "saved",
+    });
+    mocks.prisma.$queryRaw.mockResolvedValue([{ id: mocks.project.id }]);
+    mocks.prisma.$transaction.mockImplementation((callback) => callback(mocks.prisma));
+    mocks.prisma.project.findUnique.mockResolvedValue({ publicId: mocks.project.publicId });
+    mocks.prisma.providerConnection.findMany.mockResolvedValue([]);
+    mocks.prisma.providerConnection.updateMany.mockResolvedValue({ count: 0 });
+    mocks.prisma.providerConnectionRate.findUnique.mockResolvedValue(null);
+    mocks.prisma.providerConnectionRate.deleteMany.mockResolvedValue({ count: 0 });
+    mocks.writeAudit.mockResolvedValue({});
+    mocks.updateSearchSyncSettings.mockResolvedValue({});
+    mocks.readAnalyticsSurfaceFromHeaders.mockResolvedValue("onboarding");
+    mocks.readConsentFromCookies.mockResolvedValue({
+      analytics: true,
+      decidedAt: 1,
+      replay: false,
+      status: "decided",
+    });
+  });
+
+  it("rejects invalid input before reading the actor", async () => {
+    await expect(connectProvider({ projectId: "", providerId: "serpapi" })).rejects.toThrow();
+
+    expect(mocks.getActionActor).not.toHaveBeenCalled();
+  });
+
+  it("authorizes loading stored properties with manage scope before calling the service", async () => {
+    const result = await loadStoredGoogleProperties({
+      projectId: "prj_a00000000000000000000000",
+      provider: "gsc",
+    });
+
+    expect(mocks.requireProjectScope).toHaveBeenCalledWith(
+      mocks.actor,
+      "manage",
+      "prj_a00000000000000000000000",
+      { type: "provider_connection" },
+    );
+    expect(mocks.loadStoredGoogleProperties).toHaveBeenCalledWith({
+      projectId: "project_1",
+      provider: "gsc",
+    });
+    expect(result).toEqual({ properties: [], provider: "gsc" });
+  });
+
+  it("authorizes and revalidates a stored property change after a successful save", async () => {
+    const result = await saveStoredGoogleProperty({
+      projectId: "prj_a00000000000000000000000",
+      property: "sc-domain:example.com",
+      provider: "gsc",
+    });
+
+    expect(mocks.requireProjectScope).toHaveBeenCalledWith(
+      mocks.actor,
+      "manage",
+      "prj_a00000000000000000000000",
+      { type: "provider_connection" },
+    );
+    expect(mocks.saveStoredGoogleProperty).toHaveBeenCalledWith({
+      actorId: "user_1",
+      projectId: "project_1",
+      property: "sc-domain:example.com",
+      provider: "gsc",
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/app/integrations");
+    expect(result).toEqual({ property: "sc-domain:example.com", status: "saved" });
+  });
+
+  it("commits pending Search Console settings before selecting its property", async () => {
+    const events: string[] = [];
+    let commitSettings = () => undefined;
+    mocks.updateSearchSyncSettings.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          events.push("projectDefaults update started");
+          commitSettings = () => {
+            events.push("projectDefaults update committed");
+            resolve();
+          };
+        }),
+    );
+    mocks.completePendingGooglePropertySelection.mockImplementation(async () => {
+      events.push("property service called");
+      return { property: "sc-domain:example.com" };
+    });
+
+    const selection = completeGooglePropertySelection({
+      pace: "gentle",
+      projectId: "prj_a00000000000000000000000",
+      property: "sc-domain:example.com",
+      retentionMonths: 6,
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.updateSearchSyncSettings).toHaveBeenCalledWith({
+        pace: "gentle",
+        projectId: "prj_a00000000000000000000000",
+        retentionMonths: 6,
+      });
+    });
+    expect(mocks.completePendingGooglePropertySelection).not.toHaveBeenCalled();
+
+    commitSettings();
+    await selection;
+
+    expect(events).toEqual([
+      "projectDefaults update started",
+      "projectDefaults update committed",
+      "property service called",
+    ]);
+  });
+
+  it("does not persist Search Console settings for a pending GA4 completion", async () => {
+    mocks.getPendingGoogleOAuthProvider.mockResolvedValue("ga4");
+
+    await completeGooglePropertySelection({
+      pace: "gentle",
+      projectId: "prj_a00000000000000000000000",
+      property: "123456789",
+      provider: "gsc",
+      retentionMonths: 6,
+    });
+
+    expect(mocks.getPendingGoogleOAuthProvider).toHaveBeenCalledWith(
+      "prj_a00000000000000000000000",
+    );
+    expect(mocks.updateSearchSyncSettings).not.toHaveBeenCalled();
+    expect(mocks.completePendingGooglePropertySelection).toHaveBeenCalledWith({
+      projectId: "prj_a00000000000000000000000",
+      property: "123456789",
+    });
+  });
+
+  it("commits stored Search Console settings before saving its property", async () => {
+    const events: string[] = [];
+    let commitSettings = () => undefined;
+    mocks.updateSearchSyncSettings.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          events.push("projectDefaults update started");
+          commitSettings = () => {
+            events.push("projectDefaults update committed");
+            resolve();
+          };
+        }),
+    );
+    mocks.saveStoredGoogleProperty.mockImplementation(async () => {
+      events.push("property service called");
+      return { property: "sc-domain:example.com", status: "saved" as const };
+    });
+
+    const selection = saveStoredGoogleProperty({
+      pace: "normal",
+      projectId: "prj_a00000000000000000000000",
+      property: "sc-domain:example.com",
+      provider: "gsc",
+      retentionMonths: 12,
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.updateSearchSyncSettings).toHaveBeenCalledWith({
+        pace: "normal",
+        projectId: "prj_a00000000000000000000000",
+        retentionMonths: 12,
+      });
+    });
+    expect(mocks.saveStoredGoogleProperty).not.toHaveBeenCalled();
+
+    commitSettings();
+    await selection;
+
+    expect(events).toEqual([
+      "projectDefaults update started",
+      "projectDefaults update committed",
+      "property service called",
+    ]);
+  });
+
+  it.each([
+    ["pending selection", completeGooglePropertySelection],
+    ["stored selection", saveStoredGoogleProperty],
+  ])("rejects a half-specified sync choice for %s", async (_label, action) => {
+    await expect(
+      action({
+        projectId: "prj_a00000000000000000000000",
+        property: "sc-domain:example.com",
+        ...(action === saveStoredGoogleProperty ? { provider: "gsc" } : {}),
+        retentionMonths: 6,
+      }),
+    ).rejects.toThrow();
+
+    expect(mocks.updateSearchSyncSettings).not.toHaveBeenCalled();
+  });
+
+  it("connects the first provider with encrypted credentials and priority zero", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(null);
+    mocks.prisma.providerConnection.upsert.mockImplementation(({ create }) =>
+      Promise.resolve(nonPlainConnection({ ...create, id: "conn_1" })),
+    );
+
+    const result = await connectProvider({
+      costPerCheck: 0.0123,
+      enabled: false,
+      login: "login",
+      projectId: "prj_a00000000000000000000000",
+      providerId: "dataforseo",
+      secret: "password",
+    });
+
+    const stored =
+      mocks.prisma.providerConnection.upsert.mock.calls[0][0].create.credentialsEncrypted;
+    expect(stored).not.toContain("password");
+    expect(JSON.parse(decryptSecret(stored))).toEqual({ login: "login", password: "password" });
+    expect(mocks.prisma.providerConnection.findMany).toHaveBeenCalledWith({
+      select: { priority: true },
+      where: { kind: "serp", projectId: "project_1" },
+    });
+    expect(mocks.prisma.providerConnection.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ enabled: true, priority: 0 }),
+      }),
+    );
+    expect(result).toEqual({ ok: true });
+    expect(mocks.saveBudget).toHaveBeenCalledTimes(2);
+    for (const surface of ["app", "programmatic"]) {
+      expect(mocks.saveBudget).toHaveBeenCalledWith(
+        mocks.prisma,
+        expect.objectContaining({
+          id: `own-connection:conn_1:${surface}`,
+          onExceed: "block",
+          surface,
+          unit: "cents",
+          version: 1,
+        }),
+      );
+    }
+    expect(mocks.prisma.providerConnectionRate.upsert).toHaveBeenCalledWith({
+      create: { amountCents: 1.23, connectionId: "conn_1", feature: "rank_check" },
+      update: { amountCents: 1.23 },
+      where: { connectionId_feature: { connectionId: "conn_1", feature: "rank_check" } },
+    });
+    expect(mocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        after: expect.objectContaining({ costPerCheck: 0.0123 }),
+      }),
+      mocks.prisma,
+    );
+    expect(mocks.trackServerEvent).toHaveBeenCalledWith("provider_connected", {
+      consent: { analytics: true, decidedAt: 1, replay: false, status: "decided" },
+      userId: "user_1",
+      properties: { provider: "dataforseo", surface: "onboarding" },
+    });
+    expect(JSON.stringify(mocks.writeAudit.mock.calls)).not.toContain("password");
+  });
+
+  it("aborts connect when the locked stable identity replaced the verified row", async () => {
+    const preliminary = connection({ id: "stale_connection" });
+    const replacement = connection({ id: "replacement_connection" });
+    mocks.prisma.providerConnection.findUnique
+      .mockResolvedValueOnce(preliminary)
+      .mockResolvedValueOnce(replacement);
+
+    await expect(
+      connectProvider({
+        projectId: "prj_a00000000000000000000000",
+        providerId: "serpapi",
+        secret: "api-key",
+      }),
+    ).rejects.toThrow("changed during verification");
+
+    expect(mocks.prisma.providerConnection.upsert).not.toHaveBeenCalled();
+    expect(mocks.writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("stores an unset cost per check as null instead of a zero rate", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(null);
+    mocks.prisma.providerConnection.upsert.mockImplementation(({ create }) =>
+      Promise.resolve(connection({ ...create, id: "conn_1" })),
+    );
+
+    await connectProvider({
+      login: "login",
+      projectId: "prj_a00000000000000000000000",
+      providerId: "dataforseo",
+      secret: "password",
+    });
+
+    const call = mocks.prisma.providerConnection.upsert.mock.calls[0][0];
+    expect(call.create).not.toHaveProperty("costPerCheckCents");
+    expect(mocks.prisma.providerConnectionRate.upsert).not.toHaveBeenCalled();
+    expect(call.update).not.toHaveProperty("costPerCheckCents");
+    expect(
+      monthlyCostCentsFor(
+        {
+          depth: 100,
+          deviceCount: 1,
+          frequency: "daily",
+          keywordCount: 1,
+          locationCount: 1,
+        },
+        { overrideCents: null, providerId: "dataforseo" },
+      ),
+    ).toBe(60);
+  });
+
+  it("keeps a stored secret when a non-secret provider field is updated", async () => {
+    const storedCredentials = encryptSecret(
+      JSON.stringify({ login: "old-login", password: "stored-password" }),
+    );
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(
+      connection({ credentialsEncrypted: storedCredentials, provider: "dataforseo" }),
+    );
+    mocks.prisma.providerConnection.upsert.mockImplementation(({ update }) =>
+      Promise.resolve(connection({ ...update, id: "conn_1", provider: "dataforseo" })),
+    );
+
+    await connectProvider({
+      login: "new-login",
+      projectId: "prj_a00000000000000000000000",
+      providerId: "dataforseo",
+    });
+
+    expect(mocks.provider.testConnection).toHaveBeenCalledWith({
+      login: "new-login",
+      password: "stored-password",
+    });
+    const encrypted =
+      mocks.prisma.providerConnection.upsert.mock.calls[0][0].update.credentialsEncrypted;
+    expect(JSON.parse(decryptSecret(encrypted))).toEqual({
+      login: "new-login",
+      password: "stored-password",
+    });
+  });
+
+  it("writes initial traffic sync intent while connecting an enabled analytics provider", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(null);
+    mocks.prisma.providerConnection.upsert.mockImplementation(({ create }) =>
+      Promise.resolve(connection({ ...create, id: "conn_analytics" })),
+    );
+
+    await connectProvider({
+      credentials: {
+        apiKey: "plausible-key",
+        endpoint: "https://plausible.io",
+        login: "example.com",
+      },
+      projectId: "prj_a00000000000000000000000",
+      providerId: "plausible",
+    });
+
+    const upsert = mocks.prisma.providerConnection.upsert.mock.calls[0][0];
+    expect(upsert.create).toMatchObject({
+      firstSyncFinishedAt: null,
+      firstSyncRequestedAt: expect.any(Date),
+      firstSyncStartedAt: null,
+    });
+    expect(upsert.update).toMatchObject({
+      firstSyncFinishedAt: null,
+      firstSyncRequestedAt: upsert.create.firstSyncRequestedAt,
+      firstSyncStartedAt: null,
+    });
+    expect(mocks.revalidatePath).not.toHaveBeenCalledWith("/app/rank-tracker");
+  });
+
+  it("requests a fresh sync after saving verified credentials on an already-connected analytics provider", async () => {
+    const previousRequest = new Date("2026-07-01T00:00:00.000Z");
+    const before = connection({
+      kind: "analytics",
+      provider: "plausible",
+      firstSyncRequestedAt: previousRequest,
+      firstSyncFinishedAt: new Date("2026-07-01T01:00:00.000Z"),
+      credentialsEncrypted: encryptSecret(
+        JSON.stringify({ apiKey: "old-key", login: "example.com" }),
+      ),
+    });
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(before);
+    await connectProvider({
+      credentials: { apiKey: "new-key", login: "example.com" },
+      projectId: "prj_a00000000000000000000000",
+      providerId: "plausible",
+    });
+    const updated = mocks.prisma.providerConnection.upsert.mock.calls[0][0].update;
+    expect(updated).toMatchObject({
+      firstSyncRequestedAt: expect.any(Date),
+      firstSyncStartedAt: null,
+      firstSyncFinishedAt: null,
+    });
+    expect(updated.firstSyncRequestedAt).not.toEqual(previousRequest);
+  });
+
+  it("rolls back the analytics connection together with its first sync intent", async () => {
+    let committedConnection: Record<string, unknown> | null = null;
+    let attemptedConnection: Record<string, unknown> | null = null;
+    const tx = {
+      $queryRaw: vi.fn(() => Promise.resolve([{ id: "project_1" }])),
+      providerConnection: {
+        findMany: vi.fn(() => Promise.resolve([])),
+        findUnique: vi.fn(() => Promise.resolve(null)),
+        upsert: vi.fn(({ create }) => {
+          attemptedConnection = { ...create, id: "conn_analytics" };
+          return Promise.resolve(connection(attemptedConnection ?? {}));
+        }),
+      },
+    };
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(null);
+    mocks.prisma.$transaction.mockImplementationOnce(async (callback) => {
+      const result = await callback(tx);
+      committedConnection = attemptedConnection;
+      return result;
+    });
+    mocks.writeAudit.mockRejectedValueOnce(new Error("audit unavailable"));
+
+    await expect(
+      connectProvider({
+        credentials: {
+          apiKey: "plausible-key",
+          endpoint: "https://plausible.io",
+          login: "example.com",
+        },
+        projectId: "prj_a00000000000000000000000",
+        providerId: "plausible",
+      }),
+    ).rejects.toThrow("audit unavailable");
+
+    expect(attemptedConnection).toMatchObject({
+      firstSyncFinishedAt: null,
+      firstSyncRequestedAt: expect.any(Date),
+      firstSyncStartedAt: null,
+    });
+    expect(committedConnection).toBeNull();
+  });
+
+  it("connects a provider and writes its audit inside one transaction", async () => {
+    const tx = {
+      project: { updateMany: vi.fn() },
+      $queryRaw: vi.fn(() => Promise.resolve([{ id: "project_1" }])),
+      providerConnection: {
+        findMany: vi.fn(() => Promise.resolve([])),
+        findUnique: vi.fn(() => Promise.resolve(null)),
+        update: vi.fn(),
+        upsert: vi.fn(({ create }) => Promise.resolve(connection({ ...create, id: "conn_tx" }))),
+      },
+    };
+    mocks.prisma.$transaction.mockImplementationOnce((callback) => callback(tx));
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(null);
+
+    await connectProvider({
+      projectId: "prj_a00000000000000000000000",
+      providerId: "serpapi",
+      secret: "api-key",
+    });
+
+    expect(mocks.prisma.$transaction).toHaveBeenCalledOnce();
+    expect(tx.$queryRaw).toHaveBeenCalledOnce();
+    expect(tx.providerConnection.findMany).toHaveBeenCalledOnce();
+    expect(tx.providerConnection.upsert).toHaveBeenCalledOnce();
+    expect(mocks.saveBudget).toHaveBeenCalledTimes(2);
+    expect(mocks.saveBudget).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ id: "own-connection:conn_tx:app", unit: "units" }),
+    );
+    expect(mocks.saveBudget.mock.invocationCallOrder[1]).toBeLessThan(
+      mocks.writeAudit.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(mocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "provider.connect",
+        targetId: expect.stringMatching(/^conn_[a-z][a-z0-9]{23}$/),
+      }),
+      tx,
+    );
+  });
+
+  it("promotes a provider through priority zero in one settings transaction", async () => {
+    const rows = new Map<string, ReturnType<typeof connection>>();
+    mocks.prisma.providerConnection.findUnique.mockImplementation(({ where }) => {
+      const providerId = where.projectId_provider?.provider;
+      return Promise.resolve(providerId ? (rows.get(providerId) ?? null) : null);
+    });
+    mocks.prisma.providerConnection.findMany.mockImplementation(({ where }) =>
+      Promise.resolve(
+        [...rows.values()]
+          .filter((row) => row.kind === where.kind)
+          .sort((left, right) => left.priority - right.priority),
+      ),
+    );
+    mocks.prisma.providerConnection.update.mockImplementation(({ data, where }) => {
+      const current = [...rows.values()].find((row) => row.id === where.id);
+      if (!current) throw new Error("Missing provider connection in test state.");
+      const updated = connection({ ...current, ...data });
+      rows.set(updated.provider, updated);
+      return Promise.resolve(updated);
+    });
+    mocks.prisma.providerConnection.upsert.mockImplementation(({ create, update, where }) => {
+      const current = rows.get(where.projectId_provider.provider);
+      const updated = connection({
+        ...(current ?? create),
+        ...(current ? update : {}),
+        id: current?.id ?? `conn_${rows.size + 1}`,
+      });
+      rows.set(updated.provider, updated);
+      return Promise.resolve(updated);
+    });
+
+    await connectProvider({
+      login: "login",
+      projectId: "prj_a00000000000000000000000",
+      providerId: "dataforseo",
+      secret: "password",
+    });
+    await connectProvider({
+      projectId: "prj_a00000000000000000000000",
+      providerId: "serpapi",
+      secret: "api-key",
+    });
+    expect([...rows.values()].map(({ priority, provider }) => ({ priority, provider }))).toEqual([
+      { priority: 0, provider: "dataforseo" },
+      { priority: 1, provider: "serpapi" },
+    ]);
+    const settingsTransaction = {
+      $queryRaw: mocks.prisma.$queryRaw,
+      project: mocks.prisma.project,
+      providerConnection: {
+        findMany: mocks.prisma.providerConnection.findMany,
+        findUnique: mocks.prisma.providerConnection.findUnique,
+        update: mocks.prisma.providerConnection.update,
+      },
+    };
+    mocks.prisma.$transaction.mockImplementationOnce((callback) => callback(settingsTransaction));
+    await updateProviderSettings({
+      priority: 0,
+      projectId: "prj_a00000000000000000000000",
+      providerId: "serpapi",
+    });
+
+    expect([...rows.values()].map(({ priority, provider }) => ({ priority, provider }))).toEqual([
+      { priority: 1, provider: "dataforseo" },
+      { priority: 0, provider: "serpapi" },
+    ]);
+    expect(mocks.prisma.providerConnection.update).toHaveBeenNthCalledWith(1, {
+      data: { priority: 0 },
+      where: { id: "conn_2" },
+    });
+    expect(mocks.prisma.providerConnection.update).toHaveBeenNthCalledWith(3, {
+      data: { priority: 1 },
+      where: { id: "conn_1" },
+    });
+    expect(mocks.prisma.$transaction).toHaveBeenCalledTimes(3);
+    expect(mocks.prisma.$queryRaw).toHaveBeenCalledTimes(3);
+    expect(mocks.writeAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ action: "provider.set_settings" }),
+      settingsTransaction,
+    );
+  });
+
+  it("serializes parallel connects before deriving provider priority", async () => {
+    const rows = new Map<string, ReturnType<typeof connection>>();
+    let blockedLockAttempts = 0;
+    let lockHeld = false;
+    let readCount = 0;
+    let rawLockCalls = 0;
+    let resolveConcurrentReads = () => {};
+    let resolveSecondLockAttempt = () => {};
+    const concurrentReads = new Promise<void>((resolve) => {
+      resolveConcurrentReads = resolve;
+    });
+    const secondLockAttempt = new Promise<void>((resolve) => {
+      resolveSecondLockAttempt = resolve;
+    });
+    const lockWaiters: Array<() => void> = [];
+
+    async function acquireProjectLock() {
+      if (lockHeld) {
+        blockedLockAttempts += 1;
+        resolveSecondLockAttempt();
+        await new Promise<void>((resolve) => lockWaiters.push(resolve));
+      }
+      lockHeld = true;
+      return () => {
+        lockHeld = false;
+        lockWaiters.shift()?.();
+      };
+    }
+
+    const findUnique = vi.fn(({ where }) => {
+      const providerId = where.projectId_provider?.provider;
+      return Promise.resolve(providerId ? (rows.get(providerId) ?? null) : null);
+    });
+    const findMany = vi.fn(async ({ where }) => {
+      readCount += 1;
+      if (lockHeld && readCount === 1) {
+        await secondLockAttempt;
+      } else if (!lockHeld) {
+        if (readCount === 2) resolveConcurrentReads();
+        await concurrentReads;
+      }
+      return [...rows.values()].filter((row) => row.kind === where.kind);
+    });
+    const upsert = vi.fn(({ create, update, where }) => {
+      const current = rows.get(where.projectId_provider.provider);
+      const saved = connection({
+        ...(current ?? create),
+        ...(current ? update : {}),
+        id: current?.id ?? `conn_${rows.size + 1}`,
+      });
+      rows.set(saved.provider, saved);
+      return Promise.resolve(saved);
+    });
+
+    mocks.prisma.providerConnection.findUnique.mockImplementation(findUnique);
+    mocks.prisma.$transaction.mockImplementation(async (callback) => {
+      let releaseLock: (() => void) | undefined;
+      const tx = {
+        $queryRaw: vi.fn(async () => {
+          rawLockCalls += 1;
+          releaseLock = await acquireProjectLock();
+          return [{ id: mocks.project.id }];
+        }),
+        project: { updateMany: vi.fn() },
+        providerConnection: { findMany, findUnique, update: vi.fn(), upsert },
+      };
+      try {
+        return await callback(tx);
+      } finally {
+        releaseLock?.();
+      }
+    });
+
+    await Promise.all([
+      connectProvider({
+        login: "login",
+        projectId: "prj_a00000000000000000000000",
+        providerId: "dataforseo",
+        secret: "password",
+      }),
+      connectProvider({
+        projectId: "prj_a00000000000000000000000",
+        providerId: "serpapi",
+        secret: "api-key",
+      }),
+    ]);
+
+    expect(blockedLockAttempts).toBe(1);
+    expect(rawLockCalls).toBe(2);
+    expect(
+      [...rows.values()].map((row) => row.priority).sort((left, right) => left - right),
+    ).toEqual([0, 1]);
+  });
+
+  it("tests a connection with stored encrypted credentials", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+      credentialsEncrypted: encryptSecret(JSON.stringify({ apiKey: "stored-key" })),
+      id: "connection_1",
+      status: "needs_reauth",
+    });
+    mocks.provider.testConnection.mockResolvedValue({ message: "ok", ok: true });
+
+    await expect(
+      testConnection({ projectId: "prj_a00000000000000000000000", providerId: "serpapi" }),
+    ).resolves.toEqual({
+      message: "ok",
+      ok: true,
+    });
+    expect(mocks.provider.testConnection).toHaveBeenCalledWith({ apiKey: "stored-key" });
+    expect(mocks.prisma.providerConnection.updateMany).toHaveBeenCalledWith({
+      data: { status: "connected" },
+      where: { id: "connection_1", status: "needs_reauth" },
+    });
+    expect(mocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "provider.test" }),
+    );
+    expect(mocks.trackServerEvent).toHaveBeenCalledWith("provider_connection_tested", {
+      consent: { analytics: true, decidedAt: 1, replay: false, status: "decided" },
+      userId: "user_1",
+      properties: { error_category: null, ok: true, provider: "serpapi" },
+    });
+  });
+
+  it("does not restore stored connection state after testing credential overrides", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+      credentialsEncrypted: encryptSecret(JSON.stringify({ apiKey: "stored-key" })),
+    });
+    mocks.provider.testConnection.mockResolvedValue({ message: "ok", ok: true });
+
+    await testConnection({
+      projectId: "prj_a00000000000000000000000",
+      providerId: "serpapi",
+      secret: "candidate-key",
+    });
+
+    expect(mocks.prisma.providerConnection.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("queues a fresh analytics sync when a successful stored-key test restores authorization", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(
+      connection({
+        kind: "analytics",
+        provider: "plausible",
+        status: "needs_reauth",
+        credentialsEncrypted: encryptSecret(
+          JSON.stringify({ apiKey: "stored-key", login: "example.com" }),
+        ),
+      }),
+    );
+    await testConnection({
+      projectId: "prj_a00000000000000000000",
+      providerId: "plausible",
+    });
+    expect(mocks.prisma.providerConnection.updateMany).toHaveBeenCalledWith({
+      data: {
+        status: "connected",
+        firstSyncRequestedAt: expect.any(Date),
+        firstSyncStartedAt: null,
+        firstSyncFinishedAt: null,
+      },
+      where: { id: "conn_1", status: "needs_reauth" },
+    });
+  });
+
+  it("rejects missing required credentials before calling the provider", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(
+      connection({ credentialsEncrypted: null }),
+    );
+
+    await expect(
+      testConnection({ projectId: "prj_a00000000000000000000000", providerId: "dataforseo" }),
+    ).resolves.toEqual({
+      message: "DataForSEO requires API login and API password credentials.",
+      ok: false,
+    });
+
+    expect(mocks.provider.testConnection).not.toHaveBeenCalled();
+  });
+
+  it("returns a friendly rate-limited result without hitting the provider", async () => {
+    process.env.BISIBILITY_PROVIDER_RATE_LIMIT_SERPAPI_PER_MINUTE = "1";
+    // Exhaust the shared serpapi budget for these credentials before the test call.
+    await consumeProviderLimit("serpapi", { apiKey: "stored-key" }, { projectId: "project_1" });
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+      credentialsEncrypted: encryptSecret(JSON.stringify({ apiKey: "stored-key" })),
+    });
+
+    await expect(
+      testConnection({ projectId: "prj_a00000000000000000000000", providerId: "serpapi" }),
+    ).resolves.toEqual({
+      message: "Rate limited, try again shortly.",
+      ok: false,
+      rateLimited: true,
+    });
+    expect(mocks.provider.testConnection).not.toHaveBeenCalled();
+  });
+
+  it("settings mutate the locked stable-identity replacement, not a stale preliminary row", async () => {
+    const replacement = connection({
+      id: "conn_replacement",
+      publicId: "conn_b00000000000000000000000",
+    });
+    const tx = {
+      $queryRaw: vi.fn(),
+      project: mocks.prisma.project,
+      providerConnection: {
+        findMany: mocks.prisma.providerConnection.findMany,
+        findUnique: vi.fn().mockResolvedValue(replacement),
+        update: mocks.prisma.providerConnection.update,
+      },
+    };
+    mocks.prisma.$transaction.mockImplementationOnce((callback) => callback(tx));
+    mocks.prisma.providerConnection.update.mockResolvedValue({ ...replacement, enabled: false });
+
+    await updateProviderSettings({
+      enabled: false,
+      projectId: "prj_a00000000000000000000000",
+      providerId: "serpapi",
+    });
+
+    expect(tx.providerConnection.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "conn_replacement" } }),
+    );
+    expect(mocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        before: expect.objectContaining({ id: "conn_b00000000000000000000000" }),
+        targetId: "conn_b00000000000000000000000",
+      }),
+      tx,
+    );
+  });
+
+  it("disconnect does not delete or audit after the locked stable identity disappears", async () => {
+    const tx = {
+      $queryRaw: vi.fn(),
+      providerConnection: {
+        delete: mocks.prisma.providerConnection.delete,
+        findUnique: vi.fn().mockResolvedValue(null),
+      },
+    };
+    mocks.prisma.$transaction.mockImplementationOnce((callback) => callback(tx));
+
+    await expect(
+      disconnectProvider({
+        projectId: "prj_a00000000000000000000000",
+        providerId: "serpapi",
+      }),
+    ).resolves.toBeNull();
+    expect(tx.providerConnection.delete).not.toHaveBeenCalled();
+    expect(mocks.writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("locks before settings eligibility mutation", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(connection({ id: "conn_2" }));
+    mocks.prisma.providerConnection.update.mockResolvedValue(connection({ id: "conn_2" }));
+
+    await updateProviderSettings({
+      enabled: false,
+      projectId: "prj_a00000000000000000000000",
+      providerId: "serpapi",
+    });
+
+    expect(mocks.prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.prisma.providerConnection.update.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it("locks before disconnect deletion", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(connection({ id: "conn_2" }));
+    mocks.prisma.providerConnection.delete.mockResolvedValue(connection({ id: "conn_2" }));
+
+    await disconnectProvider({
+      projectId: "prj_a00000000000000000000000",
+      providerId: "serpapi",
+    });
+
+    expect(mocks.prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.prisma.providerConnection.delete.mock.invocationCallOrder[0] ?? 0,
+    );
+    const calls = mocks.prisma.$queryRaw.mock.calls;
+    expect(calls[0][0].join("?")).toContain('FROM "projects"');
+    expect(calls[0][0].join("?")).toContain("FOR UPDATE");
+    expect(calls[0][1]).toBe("project_1");
+    expect(calls[1][0].join("?")).toContain("FROM provider_connections");
+    expect(calls[1][0].join("?")).toContain("FOR UPDATE");
+    expect(calls[1][1]).toBe("conn_2");
+    expect(calls[2][0].join("?")).toContain("metering_paid_attempt_context");
+    expect(calls[2][0].join("?")).toContain(
+      "o.state IN ('reserved','dispatch_intended','pending')",
+    );
+    expect(calls[2][1]).toBe("conn_2");
+    expect(mocks.prisma.$queryRaw.mock.invocationCallOrder[2]).toBeLessThan(
+      mocks.prisma.providerConnection.delete.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(mocks.saveBudget).not.toHaveBeenCalled();
+  });
+
+  it.each(["reserved", "dispatch_intended", "pending"])(
+    "refuses disconnect with a retained %s operation before deleting credentials",
+    async (state) => {
+      mocks.prisma.$queryRaw.mockImplementation(async (query: TemplateStringsArray) => {
+        const sql = query.join("?");
+        if (!sql.includes("metering_paid_attempt_context")) return [];
+        expect(sql).toContain(`'${state}'`);
+        return [{ count: 1n }];
+      });
+      mocks.prisma.providerConnection.findUnique.mockResolvedValue(connection({ id: "conn_2" }));
+
+      await expect(
+        disconnectProvider({ projectId: "prj_a00000000000000000000000", providerId: "serpapi" }),
+      ).rejects.toThrow("Provider credential custody has unresolved paid operations");
+
+      expect(mocks.prisma.providerConnection.delete).not.toHaveBeenCalled();
+      expect(mocks.writeAudit).not.toHaveBeenCalled();
+      expect(mocks.saveBudget).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["settled", "released"])("allows disconnect with only %s history", async (state) => {
+    mocks.prisma.$queryRaw.mockImplementation(async (query: TemplateStringsArray) => {
+      const sql = query.join("?");
+      if (!sql.includes("metering_paid_attempt_context")) return [];
+      expect(sql).not.toContain(`'${state}'`);
+      return [{ count: 0n }];
+    });
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(connection({ id: "conn_2" }));
+    await expect(
+      disconnectProvider({ projectId: mocks.project.publicId, providerId: "serpapi" }),
+    ).resolves.toEqual({ ok: true });
+    expect(mocks.prisma.providerConnection.delete).toHaveBeenCalledWith({
+      where: { id: "conn_2" },
+    });
+    expect(mocks.writeAudit).toHaveBeenCalledOnce();
+    expect(mocks.saveBudget).not.toHaveBeenCalled();
+  });
+
+  it("updates settings without promoting a nonzero priority", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(connection({ id: "conn_2" }));
+    mocks.prisma.providerConnection.update.mockResolvedValue(
+      nonPlainConnection({ enabled: false, id: "conn_2", priority: 42 }),
+    );
+
+    const result = await updateProviderSettings({
+      enabled: false,
+      priority: 42,
+      projectId: "prj_a00000000000000000000000",
+      providerId: "serpapi",
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.prisma.providerConnection.update).toHaveBeenCalledWith({
+      data: { enabled: false, priority: 42 },
+      where: { id: "conn_2" },
+    });
+    expect(mocks.prisma.providerConnection.findMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.$transaction).toHaveBeenCalledOnce();
+    expect(mocks.prisma.searchAnalyticsDaily.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.searchAnalyticsImport.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "provider.set_settings" }),
+      mocks.prisma,
+    );
+  });
+
+  it("clears an analytics first-sync intent in the disable transaction", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(
+      connection({
+        firstSyncRequestedAt: new Date("2026-09-03T05:00:00.000Z"),
+        id: "conn_analytics",
+        kind: "analytics",
+        provider: "plausible",
+      }),
+    );
+    mocks.prisma.providerConnection.update.mockResolvedValue(
+      connection({
+        enabled: false,
+        id: "conn_analytics",
+        kind: "analytics",
+        provider: "plausible",
+      }),
+    );
+
+    await updateProviderSettings({
+      enabled: false,
+      projectId: "prj_a00000000000000000000000",
+      providerId: "plausible",
+    });
+
+    expect(mocks.prisma.providerConnection.update).toHaveBeenCalledWith({
+      data: {
+        enabled: false,
+        firstSyncFinishedAt: null,
+        firstSyncRequestedAt: null,
+        firstSyncStartedAt: null,
+      },
+      where: { id: "conn_analytics" },
+    });
+  });
+
+  it("renumbers the third connection without changing the others' relative order", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(
+      connection({ id: "conn_3", priority: 2 }),
+    );
+    mocks.prisma.providerConnection.findMany.mockResolvedValue([
+      connection({ id: "conn_1", priority: 0, provider: "dataforseo" }),
+      connection({ id: "conn_2", priority: 1, provider: "local-sequence" }),
+      connection({ id: "conn_3", priority: 2, provider: "serpapi" }),
+    ]);
+    mocks.prisma.providerConnection.update.mockImplementation(({ data, where }) =>
+      Promise.resolve(nonPlainConnection({ ...data, id: where.id })),
+    );
+
+    await updateProviderSettings({
+      priority: 0,
+      projectId: "prj_a00000000000000000000000",
+      providerId: "serpapi",
+    });
+
+    const priorities = mocks.prisma.providerConnection.update.mock.calls.flatMap(([query]) =>
+      typeof query.data.priority === "number"
+        ? [{ id: query.where.id, priority: query.data.priority }]
+        : [],
+    );
+    expect(priorities).toEqual([
+      { id: "conn_3", priority: 0 },
+      { id: "conn_3", priority: 0 },
+      { id: "conn_1", priority: 1 },
+      { id: "conn_2", priority: 2 },
+    ]);
+  });
+
+  it("updates provider cost without touching credentials", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(connection({ id: "conn_3" }));
+    mocks.prisma.providerConnection.update.mockResolvedValue(
+      nonPlainConnection({ costPerCheckCents: 50, id: "conn_3" }),
+    );
+
+    const result = await updateProviderCost({
+      costPerCheck: 0.5,
+      projectId: "prj_a00000000000000000000000",
+      providerId: "serpapi",
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.prisma.providerConnection.update).toHaveBeenCalledWith({
+      data: { updatedAt: expect.any(Date) },
+      where: { id: "conn_3" },
+    });
+    expect(mocks.prisma.providerConnectionRate.upsert).toHaveBeenCalledWith({
+      create: {
+        amountCents: 50,
+        connectionId: "conn_3",
+        feature: "rank_check",
+      },
+      update: { amountCents: 50 },
+      where: {
+        connectionId_feature: {
+          connectionId: "conn_3",
+          feature: "rank_check",
+        },
+      },
+    });
+    expect(mocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        after: expect.objectContaining({ costPerCheck: 0.5 }),
+        before: expect.objectContaining({ costPerCheck: 0.0001 }),
+      }),
+      mocks.prisma,
+    );
+  });
+
+  it("stores and clears a feature-specific manual rate", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(connection({ id: "conn_3" }));
+    mocks.prisma.providerConnectionRate.upsert.mockResolvedValue({
+      amountCents: 2,
+      connectionId: "conn_3",
+      feature: "keyword_metrics",
+      id: "rate_1",
+    });
+
+    await expect(
+      updateProviderRate({
+        costPerUnit: 0.02,
+        feature: "keyword_metrics",
+        projectId: "prj_a00000000000000000000000",
+        providerId: "dataforseo",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(mocks.prisma.providerConnectionRate.upsert).toHaveBeenCalledWith({
+      create: {
+        amountCents: 2,
+        connectionId: "conn_3",
+        feature: "keyword_metrics",
+      },
+      update: { amountCents: 2 },
+      where: {
+        connectionId_feature: {
+          connectionId: "conn_3",
+          feature: "keyword_metrics",
+        },
+      },
+    });
+    expect(mocks.prisma.providerConnection.update).toHaveBeenCalledWith({
+      data: { updatedAt: expect.any(Date) },
+      where: { id: "conn_3" },
+    });
+
+    await updateProviderRate({
+      costPerUnit: null,
+      feature: "rank_check",
+      projectId: "prj_a00000000000000000000000",
+      providerId: "dataforseo",
+    });
+    expect(mocks.prisma.providerConnectionRate.deleteMany).toHaveBeenCalledWith({
+      where: { connectionId: "conn_3", feature: "rank_check" },
+    });
+    expect(mocks.prisma.providerConnection.update).toHaveBeenCalledWith({
+      data: { updatedAt: expect.any(Date) },
+      where: { id: "conn_3" },
+    });
+  });
+
+  it("disconnects Search Console credentials and preserves imported metrics", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(
+      connection({ id: "conn_gsc", kind: "analytics", provider: "gsc" }),
+    );
+
+    await expect(
+      disconnectGoogleSearchConsole({ projectId: "prj_a00000000000000000000000" }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(mocks.prisma.providerConnection.delete).toHaveBeenCalledWith({
+      where: { id: "conn_gsc" },
+    });
+    expect(mocks.cancelPendingGoogleOAuth).toHaveBeenCalledWith("prj_a00000000000000000000000");
+    expect(mocks.prisma.searchAnalyticsDaily.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.searchAnalyticsImport.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("disconnects an existing provider without deleting imported Search Console metrics", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(connection({ id: "conn_4" }));
+
+    await expect(
+      disconnectProvider({ projectId: "prj_a00000000000000000000000", providerId: "serpapi" }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(mocks.prisma.providerConnection.delete).toHaveBeenCalledWith({
+      where: { id: "conn_4" },
+    });
+    expect(mocks.prisma.$transaction).toHaveBeenCalledOnce();
+    expect(mocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "provider.disconnect" }),
+      mocks.prisma,
+    );
+  });
+});

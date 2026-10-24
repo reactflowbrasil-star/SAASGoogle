@@ -1,0 +1,362 @@
+import { describe, expect, it } from "vitest";
+import { API_VERSION_HEADER } from "./api-versions";
+import { getOpenApiDocument } from "./openapi";
+import { savedViewSchema } from "./openapi-saved-views";
+import type { Parameter } from "./openapi-test-helpers";
+
+describe("OpenAPI document", () => {
+  it.each([
+    ["query,device", true],
+    [" query , page ", true],
+    ["device,page,query,country,query", true],
+    ["query,,page", false],
+    ["query,foo", false],
+    ["", false],
+    [",query", false],
+    ["query,", false],
+  ])("documents comma-separated dimension syntax %s", (value, valid) => {
+    const operation =
+      getOpenApiDocument().paths["/projects/{project_id}/analytics/query-stats"].get;
+    const parameter = operation.parameters.find(
+      (item) => "name" in item && item.name === "dimensions",
+    );
+    expect(parameter).toHaveProperty("schema.type", "string");
+    expect(parameter).not.toHaveProperty("explode");
+    expect(parameter).not.toHaveProperty("style");
+    expect(parameter).toHaveProperty("schema.pattern");
+    const pattern = (parameter as { schema: { pattern: string } }).schema.pattern;
+    expect(new RegExp(pattern).test(value)).toBe(valid);
+  });
+
+  it("documents actual keyword resource fields", () => {
+    const keyword = getOpenApiDocument().components.schemas.Keyword;
+
+    expect(keyword.required).toEqual(
+      expect.arrayContaining([
+        "created_at",
+        "language_code",
+        "language_label",
+        "location",
+        "location_key",
+        "previous_position",
+        "schedule",
+        "updated_at",
+      ]),
+    );
+    expect(keyword.properties).toMatchObject({
+      created_at: { format: "date-time", type: "string" },
+      language_code: { type: "string" },
+      language_label: { type: "string" },
+      location: { type: "string" },
+      location_key: { type: "string" },
+      previous_position: { type: ["integer", "null"] },
+      schedule: { type: ["object", "null"] },
+      updated_at: { format: "date-time", type: "string" },
+    });
+  });
+
+  it("documents rank-check resource fields emitted by the API", () => {
+    const rankCheck = getOpenApiDocument().components.schemas.RankCheck;
+
+    expect(rankCheck.required).toEqual(
+      expect.arrayContaining([
+        "attempts",
+        "cost_cents",
+        "error",
+        "previous_position",
+        "provider",
+        "ranking_url",
+        "run_id",
+      ]),
+    );
+    expect(rankCheck.properties).toMatchObject({
+      attempts: { type: ["array", "null"] },
+      provider: { type: "string" },
+      run_id: { pattern: "^rcr_[a-z][a-z0-9]{23}$", type: ["string", "null"] },
+    });
+  });
+
+  it("documents agent-facing location, team, keyword, and analytics operations", () => {
+    const paths = getOpenApiDocument().paths;
+    expect(paths["/locations/search"].get).toMatchObject({ operationId: "searchLocations" });
+    expect(paths["/projects/{project_id}/ranked-keyword-suggestions"].get).toMatchObject({
+      operationId: "listRankedKeywordSuggestions",
+    });
+    expect(paths["/projects/{project_id}/team/members/{member_id}"]).toMatchObject({
+      delete: { operationId: "removeTeamMember" },
+      patch: { operationId: "updateTeamMemberRole" },
+    });
+    expect(paths["/projects/{project_id}/team/invites/{invite_id}/resend"].post).toMatchObject({
+      operationId: "resendTeamInvite",
+    });
+    expect(paths["/projects/{project_id}/analytics/traffic-snapshots"].get).toMatchObject({
+      operationId: "listTrafficSnapshots",
+    });
+    expect(paths["/projects/{project_id}/analytics/query-stats"].get).toMatchObject({
+      operationId: "listSearchPerformanceQueryStats",
+    });
+    expect(paths["/projects/{project_id}/analytics/query-stats"].get.parameters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "page_path" }),
+        expect.objectContaining({
+          name: "page_path_match",
+          schema: expect.objectContaining({
+            default: "contains",
+            enum: ["contains", "prefix"],
+            type: "string",
+          }),
+        }),
+        expect.objectContaining({
+          name: "query_match",
+          schema: expect.objectContaining({
+            default: "equals",
+            enum: ["equals", "contains"],
+            type: "string",
+          }),
+        }),
+        expect.objectContaining({ name: "clicks_min" }),
+        expect.objectContaining({ name: "impressions_min" }),
+        expect.objectContaining({ name: "position_max" }),
+        expect.objectContaining({
+          name: "country",
+          schema: expect.objectContaining({ pattern: "^[a-zA-Z]{3}$", type: "string" }),
+        }),
+        expect.objectContaining({
+          name: "device",
+          schema: expect.objectContaining({
+            enum: ["desktop", "mobile", "tablet"],
+            type: "string",
+          }),
+        }),
+        expect.objectContaining({
+          name: "dimensions",
+          description: expect.stringContaining("query,device"),
+          schema: {
+            pattern: "^\\s*(query|page|country|device)\\s*(,\\s*(query|page|country|device)\\s*)*$",
+            type: "string",
+          },
+        }),
+        expect.objectContaining({
+          name: "offset",
+          schema: expect.objectContaining({ default: 0, minimum: 0, type: "integer" }),
+        }),
+      ]),
+    );
+    expect(paths["/projects/{project_id}/analytics/sync"].post).toMatchObject({
+      operationId: "syncProjectTraffic",
+    });
+    expect(paths["/projects/{project_id}/exports/rank-history"].get).toMatchObject({
+      operationId: "exportRankHistory",
+      responses: {
+        "200": {
+          content: {
+            "application/json": expect.any(Object),
+            "text/csv": expect.any(Object),
+          },
+        },
+      },
+    });
+    expect(paths["/projects/{project_id}/triggered-alerts/mark-read"].post).toMatchObject({
+      operationId: "markProjectAlertsRead",
+    });
+    expect(paths["/projects/{project_id}/triggered-alerts/{alert_id}/mute"].post).toMatchObject({
+      operationId: "muteTriggeredAlert",
+    });
+    expect(paths["/projects/{project_id}/sitemap-monitors"].get).toMatchObject({
+      operationId: "listSitemapMonitors",
+    });
+    expect(paths["/projects/{project_id}/sitemap-monitors/{monitor_id}"].patch).toMatchObject({
+      operationId: "updateSitemapMonitor",
+    });
+  });
+
+  it("documents the query-stats response scope and result honestly", () => {
+    const schema = getOpenApiDocument().components.schemas.SearchPerformanceQueryStatsResponse;
+
+    expect(schema.required).toEqual(["connection", "rows", "scope", "result"]);
+    expect(schema.description).toEqual(
+      expect.stringContaining("only when no country or device filter or dimension is requested"),
+    );
+    expect(schema.properties.scope.properties.country).toMatchObject({
+      description: expect.stringContaining(
+        "only when no country or device filter or dimension is requested",
+      ),
+      type: ["string", "null"],
+    });
+    expect(schema.properties.scope.properties.device).toMatchObject({
+      description: expect.stringContaining(
+        "only when no country or device filter or dimension is requested",
+      ),
+      type: ["string", "null"],
+    });
+    expect(schema.properties.scope.properties.query_match).toMatchObject({
+      description: expect.stringContaining("exact match unless query_match=contains"),
+      enum: ["equals", "contains"],
+    });
+    expect(schema.properties.scope.properties.dimensions).toMatchObject({
+      items: { enum: ["query", "page", "country", "device"], type: "string" },
+    });
+    expect(schema.properties.scope.properties.offset).toMatchObject({
+      minimum: 0,
+      type: "integer",
+    });
+    expect(schema.properties.scope.required).toEqual(expect.arrayContaining(["offset"]));
+    expect(schema.properties.result.properties.next_offset).toMatchObject({
+      type: ["integer", "null"],
+    });
+    expect(schema.properties.result.required).toEqual(expect.arrayContaining(["next_offset"]));
+    const stat = getOpenApiDocument().components.schemas.SearchPerformanceQueryStat;
+    expect(stat.properties).toMatchObject({
+      country: { type: "string" },
+      device: { type: "string" },
+    });
+    expect(stat.required).not.toEqual(expect.arrayContaining(["country", "device"]));
+    expect(schema.properties.result.properties).toMatchObject({
+      row_cap: { type: "integer" },
+      rows_returned: { type: "integer" },
+      sort: { enum: ["clicks_desc"], type: "string" },
+      truncated: {
+        description: expect.stringContaining("row_cap"),
+        type: "boolean",
+      },
+    });
+    expect(schema.properties.result.properties.truncated).toMatchObject({
+      description: expect.stringContaining("after the source cap"),
+      type: "boolean",
+    });
+  });
+
+  it("documents signal ingestion and listing", () => {
+    const doc = getOpenApiDocument();
+    const createSignal = doc.paths["/signals"].post;
+    const listSignals = doc.paths["/projects/{project_id}/signals"].get;
+    const signal = doc.components.schemas.Signal;
+
+    expect(createSignal).toMatchObject({
+      operationId: "createSignal",
+      requestBody: {
+        content: {
+          "application/json": {
+            schema: { $ref: "#/components/schemas/SignalCreate" },
+          },
+        },
+        required: true,
+      },
+      responses: { "201": expect.any(Object), "423": expect.any(Object) },
+    });
+    expect(
+      (listSignals.parameters as Parameter[]).map((parameter) => parameter.name ?? parameter.$ref),
+    ).toEqual([
+      API_VERSION_HEADER,
+      "project_id",
+      "#/components/parameters/Limit",
+      "#/components/parameters/Cursor",
+      "source",
+      "type",
+      "from",
+      "to",
+      "#/components/parameters/SourceHeader",
+    ]);
+    expect(signal.required).toEqual(expect.arrayContaining(["public_id", "keyword_id"]));
+    expect(signal.properties).toMatchObject({
+      id: { type: "string" },
+      public_id: { type: "string" },
+      source: { enum: expect.arrayContaining(["deploy", "cms", "api"]) },
+    });
+  });
+
+  it("documents provider natural IDs and optional analytics connection IDs", () => {
+    const doc = getOpenApiDocument();
+    const provider = doc.components.schemas.Provider;
+    const listProviders = doc.paths["/projects/{project_id}/providers"].get;
+
+    expect(listProviders.responses["200"]).toMatchObject({
+      content: {
+        "application/json": {
+          schema: {
+            properties: {
+              data: {
+                items: { $ref: "#/components/schemas/Provider" },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(provider).toMatchObject({
+      properties: {
+        connection_id: {
+          pattern: "^conn_[a-z][a-z0-9]{23}$",
+          type: "string",
+        },
+        id: { description: "Natural provider catalog ID.", type: "string" },
+      },
+    });
+    expect(provider.required).toContain("id");
+    expect(provider.required).not.toContain("connection_id");
+  });
+
+  it("documents typed v3 patterns for public resource identifiers", () => {
+    const schemas = getOpenApiDocument().components.schemas;
+    const fields = [
+      [schemas.Me.properties.id, "usr"],
+      [schemas.PersonalAccessToken.properties.id, "pat"],
+      [schemas.Project.properties.id, "prj"],
+      [schemas.ProjectDefaults.properties.project_id, "prj"],
+      [schemas.ProjectOverview.properties.project_id, "prj"],
+      [schemas.RankCheck.properties.id, "check"],
+      [schemas.RankCheck.properties.keyword_id, "kw"],
+      [schemas.RankHistoryExportRow.properties.id, "check"],
+      [schemas.RankHistoryExportRow.properties.keyword_id, "kw"],
+      [savedViewSchema.properties.id, "viw"],
+      [schemas.Signal.properties.id, "sig"],
+      [schemas.Signal.properties.public_id, "sig"],
+      [schemas.Signal.properties.project_id, "prj"],
+      [schemas.TeamInviteResendResult.properties.id, "inv"],
+      [schemas.TeamMemberMutationResult.properties.id, "mbr"],
+      [schemas.WebhookEndpoint.properties.id, "we"],
+    ] as const;
+
+    for (const [schema, prefix] of fields) {
+      expect(schema).toMatchObject({
+        pattern: `^${prefix}_[a-z][a-z0-9]{23}$`,
+        type: expect.anything(),
+      });
+    }
+    expect(schemas.SitemapMonitor.properties.latest_snapshot.properties).not.toHaveProperty("id");
+    expect(schemas.SitemapMonitor.properties.latest_snapshot.required).not.toContain("id");
+  });
+
+  it("documents strict provider connection IDs for ranked keywords and research", () => {
+    const schemas = getOpenApiDocument().components.schemas;
+
+    expect(schemas.RankedKeywordConnection).toMatchObject({
+      properties: {
+        id: { pattern: "^conn_[a-z][a-z0-9]{23}$", type: "string" },
+      },
+    });
+    expect(schemas.KeywordMetricsRequest).toMatchObject({
+      properties: {
+        connection_id: { pattern: "^conn_[a-z][a-z0-9]{23}$", type: "string" },
+      },
+    });
+    expect(schemas.KeywordResearchResponse).toEqual({
+      oneOf: [
+        { $ref: "#/components/schemas/KeywordResearchEstimate" },
+        { $ref: "#/components/schemas/KeywordResearchResult" },
+      ],
+      "x-bisibility-union": { cases: ["estimate", "result"], style: "tagged", tag: "estimate" },
+    });
+    expect(schemas.KeywordResearchResult).toMatchObject({
+      properties: {
+        connections: {
+          items: {
+            properties: {
+              id: { pattern: "^conn_[a-z][a-z0-9]{23}$", type: "string" },
+            },
+          },
+        },
+      },
+    });
+  });
+});

@@ -1,0 +1,346 @@
+import { sourceConfigurationSchema } from "@/lib/ai-tracking/schema";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+import { describe, expect, it } from "vitest";
+import { API_VERSION_HEADER } from "./api-versions";
+import { getOpenApiDocument } from "./openapi";
+import { appOwnedTrackingRunOperations } from "./openapi-tracking-run-inputs";
+
+describe("OpenAPI document", () => {
+  it("resolves every local reference, including recursive AI tracking input definitions", () => {
+    const document = getOpenApiDocument();
+    const unresolved: string[] = [];
+    const visit = (value: unknown) => {
+      if (!value || typeof value !== "object") return;
+      const record = value as Record<string, unknown>;
+      if (typeof record.$ref === "string" && record.$ref.startsWith("#/")) {
+        const target = record.$ref
+          .slice(2)
+          .split("/")
+          .map((part) => part.replace(/~1/g, "/").replace(/~0/g, "~"))
+          .reduce<unknown>(
+            (node, key) => (node as Record<string, unknown> | undefined)?.[key],
+            document,
+          );
+        if (target === undefined) unresolved.push(record.$ref);
+      }
+      for (const [key, child] of Object.entries(record)) {
+        if (key !== "example" && key !== "examples") visit(child);
+      }
+    };
+    visit(document);
+    expect(unresolved).toEqual([]);
+  });
+
+  it("keeps provider JSON opaque for SDKs and validated by the runtime", () => {
+    const parameters = { nested: [null, true, 1, "text", { nested: [false] }] };
+    const input = appOwnedTrackingRunOperations.retryAiTrackingRun.body as {
+      properties: { configurations: { items: { properties: { parameters: object } } } };
+    };
+    const parameterSchema = input.properties.configurations.items.properties.parameters;
+    expect(parameterSchema).toMatchObject({ type: "object", additionalProperties: true });
+    expect(JSON.stringify(parameterSchema)).not.toContain("$ref");
+    const validate = new AjvJsonSchemaValidator().getValidator(parameterSchema as never);
+    expect(validate(parameters).valid).toBe(true);
+    const configuration = {
+      provider: "dataforseo",
+      endpoint: "example",
+      engine: "chat_gpt",
+      source: "model_api",
+      model: null,
+      parameters,
+    };
+    expect(sourceConfigurationSchema.safeParse(configuration).success).toBe(true);
+    expect(
+      sourceConfigurationSchema.safeParse({
+        ...configuration,
+        parameters: { nested: [() => null] },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("advertises 402 only on operations that can issue paid provider requests", () => {
+    const paths = getOpenApiDocument().paths;
+    const paid = [
+      ["/projects/{project_id}/keyword-metrics", "post"],
+      ["/projects/{project_id}/keyword-research", "get"],
+      ["/projects/{project_id}/ranked-keyword-suggestions", "get"],
+      ["/projects/{project_id}/backlinks", "get"],
+      ["/projects/{project_id}/backlinks/rows", "post"],
+      ["/projects/{project_id}/domain-overview/analyze", "post"],
+      ["/projects/{project_id}/domain-overview/history", "post"],
+      ["/projects/{project_id}/domain-overview/keywords", "post"],
+      ["/projects/{project_id}/domain-overview/pages", "post"],
+      ["/keywords/{keyword_id}/checks", "post"],
+    ] as const;
+    for (const [path, method] of paid) {
+      const operation = (paths[path] as Record<string, { responses: Record<string, unknown> }>)[
+        method
+      ];
+      expect(operation.responses["402"]).toMatchObject({
+        description: expect.stringContaining("Deployment credits exhausted"),
+      });
+    }
+    expect(paths["/projects"].get.responses["402"]).toBeUndefined();
+    expect(paths["/rank-checks/{check_id}"].get.responses["402"]).toBeUndefined();
+  });
+
+  it("groups every operation into an ordered API reference section", () => {
+    const doc = getOpenApiDocument();
+    const operations = Object.values(doc.paths).flatMap((path) => Object.values(path)) as Array<{
+      operationId?: string;
+      summary: string;
+      tags?: string[];
+    }>;
+
+    expect(doc).toHaveProperty(
+      "tags",
+      [
+        "ai-tracking",
+        "discovery",
+        "account-access",
+        "projects",
+        "api-keys",
+        "keywords",
+        "rank-checks",
+        "keyword-research",
+        "backlinks",
+        "domain-overview",
+        "research-reports",
+        "analytics",
+        "alerts",
+        "competitors",
+        "sitemap-monitoring",
+        "saved-keywords",
+        "saved-views",
+        "signals",
+        "providers",
+        "webhooks",
+        "team",
+        "migration",
+      ].map((name) => expect.objectContaining({ name })),
+    );
+    expect(operations).toHaveLength(154);
+    expect(
+      Object.entries(doc.paths)
+        .filter(([path]) => path.includes("/local-monitors/"))
+        .flatMap(([, item]) => Object.values(item))
+        .every((operation) => operation.tags?.[0] === "rank-checks"),
+    ).toBe(true);
+    // These existing rank-run reads were registered after the original 141-operation fixture.
+    expect(
+      operations.filter(({ operationId }) =>
+        ["listRankCheckRuns", "getRankCheckRun"].includes(operationId ?? ""),
+      ),
+    ).toHaveLength(2);
+    expect(doc.paths["/projects/{project_id}/rank-check-runs"].get).toMatchObject({
+      summary: "List rank-check runs",
+      description: "Read rank-check runs including cancelled or deferred outcomes without a check.",
+    });
+    expect(doc.paths["/projects/{project_id}/rank-check-runs/{run_id}"].get).toMatchObject({
+      summary: "Get a rank-check run",
+      description: "Read an existing run without launching a measurement.",
+    });
+    expect(operations.every((operation) => operation.tags?.length === 1)).toBe(true);
+    expect(
+      operations.every(
+        (operation) => typeof operation.summary === "string" && operation.summary.length <= 48,
+      ),
+    ).toBe(true);
+    const referenceTitles = operations.map(
+      (operation) => `${operation.tags?.[0]}:${operation.summary}`,
+    );
+    expect(new Set(referenceTitles).size).toBe(referenceTitles.length);
+    expect(doc.paths["/projects"].get.tags).toEqual(["projects"]);
+    expect(doc.paths["/projects/{project_id}/keywords"].get.tags).toEqual(["keywords"]);
+    expect(doc.paths["/projects/{project_id}/alert-rules"].post.tags).toEqual(["alerts"]);
+    expect(doc.paths["/projects/{project_id}/webhooks"].get.tags).toEqual(["webhooks"]);
+    expect(doc.paths["/projects/{project_id}/domain-overview/analyze"].post.tags).toEqual([
+      "domain-overview",
+    ]);
+  });
+
+  it("documents the paid Domain Overview safety contract", () => {
+    const doc = getOpenApiDocument();
+    const analyze = doc.paths["/projects/{project_id}/domain-overview/analyze"].post;
+    const history = doc.paths["/projects/{project_id}/domain-overview/history"].post;
+
+    expect(analyze).toMatchObject({
+      operationId: "analyzeDomainOverview",
+      requestBody: { required: true },
+      responses: {
+        "200": expect.any(Object),
+        "422": expect.any(Object),
+        "429": expect.any(Object),
+      },
+    });
+    expect(history).toMatchObject({
+      operationId: "loadDomainOverviewHistory",
+      requestBody: { required: true },
+      responses: { "409": expect.any(Object), "422": expect.any(Object) },
+    });
+    expect(doc.components.schemas.DomainOverviewProblem).toMatchObject({
+      allOf: expect.arrayContaining([
+        expect.objectContaining({ $ref: "#/components/schemas/Problem" }),
+      ]),
+    });
+    expect(doc.components.schemas.DomainOverviewMetrics.properties).toHaveProperty("pos1");
+    expect(doc.components.schemas.DomainOverviewMetrics.properties).not.toHaveProperty("pos_1");
+  });
+
+  it("documents the domain overview report state as freshness, not the data outcome", () => {
+    const state =
+      getOpenApiDocument().components.schemas.StoredDomainOverviewReport.properties.state;
+
+    expect(state.description).toContain("fresh_until is authoritative");
+    expect(state.description).toContain(
+      "data_state carries the no_data/ok/partial value that GET /projects/{project_id}/domain-overview returns as state",
+    );
+  });
+
+  it("publishes executable Domain Overview request constraints", () => {
+    const schemas = getOpenApiDocument().components.schemas;
+    const schemaValidator = new AjvJsonSchemaValidator();
+    const common = { language_code: "en", location_code: 2840, target: "example.com" };
+    const analyze = schemaValidator.getValidator(schemas.DomainOverviewAnalyzeRequest as never);
+
+    expect(analyze({ ...common, estimate_only: true }).valid).toBe(true);
+    expect(analyze({ ...common, estimate_only: true, max_cost_cents: 0 }).valid).toBe(true);
+    expect(analyze({ ...common, estimate_only: false, max_cost_cents: 6 }).valid).toBe(true);
+    expect(analyze(common).valid).toBe(false);
+    expect(analyze({ ...common, estimate_only: false }).valid).toBe(false);
+    expect(analyze({ ...common, estimate_only: true, unknown: true }).valid).toBe(false);
+
+    const keywords = schemaValidator.getValidator(schemas.DomainOverviewKeywordsRequest as never);
+    const pages = schemaValidator.getValidator(schemas.DomainOverviewPagesRequest as never);
+    expect(keywords({ ...common, limit: 100, max_cost_cents: 0, offset: 0 }).valid).toBe(true);
+    expect(keywords({ ...common, limit: 101, max_cost_cents: 0, offset: 0 }).valid).toBe(false);
+    expect(pages({ ...common, limit: 1_000, max_cost_cents: 0, offset: 0 }).valid).toBe(true);
+    expect(pages({ ...common, limit: 1_001, max_cost_cents: 0, offset: 0 }).valid).toBe(false);
+  });
+
+  it("documents optional API version declarations and mismatch responses", () => {
+    const doc = getOpenApiDocument();
+    const operations = Object.values(doc.paths).flatMap((path) => Object.values(path)) as Array<{
+      parameters: Array<{
+        in: string;
+        name: string;
+        required: boolean;
+        schema: { enum: string[]; type: string };
+      }>;
+      responses: Record<string, unknown>;
+    }>;
+
+    for (const operation of operations) {
+      expect(operation.parameters).toContainEqual({
+        description: expect.stringContaining("Omit this header"),
+        in: "header",
+        name: API_VERSION_HEADER,
+        required: false,
+        schema: {
+          enum: ["v1"],
+          type: "string",
+          "x-bisibility-enum": "open",
+          "x-bisibility-name": "ApiVersion",
+        },
+      });
+      expect(operation.responses["409"]).toMatchObject({
+        description: expect.stringContaining("Unsupported API version"),
+      });
+    }
+
+    expect(
+      doc.paths["/capabilities"].get.responses["200"].content["application/json"].schema,
+    ).toMatchObject({
+      properties: {
+        apiVersions: {
+          items: { enum: ["v1"], type: "string" },
+          minItems: 1,
+          type: "array",
+        },
+        features: {
+          properties: { reviewed_project_defaults: { const: "v1", type: "string" } },
+          required: ["reviewed_project_defaults"],
+        },
+      },
+      required: [
+        "apiVersions",
+        "authentication",
+        "data",
+        "description",
+        "features",
+        "rank_check_scheduler_mode",
+        "scheduler_driver",
+      ],
+    });
+  });
+
+  it("documents the optional client source header on every secured operation", () => {
+    const doc = getOpenApiDocument();
+
+    expect(doc.components.parameters.SourceHeader).toEqual({
+      description: expect.stringContaining("usage reporting"),
+      in: "header",
+      name: "X-Bisibility-Source",
+      required: false,
+      schema: {
+        enum: ["sdk", "cli", "mcp"],
+        type: "string",
+        "x-bisibility-enum": "open",
+        "x-bisibility-name": "RequestSource",
+      },
+    });
+
+    const operations = Object.values(doc.paths).flatMap((path) => Object.values(path)) as Array<{
+      parameters?: Array<{ $ref?: string }>;
+      security?: unknown;
+    }>;
+    const secured = operations.filter(
+      (operation) => Array.isArray(operation.security) && operation.security.length > 0,
+    );
+    expect(secured.length).toBeGreaterThan(0);
+    for (const operation of secured) {
+      const refs = (operation.parameters ?? []).filter(
+        (parameter) => parameter.$ref === "#/components/parameters/SourceHeader",
+      );
+      expect(refs).toHaveLength(1);
+    }
+    for (const operation of operations.filter(
+      (candidate) => !(Array.isArray(candidate.security) && candidate.security.length > 0),
+    )) {
+      expect((operation.parameters ?? []).some((parameter) => parameter.$ref !== undefined)).toBe(
+        false,
+      );
+    }
+  });
+
+  it("adds an optional details object to the Problem schema", () => {
+    const problem = getOpenApiDocument().components.schemas.Problem;
+
+    expect(problem.properties.details).toEqual({ additionalProperties: true, type: "object" });
+    expect(problem.required).not.toContain("details");
+  });
+
+  it("does not publish bare object schemas on public operations", () => {
+    const found: string[] = [];
+    const visit = (value: unknown, path: string) => {
+      if (!value || typeof value !== "object") return;
+      const record = value as Record<string, unknown>;
+      const isBareObject =
+        record.type === "object" &&
+        record.properties === undefined &&
+        record.additionalProperties === undefined &&
+        record.$ref === undefined &&
+        record.allOf === undefined &&
+        record.oneOf === undefined &&
+        record.anyOf === undefined;
+      if (isBareObject) found.push(path);
+      for (const [key, child] of Object.entries(record)) {
+        if (key === "example") continue;
+        visit(child, `${path}.${key}`);
+      }
+    };
+
+    visit(getOpenApiDocument().paths, "paths");
+    expect(found).toEqual([]);
+  });
+});

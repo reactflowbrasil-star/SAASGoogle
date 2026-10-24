@@ -1,0 +1,298 @@
+import type { TrackingConfigurationValue } from "@/components/keywords/add/TrackingConfigurationFields";
+import type { LocationFieldValue } from "@/components/keywords/LocationField";
+import type { ActionPaymentQuote } from "@/lib/action-payment/contract";
+import type { addKeywords } from "@/lib/actions/keyword";
+import type {
+  assessResearchPaymentsAction,
+  ResearchKeywordsAction,
+  ResearchKeywordsActionInput,
+} from "@/lib/actions/keyword-research";
+import type { removeSavedKeywords, saveKeywords } from "@/lib/actions/saved-keyword";
+import { formatDateTime } from "@/lib/dates/format";
+import type { GroupedResearchRow } from "@/lib/keyword-research/grouping";
+import {
+  cacheTimeRemaining,
+  type RecentKeywordResearch,
+} from "@/lib/keyword-research/recent-searches";
+import type { KeywordResearchMode, KeywordResearchSuccess } from "@/lib/keyword-research/types";
+import { budgetDenialReason } from "@/lib/metering/budget-denial";
+import type { CheckHealth } from "@/lib/queries/check-health";
+import type { ProjectCostContext } from "@/lib/queries/cost-calculator";
+import type { getKeywordResearchPageContext } from "@/lib/queries/keyword-research";
+import type { ProjectMarketsView } from "@/lib/queries/project-markets";
+import type { ResearchScope } from "@/lib/research/scope";
+import type { SaveKeywordsInput } from "@/lib/schemas/saved-keyword";
+import { countrySeed } from "@/lib/serp/location";
+import type { ResearchEstimateView } from "./ResearchSearchCard";
+import type { ResearchState } from "./ResearchStatePanel";
+
+type PageContext = Awaited<ReturnType<typeof getKeywordResearchPageContext>>;
+
+export type ResearchWorkspaceProps = {
+  assessPaymentsAction?: typeof assessResearchPaymentsAction;
+  addKeywordsAction: typeof addKeywords;
+  canDeleteSavedKeywords: boolean;
+  checkHealth: CheckHealth;
+  context: PageContext;
+  costContext: ProjectCostContext;
+  prefill?: { locationKey?: string; seed: string };
+  projectMarkets?: ProjectMarketsView;
+  removeSavedKeywordsAction: typeof removeSavedKeywords;
+  researchAction: ResearchKeywordsAction;
+  saveKeywordsAction: typeof saveKeywords;
+};
+
+export const EMPTY_RESEARCH_ESTIMATE: ResearchEstimateView = {
+  cached: false,
+  costCents: null,
+  loading: false,
+};
+
+export type ResearchRetryPresentation =
+  | { kind: "cached" }
+  | { kind: "plain" }
+  | { costCents: number; kind: "cost" };
+
+export function researchRetryPresentation(
+  estimate: ResearchEstimateView,
+): ResearchRetryPresentation {
+  if (estimate.cached) return { kind: "cached" };
+  return estimate.costCents == null
+    ? { kind: "plain" }
+    : { costCents: estimate.costCents, kind: "cost" };
+}
+
+export function actualResearchCostCents(result: KeywordResearchSuccess) {
+  return result.sources.reduce(
+    (total, source) => total + (source.cached ? 0 : source.costCents),
+    0,
+  );
+}
+
+// Bound seed parallelism to limit provider fan-out while avoiding serialized calls.
+export const RESEARCH_SEED_CONCURRENCY = 4;
+
+// Preserve input order while bounding concurrent worker calls.
+export async function mapWithConcurrency<Item, Result>(
+  items: readonly Item[],
+  limit: number,
+  worker: (item: Item, index: number) => Promise<Result>,
+): Promise<Result[]> {
+  const results = new Array<Result>(items.length);
+  const bound = Math.max(1, Math.min(limit, items.length));
+  let cursor = 0;
+  async function runNext(): Promise<void> {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: bound }, () => runNext()));
+  return results;
+}
+
+export type UiResearchOutcome =
+  | Exclude<Awaited<ReturnType<ResearchKeywordsAction>>, { estimate: true }>
+  | { charged: boolean | null; ok: false; reason: "lookup_failed" };
+
+export type ResearchTab = {
+  connectionId?: string;
+  paymentOptionId?: string;
+  deeperEstimate?: { cached: boolean; costCents: number; payment?: ActionPaymentQuote };
+  id: string;
+  includeClickstream: boolean;
+  scope: ResearchScope;
+  mode: KeywordResearchMode;
+  outcome: UiResearchOutcome;
+  requestedLimit: 100 | 300 | 500;
+  retryEstimate?: ResearchEstimateView;
+  seed: string;
+};
+
+export function researchTabRequest(
+  tab: ResearchTab,
+  resultLimit: 100 | 300 | 500 = tab.requestedLimit,
+): Partial<ResearchKeywordsActionInput> {
+  return {
+    connectionId: tab.connectionId,
+    ...(tab.paymentOptionId ? { paymentOptionId: tab.paymentOptionId } : {}),
+    includeClickstream: tab.includeClickstream,
+    locationKey: researchScopeLocationKey(tab.scope),
+    mode: tab.mode,
+    resultLimit,
+  };
+}
+
+export function researchScopeLocationKey(scope: ResearchScope) {
+  const defaultLanguage = countrySeed(scope.countryCode)?.hl;
+  return defaultLanguage === scope.languageCode
+    ? scope.countryCode
+    : `${scope.countryCode}@${scope.languageCode}`;
+}
+
+export function researchScopeTrackingLocation(scope: ResearchScope): LocationFieldValue {
+  return {
+    canonicalKey: researchScopeLocationKey(scope),
+    cityName: null,
+    countryCode: scope.countryCode,
+    displayName: scope.countryName,
+    hl: scope.languageCode,
+    kind: "country",
+    languageCode: scope.languageCode,
+    languageLabel: scope.languageLabel,
+    regionName: null,
+  };
+}
+
+export function focusResearchSeedInput() {
+  document.getElementById("research-seed")?.focus();
+}
+
+export function markTabsTracked(tabs: readonly ResearchTab[], keywords: string[]): ResearchTab[] {
+  const added = new Set(keywords.map((item) => item.trim().toLowerCase()));
+  return tabs.map((tab) =>
+    tab.outcome.ok
+      ? {
+          ...tab,
+          outcome: {
+            ...tab.outcome,
+            rows: tab.outcome.rows.map((row) =>
+              added.has(row.keyword.trim().toLowerCase()) ? { ...row, alreadyTracked: true } : row,
+            ),
+          },
+        }
+      : tab,
+  );
+}
+
+export function markTabsSaved(
+  tabs: readonly ResearchTab[],
+  keywords: string[],
+  alreadySaved: boolean,
+): ResearchTab[] {
+  const saved = new Set(keywords.map(researchKeywordIdentity));
+  return tabs.map((tab) =>
+    tab.outcome.ok
+      ? {
+          ...tab,
+          outcome: {
+            ...tab.outcome,
+            rows: tab.outcome.rows.map((row) =>
+              saved.has(researchKeywordIdentity(row.keyword)) ? { ...row, alreadySaved } : row,
+            ),
+          },
+        }
+      : tab,
+  );
+}
+
+export function researchKeywordIdentity(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+export function recentSearchReplay(
+  search: RecentKeywordResearch,
+  selectedConnectionId: string,
+  eligibleConnectionIds: readonly string[],
+  now = new Date(),
+) {
+  const eligible = new Set(eligibleConnectionIds);
+  const connectionId = eligible.has(search.connectionId ?? "")
+    ? search.connectionId
+    : eligible.has(selectedConnectionId)
+      ? selectedConnectionId
+      : eligibleConnectionIds[0];
+  return {
+    cached: cacheTimeRemaining(search.cachedUntil, now) > 0,
+    connectionId,
+    overrides: {
+      connectionId,
+      fresh: false,
+      includeClickstream: search.includeClickstream,
+      mode: search.mode,
+      resultLimit: search.resultLimit,
+    } satisfies Partial<ResearchKeywordsActionInput>,
+  };
+}
+
+export type ResearchAddDraft = TrackingConfigurationValue & {
+  keywords: string[];
+};
+
+export type ResearchSaveDraft = {
+  location: string;
+  rows: GroupedResearchRow[];
+  sourceSeed: string;
+};
+
+export function researchSaveInput(projectId: string, draft: ResearchSaveDraft): SaveKeywordsInput {
+  return {
+    projectId,
+    rows: draft.rows.map((row) => ({
+      cpcCents: row.cpcCents,
+      difficulty: row.difficulty,
+      intent: row.intent,
+      keyword: row.keyword,
+      location: draft.location,
+      monthlyTrend: row.monthlyTrend,
+      searchVolume: row.searchVolume,
+      sourceSeed: draft.sourceSeed,
+      variantCount: Math.max(0, row.variants.length - 1),
+    })),
+  };
+}
+
+export function researchFailureState(
+  outcome: Exclude<UiResearchOutcome, KeywordResearchSuccess>,
+): ResearchState {
+  if (outcome.reason === "wallet_budget_exhausted") return "wallet_budget_exhausted";
+  if (outcome.reason === "budget_exhausted")
+    return budgetDenialReason(outcome) ?? "budget_exhausted";
+  if (outcome.reason === "account_restricted") return "account_restricted";
+  if (outcome.reason === "needs_reauth") return "needs_reauth";
+  if (outcome.reason === "no_source") return "no_provider";
+  if (outcome.reason === "unsupported_location") return "unsupported_location";
+  return "lookup_failed";
+}
+
+function zonedParts(value: Date, timezone: string) {
+  const [key, clock = "00:00"] = formatDateTime(value, "iso", timezone).split(", ");
+  const [year, month, day] = key.split("-").map(Number);
+  const [hour, minute] = clock.split(":").map(Number);
+  return {
+    day,
+    hour,
+    minute,
+    month,
+    second: 0,
+    year,
+  };
+}
+
+function zonedMonthStart(year: number, month: number, timezone: string) {
+  const target = Date.UTC(year, month - 1, 1);
+  let instant = target;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const observed = zonedParts(new Date(instant), timezone);
+    const observedAsUtc = Date.UTC(
+      observed.year,
+      observed.month - 1,
+      observed.day,
+      observed.hour,
+      observed.minute,
+      observed.second,
+    );
+    instant += target - observedAsUtc;
+  }
+  return new Date(instant);
+}
+
+export function nextBudgetResetAt(timezone: string, now = new Date()) {
+  const localNow = zonedParts(now, timezone);
+  const reset =
+    localNow.month === 12
+      ? zonedMonthStart(localNow.year + 1, 1, timezone)
+      : zonedMonthStart(localNow.year, localNow.month + 1, timezone);
+  return reset;
+}

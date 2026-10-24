@@ -1,0 +1,184 @@
+"use client";
+
+import { type ConfirmKind, ConfirmModal } from "@/components/ui/ConfirmModal";
+import { Menu } from "@/components/ui/Menu";
+import { MenuItem } from "@/components/ui/MenuItem";
+import { Tooltip } from "@/components/ui/Tooltip";
+import { UI_RADIUS_ROLES } from "@/lib/ui/design-role-tokens";
+import { menuItemRowHoverStyle } from "@/lib/ui/menu-item-row-styles";
+import { DotsThreeIcon as DotsThree } from "@phosphor-icons/react/dist/csr/DotsThree";
+import { useTranslations } from "next-intl";
+import { useState } from "react";
+
+export type AssignableTeamRole = "admin" | "member" | "viewer";
+
+export type TeamMemberRoleOption = {
+  label: string;
+  secondary: string;
+  value: AssignableTeamRole;
+};
+
+type TeamMemberActionsMenuProps = {
+  canChangeRole: boolean;
+  canRemove: boolean;
+  canTransferOwnership: boolean;
+  hasAuditAccess: boolean;
+  memberName: string;
+  onChangeRole: (role: AssignableTeamRole) => void;
+  onRemove: () => void;
+  onTransferOwnership: () => void;
+  pending: boolean;
+  roleOptions: readonly TeamMemberRoleOption[];
+};
+
+type MenuView = "actions" | "roles";
+
+const memberMenuPaperStyle = {
+  backgroundColor: "var(--color-bg-elev)",
+  border: "1px solid var(--color-border)",
+  borderRadius: UI_RADIUS_ROLES.card,
+  boxShadow: "none",
+  color: "var(--color-fg)",
+  marginTop: "6px",
+  minWidth: 196,
+  padding: "6px",
+};
+
+const memberMenuRowStyle = {
+  borderRadius: UI_RADIUS_ROLES.control,
+  fontSize: "12.5px",
+  minHeight: 34,
+  ...menuItemRowHoverStyle,
+};
+
+export function TeamMemberActionsMenu({
+  canChangeRole,
+  canRemove,
+  canTransferOwnership,
+  hasAuditAccess,
+  memberName,
+  onChangeRole,
+  onRemove,
+  onTransferOwnership,
+  pending,
+  roleOptions,
+}: Readonly<TeamMemberActionsMenuProps>) {
+  const t = useTranslations("projectSettingsTeam.memberActions");
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const [confirmation, setConfirmation] = useState<Extract<
+    ConfirmKind,
+    "removeTeamMember" | "transferProjectOwnership"
+  > | null>(null);
+  const [view, setView] = useState<MenuView>("actions");
+  const open = Boolean(anchor);
+
+  function closeMenu() {
+    setAnchor(null);
+    setView("actions");
+  }
+
+  function requestConfirmation(
+    kind: Extract<ConfirmKind, "removeTeamMember" | "transferProjectOwnership">,
+  ) {
+    closeMenu();
+    setConfirmation(kind);
+  }
+
+  function confirmAction() {
+    const action = confirmation;
+    setConfirmation(null);
+    if (action === "transferProjectOwnership") onTransferOwnership();
+    if (action === "removeTeamMember") onRemove();
+  }
+
+  return (
+    <>
+      <Tooltip content={t("actionsFor", { name: memberName })}>
+        <button
+          aria-expanded={open}
+          aria-haspopup="menu"
+          aria-label={t("actionsFor", { name: memberName })}
+          className="grid h-[30px] w-[30px] place-items-center rounded-control border border-border-control bg-bg-elev text-fg-muted hover:border-accent hover:text-accent-text disabled:cursor-wait disabled:opacity-60"
+          disabled={pending}
+          onClick={(event) => setAnchor(event.currentTarget)}
+          type="button"
+        >
+          <DotsThree aria-hidden size={16} weight="regular" />
+        </button>
+      </Tooltip>
+      <Menu
+        anchorEl={anchor}
+        onClose={closeMenu}
+        open={open}
+        listProps={{ "aria-label": t("actionsFor", { name: memberName }), style: { padding: 0 } }}
+        contentProps={{ style: memberMenuPaperStyle }}
+      >
+        {view === "actions"
+          ? [
+              hasAuditAccess ? (
+                <li
+                  className="px-3 pb-1 pt-2 text-[11.5px] leading-5 text-fg-muted"
+                  key="audit-explanation"
+                >
+                  {t("auditExplanation")}
+                </li>
+              ) : null,
+              canChangeRole ? (
+                <MenuItem
+                  key="change-role"
+                  onClick={() => setView("roles")}
+                  style={memberMenuRowStyle}
+                >
+                  {t("changeRole")}
+                </MenuItem>
+              ) : null,
+              canTransferOwnership ? (
+                <MenuItem
+                  key="transfer-ownership"
+                  onClick={() => requestConfirmation("transferProjectOwnership")}
+                  style={memberMenuRowStyle}
+                >
+                  {t("transferOwnership")}
+                </MenuItem>
+              ) : null,
+              canRemove ? (
+                <MenuItem
+                  key="remove-member"
+                  onClick={() => requestConfirmation("removeTeamMember")}
+                  style={memberMenuRowStyle}
+                >
+                  {t("removeFromProject")}
+                </MenuItem>
+              ) : null,
+            ]
+          : [
+              <MenuItem key="back" onClick={() => setView("actions")} style={memberMenuRowStyle}>
+                {t("backToActions")}
+              </MenuItem>,
+              ...roleOptions.map((role) => (
+                <MenuItem
+                  key={role.value}
+                  onClick={() => {
+                    closeMenu();
+                    onChangeRole(role.value);
+                  }}
+                  style={memberMenuRowStyle}
+                >
+                  <span className="flex min-w-0 flex-col">
+                    <span>{role.label}</span>
+                    <span className="text-[11px] text-fg-muted">{role.secondary}</span>
+                  </span>
+                </MenuItem>
+              )),
+            ]}
+      </Menu>
+      <ConfirmModal
+        kind={confirmation ?? "removeTeamMember"}
+        onClose={() => setConfirmation(null)}
+        onConfirm={confirmAction}
+        open={confirmation != null}
+        showConfirmationToast={false}
+      />
+    </>
+  );
+}

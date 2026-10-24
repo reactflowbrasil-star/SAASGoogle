@@ -1,0 +1,235 @@
+---
+title: "SDK method reference"
+description: "Map common bisibility workflows to Python, TypeScript, Go, and MCP method names."
+---
+
+Use this page to find the language-level method or MCP tool for a common
+workflow. The SDK source packages remain the complete reference for exported
+methods, options, and types.
+
+| Workflow | Python | TypeScript | Go | MCP tool |
+| - | - | - | - | - |
+| List projects | `list_projects` | `listProjects` | `ListProjects` | `list_projects` |
+| Create a project | `create_project` | `createProject` | `CreateProject` | `create_project` |
+| Add keywords | `create_keywords` | `addKeywords` | `CreateKeywords` | `add_keywords` |
+| Run a rank check | `run_rank_check` | `runRankCheck` | `RunRankCheck` | `run_rank_check` |
+| Read a rank-check result | `get_rank_check_result` | `getRankCheckResult` | `GetRankCheckResult` | `get_rank_check_result` |
+
+Creating a project requires a personal access token. Project API keys can use
+the project-scoped methods in the remaining rows.
+
+The TypeScript SDK prefers resource namespaces such as `projects.list()`. The
+table lists the current method names, including the deprecated flat
+compatibility form still used by the longer repository examples.
+
+For version-specific Domain Overview methods and Python project creation, see
+[released client support](/compatibility).
+
+## AI Tracking methods
+
+Use these methods to configure tracking, inspect retained evidence and review model-generated
+prompt hypotheses. REST, Python, TypeScript, Go and MCP preserve the same project scope,
+prompt revisions and cost provenance. See the [dashboard workflow](/guides/ai-tracking)
+and [API contract](/api/ai-tracking) for the complete review and consent flow.
+
+| Source operation | Python | TypeScript | Go | MCP tool |
+| - | - | - | - | - |
+| get AI research Catalog | `get_ai_research_catalog` | `getAiResearchCatalog` | `GetAIResearchCatalog` | `get_ai_research_catalog` |
+| list AI tracking Topics | `list_ai_tracking_topics` | `listAiTrackingTopics` | `ListAITrackingTopics` | `list_ai_tracking_topics` |
+| create AI tracking Topic | `create_ai_tracking_topic` | `createAiTrackingTopic` | `CreateAITrackingTopic` | `create_ai_tracking_topic` |
+| update AI tracking Topic | `update_ai_tracking_topic` | `updateAiTrackingTopic` | `UpdateAITrackingTopic` | `update_ai_tracking_topic` |
+| archive AI tracking Topic | `archive_ai_tracking_topic` | `archiveAiTrackingTopic` | `ArchiveAITrackingTopic` | `archive_ai_tracking_topic` |
+| list AI tracking Prompts | `list_ai_tracking_prompts` | `listAiTrackingPrompts` | `ListAITrackingPrompts` | `list_ai_tracking_prompts` |
+| create AI tracking Prompt | `create_ai_tracking_prompt` | `createAiTrackingPrompt` | `CreateAITrackingPrompt` | `create_ai_tracking_prompt` |
+| update AI tracking Prompt | `update_ai_tracking_prompt` | `updateAiTrackingPrompt` | `UpdateAITrackingPrompt` | `update_ai_tracking_prompt` |
+| archive AI tracking Prompt | `archive_ai_tracking_prompt` | `archiveAiTrackingPrompt` | `ArchiveAITrackingPrompt` | `archive_ai_tracking_prompt` |
+| list AI tracking Schedules | `list_ai_tracking_schedules` | `listAiTrackingSchedules` | `ListAITrackingSchedules` | `list_ai_tracking_schedules` |
+| create AI tracking Schedule | `create_ai_tracking_schedule` | `createAiTrackingSchedule` | `CreateAITrackingSchedule` | `create_ai_tracking_schedule` |
+| update AI tracking Schedule | `update_ai_tracking_schedule` | `updateAiTrackingSchedule` | `UpdateAITrackingSchedule` | `update_ai_tracking_schedule` |
+| archive AI tracking Schedule | `archive_ai_tracking_schedule` | `archiveAiTrackingSchedule` | `ArchiveAITrackingSchedule` | `archive_ai_tracking_schedule` |
+| preview AI tracking Run | `preview_ai_tracking_run` | `previewAiTrackingRun` | `PreviewAITrackingRun` | `preview_ai_tracking_run` |
+| create AI tracking Run | `create_ai_tracking_run` | `createAiTrackingRun` | `CreateAITrackingRun` | `create_ai_tracking_run` |
+| list AI tracking Runs | `list_ai_tracking_runs` | `listAiTrackingRuns` | `ListAITrackingRuns` | `list_ai_tracking_runs` |
+| get AI tracking Run | `get_ai_tracking_run` | `getAiTrackingRun` | `GetAITrackingRun` | `get_ai_tracking_run` |
+| list AI tracking Samples | `list_ai_tracking_samples` | `listAiTrackingSamples` | `ListAITrackingSamples` | `list_ai_tracking_samples` |
+| cancel AI tracking Run | `cancel_ai_tracking_run` | `cancelAiTrackingRun` | `CancelAITrackingRun` | `cancel_ai_tracking_run` |
+| retry AI tracking Run | `retry_ai_tracking_run` | `retryAiTrackingRun` | `RetryAITrackingRun` | `retry_ai_tracking_run` |
+| get AI tracking History | `get_ai_tracking_history` | `getAiTrackingHistory` | `GetAITrackingHistory` | `get_ai_tracking_history` |
+| get AI tracking Trends | `get_ai_tracking_trends` | `getAiTrackingTrends` | `GetAITrackingTrends` | `get_ai_tracking_trends` |
+| export AI tracking Evidence | `export_ai_tracking_evidence` | `exportAiTrackingEvidence` | `ExportAITrackingEvidence` | `export_ai_tracking_evidence` |
+| suggest AI tracking Prompts | `suggest_ai_tracking_prompts` | `suggestAiTrackingPrompts` | `SuggestAITrackingPrompts` | `suggest_ai_tracking_prompts` |
+| accept AI tracking Suggestions | `accept_ai_tracking_suggestions` | `acceptAiTrackingSuggestions` | `AcceptAITrackingSuggestions` | `accept_ai_tracking_suggestions` |
+| Preview AI prompt generation | `ai_tracking_suggestions_preview` | `aiTrackingSuggestionsPreview` | `AITrackingSuggestionsPreview` | `ai_tracking_suggestions_preview` |
+| Generate AI prompt hypotheses | `ai_tracking_suggestions_generate` | `aiTrackingSuggestionsGenerate` | `AITrackingSuggestionsGenerate` | `ai_tracking_suggestions_generate` |
+
+Tracking previews never submit paid provider work. Launch and retry require explicit consent,
+reviewed preview revisions, and a stable retry key. Export returns bounded JSON evidence with
+completeness and continuation metadata by default; select CSV explicitly. Suggestions read saved project context and competitors, remain
+editable hypotheses, and require acceptance before saving. Unknown costs stay null decimal USD
+amounts, and cached observations keep their original timestamps.
+
+Model generation first freezes the complete reviewed context, selected competitors, model and
+market. Generation requires that unexpired preview, explicit paid consent and a stable UUID
+retry header. The forecast is not a guaranteed maximum. Edited hypotheses retain a verified
+generation and draft reference; provider dataset prompts require a verified stored report row.
+
+## Client pages
+
+- [Python SDK](/sdks/python)
+- [TypeScript SDK](/sdks/typescript)
+- [Go SDK](/sdks/go)
+- [MCP server](/sdks/mcp)
+
+Use the **API Reference** tab when you need the underlying HTTP route, payload
+fields, status codes, or response shape.
+
+## MCP tool index
+
+{/* Generated from the application's canonical MCP contract. */}
+
+These tools describe the application contract in this documentation snapshot.
+The separately published MCP package is versioned independently; see
+[released client support](/compatibility) for inspected package versions.
+
+| Tool | Title |
+| - | - |
+| `get_session_profile` | Get session profile |
+| `get_health` | Get API health |
+| `get_capabilities` | Get API capabilities |
+| `get_cloud_import_compatibility` | Get cloud import compatibility |
+| `get_provider_rates` | Get provider rates |
+| `get_cost_estimate` | Get cost estimate |
+| `get_me` | Get authenticated user |
+| `update_me` | Update authenticated user |
+| `list_projects` | List projects |
+| `create_project` | Create project |
+| `get_project` | Get project |
+| `search_locations` | Search locations |
+| `update_project` | Update project |
+| `delete_project` | Delete project |
+| `get_project_defaults` | Get project defaults |
+| `preview_project_defaults` | Preview project defaults |
+| `update_project_defaults` | Update project defaults |
+| `list_keywords` | List project keywords |
+| `list_ranked_keyword_suggestions` | List ranked keyword suggestions |
+| `research_keywords` | Research keywords |
+| `estimate_keyword_research_cost` | Estimate keyword research cost |
+| `analyze_backlinks` | Analyze backlinks |
+| `estimate_backlinks_cost` | Estimate backlinks cost |
+| `load_more_backlink_rows` | Load more backlink rows |
+| `analyze_domain_overview` | Analyze domain overview |
+| `estimate_domain_overview_cost` | Estimate domain overview cost |
+| `load_domain_overview_history` | Load domain overview history |
+| `load_domain_overview_keywords` | Load domain overview keywords |
+| `load_domain_overview_pages` | Load domain overview pages |
+| `get_keyword_metrics` | Get keyword metrics |
+| `add_keywords` | Add keywords |
+| `get_keyword` | Get keyword |
+| `update_keyword` | Update keyword |
+| `set_keyword_target_url` | Set keyword target URL |
+| `delete_keyword` | Delete keyword |
+| `bulk_update_keywords` | Bulk update keywords |
+| `run_rank_check` | Run rank check |
+| `get_rank_history` | Get rank history |
+| `export_rank_history` | Export project rank history |
+| `list_local_monitor_runs` | List local monitor runs |
+| `get_local_monitor_run_results` | Get local monitor run results |
+| `list_local_monitor_point_listings` | List local monitor point listings |
+| `list_local_monitor_point_history` | List local monitor point history |
+| `export_local_monitor_run` | Export local monitor run |
+| `list_rank_check_runs` | List retained rank-check runs |
+| `get_rank_check_run` | Get retained rank-check run |
+| `list_sitemap_monitors` | List sitemap monitors |
+| `enable_sitemap_monitor` | Enable sitemap monitor |
+| `disable_sitemap_monitor` | Disable sitemap monitor |
+| `get_rank_check_result` | Get rank check result |
+| `create_signal` | Create signal |
+| `list_signals` | List signals |
+| `list_traffic_snapshots` | List traffic snapshots |
+| `list_search_performance_query_stats` | List search-performance query stats |
+| `sync_project_traffic` | Synchronize project traffic |
+| `list_api_keys` | List API keys |
+| `create_api_key` | Create API key |
+| `revoke_api_key` | Revoke API key |
+| `list_project_api_keys` | List project API keys |
+| `create_project_api_key` | Create project API key |
+| `list_personal_tokens` | List personal tokens |
+| `create_personal_token` | Create personal token |
+| `revoke_personal_token` | Revoke personal token |
+| `list_webhooks` | List webhooks |
+| `create_webhook` | Create webhook |
+| `update_webhook` | Update webhook |
+| `delete_webhook` | Delete webhook |
+| `list_alert_rules` | List alert rules |
+| `create_alert_rule` | Create alert rule |
+| `update_alert_rule` | Update alert rule |
+| `delete_alert_rule` | Delete alert rule |
+| `list_triggered_alerts` | List triggered alerts |
+| `mute_triggered_alert` | Mute triggered alert |
+| `mark_project_alerts_read` | Mark project alerts read |
+| `list_team_members` | List team members |
+| `list_team_invites` | List team invites |
+| `create_team_invite` | Create team invite |
+| `revoke_team_invite` | Revoke team invite |
+| `resend_team_invite` | Resend team invite |
+| `update_team_member_role` | Update team member role |
+| `remove_team_member` | Remove team member |
+| `list_providers` | List providers |
+| `connect_provider` | Connect provider |
+| `test_provider_connection` | Test provider connection |
+| `update_provider_settings` | Update provider settings |
+| `set_provider_enabled` | Set provider enabled |
+| `set_provider_priority` | Set provider priority |
+| `set_primary_provider` | Set primary provider |
+| `disconnect_provider` | Disconnect provider |
+| `list_saved_keywords` | List saved keywords |
+| `create_saved_keywords` | Create saved keywords |
+| `delete_saved_keyword` | Delete saved keyword |
+| `list_saved_views` | List saved views |
+| `create_saved_view` | Create saved view |
+| `delete_saved_view` | Delete saved view |
+| `list_competitors` | List competitors |
+| `add_competitor` | Add competitor |
+| `remove_competitor` | Remove competitor |
+| `get_notification_preferences` | Get notification preferences |
+| `update_notification_preferences` | Update notification preferences |
+| `list_migration_tokens` | List migration tokens |
+| `mint_migration_token` | Mint migration token |
+| `revoke_migration_token` | Revoke migration token |
+| `get_project_context` | Get project context |
+| `update_project_context` | Update project context |
+| `list_agent_reports` | List agent reports |
+| `create_agent_report` | Create agent report |
+| `get_agent_report` | Get agent report |
+| `analyze_ai_visibility` | Analyze AI visibility |
+| `get_ai_research_catalog` | Get AI research catalog |
+| `compare_ai_prompts` | Compare AI prompts |
+| `run_site_audit` | Run site audit |
+| `list_site_audits` | List site audits |
+| `get_site_audit` | Get site audit |
+| `list_ai_tracking_topics` | List ai tracking topics |
+| `create_ai_tracking_topic` | Create ai tracking topic |
+| `update_ai_tracking_topic` | Update ai tracking topic |
+| `archive_ai_tracking_topic` | Archive ai tracking topic |
+| `list_ai_tracking_prompts` | List ai tracking prompts |
+| `create_ai_tracking_prompt` | Create ai tracking prompt |
+| `update_ai_tracking_prompt` | Update ai tracking prompt |
+| `archive_ai_tracking_prompt` | Archive ai tracking prompt |
+| `list_ai_tracking_schedules` | List ai tracking schedules |
+| `create_ai_tracking_schedule` | Create ai tracking schedule |
+| `update_ai_tracking_schedule` | Update ai tracking schedule |
+| `archive_ai_tracking_schedule` | Archive ai tracking schedule |
+| `preview_ai_tracking_run` | Preview ai tracking run |
+| `create_ai_tracking_run` | Create ai tracking run |
+| `list_ai_tracking_runs` | List ai tracking runs |
+| `get_ai_tracking_run` | Get ai tracking run |
+| `list_ai_tracking_samples` | List ai tracking samples |
+| `cancel_ai_tracking_run` | Cancel ai tracking run |
+| `retry_ai_tracking_run` | Retry ai tracking run |
+| `get_ai_tracking_history` | Get ai tracking history |
+| `get_ai_tracking_trends` | Get ai tracking trends |
+| `export_ai_tracking_evidence` | Export ai tracking evidence |
+| `suggest_ai_tracking_prompts` | Suggest ai tracking prompts |
+| `accept_ai_tracking_suggestions` | Accept ai tracking suggestions |
+| `ai_tracking_suggestions_preview` | Preview AI prompt model generation |
+| `ai_tracking_suggestions_generate` | Generate AI prompt hypotheses |

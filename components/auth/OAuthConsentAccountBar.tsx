@@ -1,0 +1,68 @@
+"use client";
+
+import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/Button";
+import { authClient } from "@/lib/auth/client";
+import { notifyAuthenticatedSessionEnd } from "@/lib/auth/session-end";
+import { useTranslations } from "next-intl";
+import { useState } from "react";
+
+type OAuthConsentAccountBarProps = {
+  avatarUrl?: string | null;
+  email: string;
+  initials: string;
+};
+
+export function OAuthConsentAccountBar({
+  avatarUrl,
+  email,
+  initials,
+}: Readonly<OAuthConsentAccountBarProps>) {
+  const t = useTranslations("auth.oauthConsent");
+  const [switching, setSwitching] = useState(false);
+
+  async function switchAccount() {
+    setSwitching(true);
+    try {
+      await authClient.signOut();
+      notifyAuthenticatedSessionEnd();
+      window.location.reload();
+    } finally {
+      setSwitching(false);
+    }
+  }
+
+  return (
+    <div className="mb-2.5 flex items-center rounded-control border border-border bg-bg-elev px-3 py-2">
+      <Avatar
+        alt=""
+        className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-full bg-accent-soft text-[11px] font-semibold text-accent-text"
+        initials={initials}
+        src={avatarUrl}
+      />
+      <p className="ml-2.5 mr-3 min-w-0 flex-1 break-words text-[12.5px] [overflow-wrap:anywhere] text-fg-muted">
+        {t.rich("approvingAs", {
+          email,
+          strong: (chunks) => <strong className="font-semibold text-fg">{chunks}</strong>,
+        })}
+      </p>
+      <Button
+        className="shrink-0"
+        loading={switching}
+        loadingLabel={t("switching")}
+        onClick={() => void switchAccount()}
+        size="xs"
+        style={{
+          minWidth: 0,
+          paddingInline: "4px",
+          "--control-text-decoration": "underline",
+          "--control-text-underline-offset": "2px",
+        }}
+        type="button"
+        variant="ghost"
+      >
+        {t("switchAccount")}
+      </Button>
+    </div>
+  );
+}

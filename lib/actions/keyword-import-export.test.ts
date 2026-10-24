@@ -1,0 +1,464 @@
+import { parseCsvKeywords } from "@/lib/keywords/add-keyword-drawer-shared";
+import ExcelJS from "exceljs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  type KeywordExportColumn,
+  type KeywordExportOptions,
+  type KeywordExportRow,
+  keywordExportColumns,
+  keywordExportOptions,
+  keywordExportTable,
+  keywordImportKey,
+  parseKeywordImportCsv,
+  serializeCsv,
+  serializeKeywordExportCsv,
+  serializeKeywordExportXlsx,
+} from "./keyword-import-export-helpers";
+import { keywordExportJson } from "./keyword-import-export-json";
+
+const FIXED_NOW = new Date("2026-07-20T12:00:00.000Z");
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function daysBeforeFixedNow(days: number) {
+  return new Date(FIXED_NOW.getTime() - days * DAY_MS);
+}
+
+function exportOptions(patch: Partial<KeywordExportOptions> = {}): KeywordExportOptions {
+  const columns = Object.fromEntries(
+    keywordExportColumns.map((column) => [column, true]),
+  ) as Record<KeywordExportColumn, boolean>;
+  return {
+    columns,
+    granularity: "daily",
+    range: "all",
+    scope: "current",
+    ...patch,
+  };
+}
+
+function keywordFixture(): KeywordExportRow {
+  return {
+    createdAt: daysBeforeFixedNow(49),
+    device: "desktop",
+    location: "United States",
+    publicId: "kw_1",
+    rankChecks: [
+      {
+        checkedAt: daysBeforeFixedNow(1),
+        normalizationVersion: "v1",
+        position: 3,
+        previousPosition: 7,
+        provider: "dataforseo",
+        rankingUrl: "https://example.com/rank,tracker",
+        requestedDepth: 100,
+      },
+      {
+        checkedAt: daysBeforeFixedNow(2),
+        normalizationVersion: "v1",
+        position: 4,
+        previousPosition: 6,
+        provider: "serpapi",
+        rankingUrl: "https://example.com/older",
+        requestedDepth: 100,
+      },
+    ],
+    tags: [{ tag: { name: "core, seo" } }, { tag: { name: "product" } }],
+    targetUrl: "/rank",
+    text: 'rank "tracker"',
+    topic: "Product",
+    intent: "commercial",
+  };
+}
+
+describe("keyword import/export CSV helpers", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(FIXED_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("parses quoted CSV rows, headers, defaults, and validation errors", () => {
+    const result = parseKeywordImportCsv(`keyword,target_url,tags,country,device,topic,intent\r
+"rank, tracker",/rank,"core; seo",US,desktop,Product,commercial\r
+"quote ""test""",,tag,GB,mobile\r
+bad,not a url,tag,US,desktop`);
+
+    expect(result.received).toBe(3);
+    expect(result.errors).toEqual([
+      { message: "Target URL must be an absolute URL or a path.", row: 4 },
+    ]);
+    expect(result.parsed).toMatchObject([
+      {
+        device: "desktop",
+        keyword: "rank, tracker",
+        location: "United States",
+        locationKey: "US",
+        row: 2,
+        tags: ["core", "seo"],
+        targetUrl: "/rank",
+        topic: "Product",
+        intent: "commercial",
+      },
+      {
+        device: "mobile",
+        keyword: 'quote "test"',
+        location: "United Kingdom",
+        locationKey: "GB",
+        row: 3,
+        tags: ["tag"],
+      },
+    ]);
+  });
+
+  it("parses headerless keyword-only CSV with add keyword defaults", () => {
+    const result = parseKeywordImportCsv("first keyword\nsecond keyword");
+
+    expect(result.errors).toEqual([]);
+    expect(result.parsed).toMatchObject([
+      { device: "desktop", keyword: "first keyword", location: "United States", locationKey: "US" },
+      {
+        device: "desktop",
+        keyword: "second keyword",
+        location: "United States",
+        locationKey: "US",
+      },
+    ]);
+  });
+
+  it("lets row city and location key values override import defaults", () => {
+    const result = parseKeywordImportCsv(
+      [
+        "keyword,country,city,location_key,device",
+        "key row,,London,GB/England/London,mobile",
+        "city row,,Austin,,desktop",
+        "country row,United Kingdom,,,desktop",
+        "default row,,,,desktop",
+      ].join("\n"),
+      {
+        city: "New York",
+        country: "United States",
+        device: "desktop",
+        locationKey: "US/New York/New York",
+      },
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.parsed).toMatchObject([
+      {
+        city: "London",
+        keyword: "key row",
+        location: "United States",
+        locationKey: "GB/England/London",
+      },
+      { city: "Austin", keyword: "city row", location: "United States" },
+      { city: null, keyword: "country row", location: "United Kingdom", locationKey: "GB" },
+      {
+        city: "New York",
+        keyword: "default row",
+        location: "United States",
+        locationKey: "US/New York/New York",
+      },
+    ]);
+    expect(result.parsed[1]?.locationKey).toBeUndefined();
+  });
+
+  it("qualifies each CSV country with its language while location_key wins", () => {
+    const result = parseKeywordImportCsv(
+      [
+        "keyword,country,city,language,location_key,device",
+        "spanish row,ES,,es,,desktop",
+        "english city row,ES,Malaga,en,,mobile",
+        "qualified city row,,,en,ES/Andalusia/Malaga,desktop",
+        "explicit row,US,,es,GB@en,desktop",
+      ].join("\n"),
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.parsed).toMatchObject([
+      { keyword: "spanish row", language: "es", locationKey: "ES@es" },
+      {
+        city: "Malaga",
+        keyword: "english city row",
+        language: "en",
+      },
+      {
+        keyword: "qualified city row",
+        language: "en",
+        locationKey: "ES/Andalusia/Malaga@en",
+      },
+      { keyword: "explicit row", language: "es", locationKey: "GB@en" },
+    ]);
+    expect(result.parsed[1]?.locationKey).toBeUndefined();
+    expect(result.parsed[2]).toMatchObject({ locationKeyIsExplicit: true });
+  });
+
+  it("translates legacy country aliases into canonical location keys", () => {
+    const result = parseKeywordImportCsv(
+      "keyword,country,city,language,device\nalias row,España,Malaga,en,desktop",
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.parsed).toMatchObject([
+      {
+        city: "Malaga",
+        keyword: "alias row",
+        language: "en",
+      },
+    ]);
+    expect(result.parsed[0]?.locationKey).toBeUndefined();
+  });
+
+  it("keeps the project default city when a row overrides only language", () => {
+    const result = parseKeywordImportCsv("keyword,language,device\ncity default,es,desktop", {
+      city: "New York",
+      country: "United States",
+      device: "desktop",
+      locationKey: "US/New York/New York",
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.parsed).toMatchObject([
+      {
+        city: "New York",
+        keyword: "city default",
+        language: "es",
+        locationKey: "US/New York/New York@es",
+      },
+    ]);
+  });
+
+  it("replaces the default key language suffix without dropping its city path", () => {
+    const result = parseKeywordImportCsv("keyword,language,device\ncity default,es,desktop", {
+      city: "Malaga",
+      country: "Spain",
+      device: "desktop",
+      locationKey: "ES/Andalusia/Malaga@en",
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.parsed).toMatchObject([
+      {
+        city: "Malaga",
+        keyword: "city default",
+        language: "es",
+        locationKey: "ES/Andalusia/Malaga@es",
+      },
+    ]);
+  });
+
+  it("keeps canonical and legacy selections separate in duplicate keys", () => {
+    const row = { device: "desktop" as const, keyword: "rank tracker", location: "United Kingdom" };
+
+    expect(keywordImportKey(row)).not.toBe(keywordImportKey({ ...row, locationKey: "GB" }));
+    expect(keywordImportKey(row)).toBe(keywordImportKey({ ...row, location: "GB" }));
+  });
+
+  it("uses city in duplicate keys only when no canonical location key exists", () => {
+    const row = { device: "desktop" as const, keyword: "rank tracker", location: "United States" };
+
+    expect(keywordImportKey({ ...row, city: "Austin" })).not.toBe(
+      keywordImportKey({ ...row, city: "Dallas" }),
+    );
+    expect(keywordImportKey({ ...row, city: "Austin", locationKey: "US" })).toBe(
+      keywordImportKey({ ...row, city: "Dallas", locationKey: "US" }),
+    );
+  });
+
+  it("normalizes custom location whitespace and reports malformed quoted CSV", () => {
+    expect(
+      keywordImportKey({
+        device: "desktop",
+        keyword: "rank tracker",
+        location: "  Custom   Market  ",
+      }),
+    ).toContain("Custom Market");
+    expect(parseKeywordImportCsv('keyword\n"unterminated')).toMatchObject({
+      errors: [{ message: expect.stringContaining("closing quote"), row: 2 }],
+      parsed: [],
+      received: 0,
+    });
+  });
+
+  it.each([
+    [
+      "standard header",
+      "keyword,target_url,tags,country,device\nrank tracker,/rank,Core,US,desktop",
+      ["rank tracker"],
+    ],
+    ["headerless rows", "rank tracker\nmobile serp", ["rank tracker", "mobile serp"]],
+    [
+      "reordered columns",
+      "target_url,keyword,tags,country,device\n/rank,rank tracker,Core,US,desktop",
+      ["rank tracker"],
+    ],
+    [
+      "keyword header outside first column",
+      "target_url,tags,keyword,country,device\n/rank,Core,rank tracker,US,desktop\n/mobile,Product,mobile serp,GB,mobile",
+      ["rank tracker", "mobile serp"],
+    ],
+  ])("matches client and server import counts for %s", (_name, csv, expectedKeywords) => {
+    const clientKeywords = parseCsvKeywords(csv);
+    const serverResult = parseKeywordImportCsv(csv);
+
+    expect(clientKeywords).toEqual(expectedKeywords);
+    expect(serverResult.errors).toEqual([]);
+    expect(clientKeywords).toHaveLength(serverResult.received);
+    expect(clientKeywords).toHaveLength(serverResult.parsed.length);
+  });
+
+  it("serializes CSV cells with quotes, commas, and newlines", () => {
+    const csv = serializeCsv(
+      ["keyword", "note"],
+      [{ keyword: 'rank "tracker"', note: "line one\nline,two" }],
+    );
+
+    expect(csv).toBe('keyword,note\n"rank ""tracker""","line one\nline,two"');
+  });
+
+  it("normalizes export options and serializes supported primitive values", () => {
+    const options = keywordExportOptions({
+      columns: { url: true },
+      granularity: "weekly",
+      range: "30",
+      scope: "current",
+    });
+    expect(options.columns).toMatchObject({ tags: false, url: true });
+    const named = function namedFunction() {};
+    const csv = serializeCsv(
+      ["nil", "date", "object", "fn", "symbol", "bool", "number", "bigint"],
+      [
+        {
+          bigint: 42n,
+          bool: true,
+          date: new Date("2026-07-01T00:00:00.000Z"),
+          fn: named,
+          nil: null,
+          number: 12.5,
+          object: { ok: true },
+          symbol: Symbol("marker"),
+        },
+      ],
+    );
+    expect(csv).toContain(
+      '2026-07-01T00:00:00.000Z,"{""ok"":true}",namedFunction,marker,true,12.5,42',
+    );
+    expect(serializeCsv(["false", "symbol"], [{ false: false, symbol: Symbol() }])).toBe(
+      "false,symbol\nfalse,",
+    );
+  });
+
+  it("serializes current keyword rows with selected import-compatible columns", () => {
+    const csv = serializeKeywordExportCsv([keywordFixture()], exportOptions());
+
+    expect(csv.split("\n")[0]).toBe(
+      "keyword,position,target_url,tags,topic,intent,country,device,change",
+    );
+    expect(csv).toContain(
+      '"rank ""tracker""",3,/rank,"core, seo;product",Product,commercial,United States,desktop,4',
+    );
+  });
+
+  it("serializes ranking history rows as CSV", () => {
+    const csv = serializeKeywordExportCsv([keywordFixture()], exportOptions({ scope: "history" }));
+
+    expect(csv.split("\n")[0]).toBe(
+      "keyword,checked_at,position,ranking_url,provider,requested_depth,normalization_version",
+    );
+    expect(csv).toContain(
+      `"rank ""tracker""",${daysBeforeFixedNow(1).toISOString()},3,"https://example.com/rank,tracker",dataforseo,100,v1`,
+    );
+    expect(csv).toContain(
+      `"rank ""tracker""",${daysBeforeFixedNow(2).toISOString()},4,https://example.com/older,serpapi,100,v1`,
+    );
+  });
+
+  it("deduplicates weekly history and applies date cutoffs", () => {
+    const keyword = keywordFixture();
+    keyword.rankChecks = [
+      ...keyword.rankChecks,
+      {
+        checkedAt: daysBeforeFixedNow(31),
+        normalizationVersion: "v1",
+        position: null,
+        previousPosition: null,
+        provider: "serpapi",
+        rankingUrl: null,
+        requestedDepth: 100,
+      },
+    ];
+    const table = keywordExportTable(
+      [keyword],
+      exportOptions({ granularity: "weekly", range: "30", scope: "history" }),
+    );
+    expect(table.rows).toHaveLength(1);
+  });
+
+  it("serializes ranking history timestamps as XLSX text cells", async () => {
+    const encoded = await serializeKeywordExportXlsx(
+      [keywordFixture()],
+      exportOptions({ scope: "history" }),
+    );
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(
+      Buffer.from(encoded, "base64") as unknown as Parameters<typeof workbook.xlsx.load>[0],
+    );
+    const checkedAt = workbook.getWorksheet("Ranking history")?.getCell("B2").value;
+
+    expect(Buffer.from(encoded, "base64").subarray(0, 2).toString()).toBe("PK");
+    expect(checkedAt).toBe(daysBeforeFixedNow(1).toISOString());
+    expect(typeof checkedAt).toBe("string");
+  });
+
+  it("serializes JSON with ranking history records", () => {
+    const payload = keywordExportJson(
+      [keywordFixture()],
+      exportOptions({ scope: "history" }),
+      "prj_1",
+    );
+
+    expect(payload).toMatchObject({
+      keywords: [
+        {
+          id: "kw_1",
+          intent: "commercial",
+          keyword: 'rank "tracker"',
+          rankingHistory: [
+            {
+              checkedAt: daysBeforeFixedNow(1).toISOString(),
+              normalizationVersion: "v1",
+              position: 3,
+              previousPosition: 7,
+              provider: "dataforseo",
+              rankingUrl: "https://example.com/rank,tracker",
+              requestedDepth: 100,
+            },
+            {
+              checkedAt: daysBeforeFixedNow(2).toISOString(),
+              normalizationVersion: "v1",
+              position: 4,
+              provider: "serpapi",
+              requestedDepth: 100,
+            },
+          ],
+          topic: "Product",
+        },
+      ],
+      projectId: "prj_1",
+      scope: "history",
+    });
+  });
+});
+
+it("inherits the selected market's language for a city-only row", () => {
+  const result = parseKeywordImportCsv("keyword,city\ncity keyword,Malaga", {
+    city: null,
+    country: "Spain",
+    device: "desktop",
+    locationKey: "ES@en",
+  });
+  expect(result.errors).toEqual([]);
+  expect(result.parsed[0]).toMatchObject({ city: "Malaga", language: "en", location: "Spain" });
+});

@@ -1,0 +1,109 @@
+import "server-only";
+import type { PaidCallPayment } from "@/lib/action-payment/paid-call";
+import {
+  keywordResearchRate,
+  type KeywordResearchSource as RateSource,
+} from "@/lib/cost-estimate/provider-rates";
+import { requiredConnectionEstimate } from "@/lib/provider-lookups/connection-estimate";
+import { ProviderLookupSignal } from "@/lib/provider-lookups/paid-call";
+import type { ProviderRateContext } from "@/lib/provider-rates/connection-context";
+import type { ProviderRequestOrigin } from "@/lib/provider-usage/surface";
+import type { ProviderCredentials, ResearchPage } from "@/lib/providers/types";
+import {
+  researchProviderRankLocation,
+  researchScopeForLocation,
+} from "@/lib/serp/research-capability";
+import type { eligibleResearchConnections, researchLocation } from "./context";
+import { paidProviderCall } from "./paid-call";
+import type { KeywordResearchMode, KeywordResearchSource } from "./types";
+
+export type ResearchSelection = ReturnType<typeof eligibleResearchConnections>[number];
+
+function sourceConfig(source: KeywordResearchSource) {
+  if (source === "related") return { method: "fetchRelatedKeywords", rate: "related" } as const;
+  if (source === "suggestion")
+    return { method: "fetchKeywordSuggestions", rate: "suggestions" } as const;
+  return { method: "fetchKeywordIdeas", rate: "ideas" } as const;
+}
+
+export function sourcesForMode(mode: KeywordResearchMode): KeywordResearchSource[] {
+  if (mode === "auto") return ["related", "suggestion", "idea"];
+  if (mode === "related") return ["related"];
+  if (mode === "suggestions") return ["suggestion"];
+  return ["idea"];
+}
+
+function sourceRate(selected: ResearchSelection, source: KeywordResearchSource) {
+  return keywordResearchRate(selected.provider.id, sourceConfig(source).rate as RateSource);
+}
+
+export async function sourceEstimate(input: {
+  context: ProviderRateContext;
+  includeClickstream: boolean;
+  limit: number;
+  selected: ResearchSelection;
+  source: KeywordResearchSource;
+}) {
+  return requiredConnectionEstimate({
+    connection: input.selected.connection,
+    feature: "keyword_research",
+    context: input.context,
+    includeClickstream: input.includeClickstream,
+    itemCount: input.limit,
+    providerId: input.selected.provider.id,
+    rate: sourceRate(input.selected, input.source),
+  });
+}
+
+export async function callResearchSource(input: {
+  payment?: PaidCallPayment;
+  /** Cap from the already-loaded research project row; skips the budget-gate cap query. */
+  includeClickstream: boolean;
+  limit: number;
+  location: Awaited<ReturnType<typeof researchLocation>>["value"];
+  origin: ProviderRequestOrigin;
+  maxCostCents?: number;
+  projectId: string;
+  rateContext: ProviderRateContext;
+  seed: string;
+  selected: ResearchSelection;
+  source: KeywordResearchSource;
+}) {
+  const config = sourceConfig(input.source);
+  const method = input.selected.provider[config.method] as
+    | ((
+        credentials: ProviderCredentials,
+        options: {
+          includeClickstream: boolean;
+          limit: number;
+          location: typeof input.location;
+          seed: string;
+        },
+      ) => Promise<ResearchPage>)
+    | undefined;
+  if (!method) throw new ProviderLookupSignal({ ok: false, reason: "no_source" });
+  return paidProviderCall({
+    payment: input.payment,
+    call: (credentials, usage) =>
+      method.call(input.selected.provider, credentials, {
+        includeClickstream: input.includeClickstream,
+        limit: input.limit,
+        location: researchProviderRankLocation(researchScopeForLocation(input.location)),
+        seed: input.seed,
+        attribution: usage,
+        tag: usage?.tag,
+      }),
+    connection: input.selected.connection,
+    credential: input.origin.credential,
+    feature: "keyword_research",
+    includeClickstream: input.includeClickstream,
+    itemCount: input.limit,
+    projectId: input.projectId,
+    maxCostCents: input.maxCostCents,
+    provider: input.selected.provider,
+    rateContext: input.rateContext,
+    rate: sourceRate(input.selected, input.source),
+    source: input.origin.source,
+    trigger: "manual",
+  });
+}

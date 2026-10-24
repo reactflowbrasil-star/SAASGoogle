@@ -1,0 +1,448 @@
+import { ProviderAuthError } from "@/lib/providers/auth-error";
+import { ProviderHttpError } from "@/lib/providers/failure-class";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { googleResponseError } from "./google-failure";
+import { loadStoredGoogleProperties, saveStoredGoogleProperty } from "./google-stored-property";
+
+const mocks = vi.hoisted(() => ({
+  backfillLegacyProjectAllocationInLockedTransaction: vi.fn(),
+  decryptProviderCredentials: vi.fn(),
+  encryptSecret: vi.fn(),
+  listGa4Properties: vi.fn(),
+  listGoogleSites: vi.fn(),
+  prisma: {
+    $queryRaw: vi.fn(),
+    $transaction: vi.fn(),
+    auditLog: { create: vi.fn() },
+    providerConnection: {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
+    searchInsightsPropertyRegistry: {
+      updateMany: vi.fn(),
+      upsert: vi.fn(),
+    },
+    searchInsightsProperty: { updateMany: vi.fn(), upsert: vi.fn() },
+  },
+  queueSearchInsightsImport: vi.fn(),
+  refreshGoogleAccessToken: vi.fn(),
+  verifyProviderConnectionBeforeSave: vi.fn(),
+  writeAudit: vi.fn(),
+}));
+
+vi.mock("@/lib/api/provider-verification", () => ({
+  verifyProviderConnectionBeforeSave: mocks.verifyProviderConnectionBeforeSave,
+}));
+vi.mock("@/lib/auth/audit", () => ({
+  requiredPublicAuditId: (value: string) => value,
+  writeAudit: mocks.writeAudit,
+}));
+vi.mock("@/lib/db/prisma", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/provider-allocations/legacy-backfill", () => ({
+  backfillLegacyProjectAllocationInLockedTransaction:
+    mocks.backfillLegacyProjectAllocationInLockedTransaction,
+}));
+vi.mock("@/lib/providers/crypto", () => ({
+  decryptProviderCredentials: mocks.decryptProviderCredentials,
+  encryptSecret: mocks.encryptSecret,
+}));
+vi.mock("@/lib/search-insights/sync/ensure-import", () => ({
+  queueSearchInsightsImport: mocks.queueSearchInsightsImport,
+}));
+vi.mock("@/lib/providers/registry", () => ({
+  PROVIDER_CATALOG: [
+    { id: "gsc", kind: "analytics" },
+    { id: "ga4", kind: "analytics" },
+  ],
+}));
+vi.mock("./google-client", () => ({
+  listGa4Properties: mocks.listGa4Properties,
+  listGoogleSites: mocks.listGoogleSites,
+  refreshGoogleAccessToken: mocks.refreshGoogleAccessToken,
+}));
+
+const connection = {
+  credentialsEncrypted: "encrypted_credentials",
+  id: "connection_1",
+  publicId: "conn_abcdefghijklmnopqrstuvwx",
+};
+
+describe("stored Google property selection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.backfillLegacyProjectAllocationInLockedTransaction.mockResolvedValue({
+      internalPrimaryConnectionId: null,
+      status: "already_backfilled",
+    });
+    mocks.decryptProviderCredentials.mockReturnValue({
+      accountEmail: "owner@example.com",
+      apiKey: "refresh_secret",
+      login: "sc-domain:old.example.com",
+    });
+    mocks.encryptSecret.mockReturnValue("updated_encrypted_credentials");
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue(connection);
+    mocks.prisma.$transaction.mockImplementation((callback) => callback(mocks.prisma));
+    mocks.refreshGoogleAccessToken.mockResolvedValue("access_secret");
+    mocks.listGoogleSites.mockResolvedValue([
+      { permissionLevel: "siteOwner", siteUrl: "sc-domain:example.com" },
+      { permissionLevel: "siteUnverifiedUser", siteUrl: "sc-domain:hidden.example.com" },
+    ]);
+    mocks.listGa4Properties.mockResolvedValue([
+      { accountDisplayName: "Account", displayName: "Website", propertyId: "123456789" },
+    ]);
+    mocks.verifyProviderConnectionBeforeSave.mockResolvedValue(undefined);
+  });
+
+  it("returns only property metadata and never exposes stored tokens", async () => {
+    const result = await loadStoredGoogleProperties({ projectId: "project_1", provider: "gsc" });
+
+    expect(result).toEqual({
+      accountEmail: "owner@example.com",
+      preferredProperty: "sc-domain:old.example.com",
+      archivedProperties: [],
+      projectDomain: "",
+      properties: [
+        {
+          kind: "domain",
+          label: "example.com",
+          permissionLevel: "siteOwner",
+          value: "sc-domain:example.com",
+        },
+      ],
+      provider: "gsc",
+    });
+    expect(JSON.stringify(result)).not.toContain("refresh_secret");
+    expect(JSON.stringify(result)).not.toContain("access_secret");
+  });
+
+  it("falls back to full OAuth when the stored token is missing", async () => {
+    mocks.decryptProviderCredentials.mockReturnValue({ login: "sc-domain:example.com" });
+
+    await expect(
+      loadStoredGoogleProperties({ projectId: "project_1", provider: "gsc" }),
+    ).resolves.toEqual({
+      error: "Reconnect the Google account to load its properties.",
+      properties: [],
+      provider: "gsc",
+      requiresReauth: true,
+    });
+    expect(mocks.refreshGoogleAccessToken).not.toHaveBeenCalled();
+  });
+
+  it("falls back without leaking a revoked-token error", async () => {
+    mocks.refreshGoogleAccessToken.mockRejectedValue(
+      new ProviderAuthError("google", "invalid_grant: refresh_secret"),
+    );
+
+    const result = await loadStoredGoogleProperties({ projectId: "project_1", provider: "gsc" });
+
+    expect(result).toMatchObject({ properties: [], requiresReauth: true });
+    expect(JSON.stringify(result)).not.toContain("invalid_grant");
+    expect(JSON.stringify(result)).not.toContain("refresh_secret");
+  });
+
+  it("returns a safe permission diagnostic rather than reconnect for a stored 403", async () => {
+    mocks.listGoogleSites.mockRejectedValue(
+      new ProviderHttpError(403, "refresh_secret access_secret"),
+    );
+    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const result = await loadStoredGoogleProperties({ projectId: "project_1", provider: "gsc" });
+    expect(result).toMatchObject({
+      failure: { reason: "permission", action: "check_permissions", httpStatus: 403 },
+    });
+    expect(result.requiresReauth).not.toBe(true);
+    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(result.error).not.toContain("reconnect");
+    expect(log).toHaveBeenCalledWith(
+      "[google] property request failed",
+      expect.objectContaining({
+        httpStatus: 403,
+        reason: "permission",
+        action: "check_permissions",
+      }),
+    );
+    expect(JSON.stringify(log.mock.calls)).not.toContain("secret");
+    log.mockRestore();
+  });
+
+  it("preserves safe diagnostics when property verification fails before saving", async () => {
+    mocks.listGoogleSites.mockRejectedValue(new ProviderHttpError(403, "access_secret"));
+    const result = await saveStoredGoogleProperty({
+      actorId: "user_1",
+      projectId: "project_1",
+      property: "sc-domain:example.com",
+      provider: "gsc",
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      failure: { reason: "permission", action: "check_permissions", httpStatus: 403 },
+    });
+    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(mocks.prisma.providerConnection.update).not.toHaveBeenCalled();
+  });
+
+  it("asks for OAuth consent when Google explicitly reports a missing scope", async () => {
+    mocks.listGoogleSites.mockRejectedValue(
+      googleResponseError(403, {
+        error: { details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] },
+      }),
+    );
+    const result = await loadStoredGoogleProperties({ projectId: "project_1", provider: "gsc" });
+    expect(result).toMatchObject({
+      requiresReauth: true,
+      failure: { reason: "scope", action: "reauthorize", httpStatus: 403 },
+    });
+    expect(result.error).toMatch(/approve.*permissions/i);
+    expect(result.error).not.toMatch(/expired/i);
+  });
+
+  it("keeps the final verification failure and does not save a disabled API connection", async () => {
+    mocks.verifyProviderConnectionBeforeSave.mockRejectedValue(
+      googleResponseError(403, {
+        error: { details: [{ reason: "SERVICE_DISABLED" }], message: "fixture_secret" },
+      }),
+    );
+    const result = await saveStoredGoogleProperty({
+      actorId: "user_1",
+      projectId: "project_1",
+      property: "sc-domain:example.com",
+      provider: "gsc",
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      failure: {
+        reason: "api_disabled",
+        action: "configure_api",
+        httpStatus: 403,
+        code: "SERVICE_DISABLED",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("fixture_secret");
+    expect(mocks.prisma.providerConnection.update).not.toHaveBeenCalled();
+  });
+
+  it("revalidates the selected property and audits the encrypted update atomically", async () => {
+    await expect(
+      saveStoredGoogleProperty({
+        actorId: "user_1",
+        projectId: "project_1",
+        property: "sc-domain:example.com",
+        provider: "gsc",
+      }),
+    ).resolves.toEqual({ property: "sc-domain:example.com", status: "saved" });
+
+    expect(mocks.verifyProviderConnectionBeforeSave).toHaveBeenCalledWith({
+      credentials: {
+        accountEmail: "owner@example.com",
+        apiKey: "refresh_secret",
+        login: "sc-domain:example.com",
+      },
+      hasStoredCredentials: true,
+      projectId: "project_1",
+      provider: expect.objectContaining({ id: "gsc" }),
+    });
+    expect(mocks.prisma.providerConnection.update).toHaveBeenCalledWith({
+      data: {
+        credentialsEncrypted: "updated_encrypted_credentials",
+        status: "connected",
+      },
+      where: { id: "connection_1" },
+    });
+    expect(mocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "provider.update",
+        actorId: "user_1",
+        after: expect.objectContaining({
+          property: "sc-domain:example.com",
+          provider: "gsc",
+        }),
+        before: expect.objectContaining({ property: "sc-domain:old.example.com" }),
+        targetId: "conn_abcdefghijklmnopqrstuvwx",
+      }),
+      mocks.prisma,
+    );
+    expect(JSON.stringify(mocks.writeAudit.mock.calls)).not.toContain("refresh_secret");
+  });
+
+  it("queues the history import for the Search Console property that was just saved", async () => {
+    await saveStoredGoogleProperty({
+      actorId: "user_1",
+      projectId: "project_1",
+      property: "sc-domain:example.com",
+      provider: "gsc",
+    });
+
+    expect(mocks.queueSearchInsightsImport).toHaveBeenCalledWith({
+      projectId: "project_1",
+      property: "sc-domain:example.com",
+      source: "gsc",
+    });
+  });
+
+  it("queues the sessions import for an Analytics property that was just saved", async () => {
+    await saveStoredGoogleProperty({
+      actorId: "user_1",
+      projectId: "project_1",
+      property: "123456789",
+      provider: "ga4",
+    });
+
+    expect(mocks.queueSearchInsightsImport).toHaveBeenCalledWith({
+      projectId: "project_1",
+      property: "123456789",
+      source: "ga4",
+    });
+  });
+
+  it("does not mutate or audit when the locked stable identity was deleted", async () => {
+    mocks.prisma.providerConnection.findUnique
+      .mockResolvedValueOnce(connection)
+      .mockResolvedValueOnce(null);
+
+    await expect(
+      saveStoredGoogleProperty({
+        actorId: "user_1",
+        projectId: "project_1",
+        property: "sc-domain:example.com",
+        provider: "gsc",
+      }),
+    ).rejects.toThrow("connection changed");
+
+    expect(mocks.prisma.providerConnection.update).not.toHaveBeenCalled();
+    expect(mocks.writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("rejects a locked replacement whose credentials differ from verified credentials", async () => {
+    mocks.prisma.providerConnection.findUnique
+      .mockResolvedValueOnce(connection)
+      .mockResolvedValueOnce({
+        ...connection,
+        credentialsEncrypted: "replacement_credentials",
+        id: "replacement_connection",
+        publicId: "conn_b00000000000000000000000",
+      });
+
+    await expect(
+      saveStoredGoogleProperty({
+        actorId: "user_1",
+        projectId: "project_1",
+        property: "sc-domain:example.com",
+        provider: "gsc",
+      }),
+    ).rejects.toThrow("connection changed");
+    expect(mocks.prisma.providerConnection.update).not.toHaveBeenCalled();
+    expect(mocks.writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("normalizes and revalidates a stored Analytics property against the live account", async () => {
+    mocks.decryptProviderCredentials.mockReturnValue({
+      apiKey: "refresh_secret",
+      login: "987654321",
+    });
+
+    await expect(
+      saveStoredGoogleProperty({
+        actorId: "user_1",
+        projectId: "project_1",
+        property: "properties/123456789",
+        provider: "ga4",
+      }),
+    ).resolves.toEqual({ property: "123456789", status: "saved" });
+
+    expect(mocks.verifyProviderConnectionBeforeSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        credentials: { apiKey: "refresh_secret", login: "123456789" },
+        provider: expect.objectContaining({ id: "ga4" }),
+      }),
+    );
+    expect(mocks.writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        after: expect.objectContaining({
+          permissionLevel: "Account",
+          property: "123456789",
+        }),
+        before: expect.objectContaining({ property: "987654321" }),
+      }),
+      mocks.prisma,
+    );
+  });
+
+  it("rejects a property not returned by the live account", async () => {
+    await expect(
+      saveStoredGoogleProperty({
+        actorId: "user_1",
+        projectId: "project_1",
+        property: "sc-domain:not-in-account.example.com",
+        provider: "gsc",
+      }),
+    ).rejects.toThrow("Select a property returned by the connected account");
+    expect(mocks.verifyProviderConnectionBeforeSave).not.toHaveBeenCalled();
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("requires reauthorization instead of writing when the token is revoked at save time", async () => {
+    mocks.refreshGoogleAccessToken.mockRejectedValue(new ProviderAuthError("google"));
+
+    await expect(
+      saveStoredGoogleProperty({
+        actorId: "user_1",
+        projectId: "project_1",
+        property: "sc-domain:example.com",
+        provider: "gsc",
+      }),
+    ).resolves.toMatchObject({ status: "reauth_required" });
+    expect(mocks.prisma.providerConnection.update).not.toHaveBeenCalled();
+    expect(mocks.writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("archives the previous active Search Console property and activates the replacement with the selected Analytics pairing in one transaction", async () => {
+    mocks.decryptProviderCredentials.mockImplementation((encrypted: string | null) =>
+      encrypted === "encrypted_ga4_credentials"
+        ? { apiKey: "refresh_secret", login: "123456789" }
+        : { apiKey: "refresh_secret", login: "sc-domain:old.example.com" },
+    );
+    mocks.prisma.providerConnection.findUnique.mockImplementation(({ where }) =>
+      where.projectId_provider.provider === "ga4"
+        ? {
+            ...connection,
+            credentialsEncrypted: "encrypted_ga4_credentials",
+            id: "connection_ga4",
+            publicId: "conn_ga4_abcdefghijklmnopqr",
+          }
+        : connection,
+    );
+
+    await saveStoredGoogleProperty({
+      actorId: "user_1",
+      projectId: "project_1",
+      property: "sc-domain:example.com",
+      provider: "gsc",
+    });
+
+    expect(mocks.prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.prisma.searchInsightsPropertyRegistry.updateMany).toHaveBeenCalledWith({
+      data: { archivedAt: expect.any(Date), status: "archived" },
+      where: { projectId: "project_1", status: "active" },
+    });
+    expect(mocks.prisma.searchInsightsPropertyRegistry.upsert).toHaveBeenCalledWith({
+      create: {
+        ga4PropertyId: "123456789",
+        projectId: "project_1",
+        propertyKey: "sc-domain:example.com",
+        status: "active",
+      },
+      update: {
+        activatedAt: expect.any(Date),
+        archivedAt: null,
+        ga4PropertyId: "123456789",
+        status: "active",
+      },
+      where: {
+        projectId_propertyKey: {
+          projectId: "project_1",
+          propertyKey: "sc-domain:example.com",
+        },
+      },
+    });
+  });
+});

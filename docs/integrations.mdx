@@ -1,0 +1,305 @@
+---
+title: "Integrations"
+description: "Connect SERP providers and analytics sources in bisibility."
+---
+
+bisibility ships without a bundled rank-data source. Connect your own provider
+accounts from the app, keep credentials encrypted in your instance, and pay each
+provider directly according to that provider's pricing.
+
+The header loads its usage indicator separately so you can navigate and read the page while budget information is loading. An unavailable indicator does not mean zero usage.
+
+## Integration kinds
+
+| Kind | What it is for | What it is not for |
+| - | - | - |
+| SERP providers | Google rank checks for tracked search terms. | Traffic, click, or conversion reporting. |
+| Analytics sources | Traffic and index context from Google Search Console, GA4, or Plausible. | Determining rank positions. |
+
+Positions come from completed SERP rank checks. Analytics sources add context,
+but they do not set or replace rank positions.
+
+Deploy webhooks are a separate inbound integration for timeline signals. Use
+them when you want deployments from a hosting provider or CI system to appear
+alongside rank and traffic changes. See [Deploy webhooks](/api/deploy-webhooks).
+
+## Connect from the app
+
+1. Open **Integrations** in the app.
+2. Choose a SERP provider and select **Connect**.
+3. Enter the provider credentials listed below.
+4. Select **Test connection**. Credential-based, non-OAuth providers must pass
+   this test before you can save the connection.
+5. Set the optional **Cost estimate per check (USD)**.
+6. Save the connection.
+7. Use **SERP fallback order** to activate providers and arrange the exact
+   top-to-bottom order used for rank checks.
+
+Hosted users do not create a Google Cloud OAuth client to connect Search
+Console or GA4. Self-hosted administrators configure that client on
+[Google OAuth and traffic sync](/self-hosting/google-oauth). On self-hosted
+deployments, project-level credentials saved through the UI take precedence
+over optional environment fallback credentials. Blank credential fields on an
+existing connection keep the stored encrypted value.
+
+## Usage display options
+
+In **Integrations**, open **Display options** under usage. Project editors can
+choose currency or recorded raw units and 0, 1, 2, 3, 4, or 6 decimal places.
+These settings are shared by every project member across devices, the header,
+usage summaries, and budget views. Viewers and projects in read-only mode can
+read the saved settings but cannot change them.
+
+Projects start with currency and two decimal places. Old browser-only settings
+are not imported. A save takes effect after the server confirms it. If another
+editor saved first, their current settings are shown with a conflict message;
+review the change before saving again. Other members receive the current
+settings when they load or refresh the project.
+
+Display options change presentation only. Provider amounts, reservations,
+budget admission, and accounting precision stay exact. Currency display uses
+the currency recorded with the amount; it does not convert between currencies.
+Unknown values remain unknown.
+
+## DataForSEO
+
+Use DataForSEO when you want pay-as-you-go SERP requests with provider-reported
+per-request cost.
+
+Use the API password generated separately in the DataForSEO dashboard, not your
+account password. Open [API Access](https://app.dataforseo.com/api-access) in
+the dashboard to find your API login and automatically generated API password.
+
+| Field in bisibility | DataForSEO value |
+| - | - |
+| `Login` | DataForSEO API login from your account dashboard. |
+| `Password` | DataForSEO API password from your account dashboard. |
+| `Cost estimate per check (USD)` | `0.0155` is the current Live estimate for a Top 100 check; use `0.0020` for Top 10. |
+
+bisibility currently uses DataForSEO Live. Its estimated cost is about `$0.0020`
+for Top 10 and `$0.0155` for Top 100 because additional pages are billed below
+the first-page rate. bisibility stores the actual cost reported by DataForSEO
+for each completed check; if the provider does not report a positive cost, the
+app falls back to the connection's configured per-check estimate.
+
+For Top 20 checks, bisibility requests the full configured depth without
+`stop_crawl_on_match`. At other depths, **My position** mode can send the tracked
+domain as a stopping target, so DataForSEO may crawl fewer pages. The actual
+provider-reported cost is still what bisibility records.
+
+Optional environment fallback credentials:
+
+```text
+DATAFORSEO_LOGIN=
+DATAFORSEO_PASSWORD=
+```
+
+## SerpApi
+
+Use SerpApi when you prefer a subscription plan with a monthly search quota.
+
+Find your API key in the [SerpApi dashboard](https://serpapi.com/manage-api-key).
+
+| Field in bisibility | SerpApi value |
+| - | - |
+| `API key` | SerpApi API key from your account dashboard. |
+| `Cost estimate per check (USD)` | An estimated USD cost per logical check at your configured depth. |
+
+SerpApi plans include a monthly search allowance. SerpApi responses do not give
+bisibility a per-response dollar cost, so configure the connection's per-check
+estimate yourself. Multiply your effective per-search price by
+`ceil(depth / 10)` for your configured depth. For example, `$275 / 30,000`
+searches is about `$0.00917` per search; a Top-100 check uses up to 10 searches,
+so enter about `0.0917`.
+
+Optional environment fallback credential:
+
+```text
+SERPAPI_API_KEY=
+```
+
+### Results to collect
+
+Top 20 checks always request the full depth, even when your domain appears first.
+This can use more credits or provider requests than stopping after the first page.
+Provider omissions and gaps remain visible as incomplete snapshots; requesting
+Top 20 cannot guarantee that the provider returns twenty usable organic results.
+
+At Top 10, Top 50 and Top 100, **My position** permits early stopping after a
+tracked-domain match. Choose **Full search results** to collect the configured
+depth for competitor comparisons. The per-check estimate remains the worst-case
+amount for the selected depth; actual usage follows provider receipts.
+
+A confirmed own-domain rank can still update Visibility even when competitor
+results are incomplete, provided the check requested at least Top 20 and meets
+the other measurement requirements. Missing competitors are unknown, not absent.
+Checks below Top 20 do not update Visibility. Saved historical results are not
+refetched or relabeled when these settings change.
+
+### Extend a recent SERP snapshot
+
+On a keyword's **SERP snapshot**, choose **Fetch next 10 results** to request the
+next page with the same keyword, country, language, device, and connected SerpApi
+account. Confirm the positions and estimated usage, up to one search. This is
+available for 15 minutes from the original fetch, up to position 100 or the end
+of the results. Extending does not restart that window.
+
+Google can change results between requests. Additional rows appear under
+**Results added after the check**, with their actual fetch time. Repeated URLs
+are skipped, retaining the earlier row and position. Distinct pages on the same
+domain remain separate, and gaps in position numbers are preserved. The original
+rank, history chart, and comparisons are unchanged. This is a continuation of a
+recent search, not a reconstruction of unrequested historical results.
+
+Use **Refresh snapshot** to reload stored results without spending a provider
+search. If a fetch cannot be confirmed, it is not automatically retried. Earlier
+results remain available. Expired checks, checks without saved continuation
+details, and other providers require a new, deeper **Run check** instead.
+
+## SERP fallback order
+
+The integrations page shows one dedicated order for SERP providers. Active
+connections are tried from top to bottom. Paused and disconnected providers are
+shown separately and are not used for rank checks.
+
+Use the arrow buttons to move a provider, then **Save fallback order** to apply
+the complete order. The pause button removes a connected provider from active
+fallback without disconnecting it. Readers see the ordered list without editing
+buttons. When project writes are temporarily paused, managers keep the same
+controls in a disabled state.
+
+If a rank check succeeds, bisibility stores the result with the provider that
+returned it. If a provider request fails, is rate-limited, or cannot use its
+stored credentials, bisibility tries the next enabled provider in the chain.
+
+If every provider is rate-limited, the check is deferred for a later retry. If
+every provider fails for another reason, the check fails with a provider error.
+
+## Budget cap
+
+Provider spend is bounded by a monthly budget set per project in
+**Settings > Provider usage**. New projects start at `$50.00`. Project
+owners and admins change the cap with **Edit budget**; every budget change is
+recorded in the audit log with the actor, the old cap, and the new cap.
+
+The enforced total combines rank-check spend with paid provider lookup ledger
+entries. Scheduled and manual checks, ranked-keyword suggestions, keyword
+research, and keyword metrics pause once the project reaches the cap, and
+nothing is charged beyond it. Cached lookups stay free. Spend resets at the
+start of each calendar month, measured in UTC; in other timezones the reset
+lands a few hours before or after local midnight on the 1st.
+
+In-app spend meters use this same enforced monthly total. The session amount
+resets when the app reloads and uses provider-reported costs where available;
+manual rank checks use the displayed estimate until their result includes an
+actual provider cost.
+
+Raise the budget only after estimating provider spend. The public calculator at
+[`/rank-tracking-cost-calculator`](https://bisibility.com/rank-tracking-cost-calculator) estimates
+monthly volume across search-term count, locations, devices, schedule, and provider.
+
+## Analytics sources
+
+Google Search Console, Google Analytics 4, and Plausible are optional analytics
+sources.
+
+Hosted users connect Search Console from the
+[Search Console](/guides/search-console) page. Connect GA4 and Plausible from
+**Integrations**.
+
+Search Console imports clicks and impressions from Search Analytics, index
+status from URL Inspection, and sitemap status. GA4 imports organic-search
+sessions, engagement rate, and key events per landing page. Analytics imports
+add owned-data context to rank reports; they do not run rank checks.
+
+Self-hosted Google OAuth clients, callbacks, secrets, and the traffic-sync
+worker are documented on
+[Google OAuth and traffic sync](/self-hosting/google-oauth).
+
+### Finding your GA4 Property ID
+
+Google Analytics 4 exposes several identifiers. bisibility needs the
+digits-only **Property ID** used by the Google Analytics Data API.
+
+1. Open Google Analytics 4 and select the property you want to connect.
+2. Select **Admin** (the gear in the bottom-left corner).
+3. Under **Property settings**, select **Property details**.
+4. Copy the digits-only **Property ID**, such as `123456789`.
+
+You can also type **Property ID** in the search bar at the top of Google
+Analytics to find the property details page. See Google's documentation for
+[finding the Property ID](https://developers.google.com/analytics/devguides/reporting/data/v1/property-id)
+and [identifying a web data stream's Measurement ID](https://support.google.com/analytics/answer/12270356?hl=en).
+
+<Warning>
+  Do not paste an ID beginning with `G-`. That is a web data-stream Measurement
+  ID, not a Property ID. Do not paste a legacy Universal Analytics ID beginning
+  with `UA-` either. bisibility requires the digits-only GA4 Property ID.
+</Warning>
+
+### Troubleshooting analytics connections
+
+If a traffic sync fails with `config_invalid`, open **Integrations**, manage the
+affected connection, and re-select the property. For GA4, confirm that the
+saved value is the digits-only Property ID described above.
+
+### Data freshness and Google API quotas
+
+The daily traffic sync makes two bulk Search Analytics queries per Search
+Console property - one for the stored 28-day aggregate and one for the stored
+7-day aggregate - and matches the returned queries to tracked keywords locally.
+Each bulk query may use up to three paginated API requests on very large
+properties. The cost does not grow with the number of tracked keywords. The
+same sync makes one additional page-stats call per property. Search Analytics
+data is read with a three-day lag because Google finalizes it late; running the
+sync more often would not produce fresher data, so bisibility syncs it daily.
+CTR-drop alerts read those stored 28-day and 7-day aggregates with the same lag.
+
+Index-status checks use the separate URL Inspection API. The daily presence
+sync inspects up to the project's **Daily inspection limit** target URLs,
+oldest-checked first. This `inspectionDailyLimit` setting is the maximum number
+of URL Inspection calls the project makes per day. The default is `50`; set it
+to `0` to turn off presence sync for that project. The app reads stored
+inspection results in the UI and does not inspect URLs on demand.
+
+Google documents these [Search Console API limits](https://developers.google.com/webmaster-tools/limits):
+
+| API | Google property limit | Google user limit |
+| - | - | - |
+| Search Analytics | 1,200 queries per minute | 1,200 queries per minute |
+| URL Inspection | 2,000 inspections per day and 600 per minute | No separate user limit documented. |
+
+Search Analytics has no daily per-property cap. Google does not expose an API
+for remaining Search Console quota. Inspect usage in the Google Cloud Console
+quotas tab; an HTTP `429` response is the runtime backstop.
+
+The project limit controls how many target URLs that project may inspect per
+day. It accepts up to 1,000 inspections, leaving room below Google's
+2,000-per-day property quota for other tools and retries. Google's own `429`
+response remains the runtime backstop and applies the existing account cooldown.
+
+For `N` tracked target URLs and a project limit `L` greater than zero, each URL
+is re-inspected about every `ceil(N / L)` days. For example, 120 URLs at a limit
+of 50 rotate through all URLs in three days.
+
+| Condition | What bisibility does | Who acts |
+| - | - | - |
+| Minute rate limit | Stops only the current batch, leaves unchecked URLs untouched, and retries oldest URLs on the next run. | Nobody; it recovers automatically. |
+| Google daily quota | Stops the current batch and defers the remaining URLs. Google's daily quota resets around midnight Pacific. | Nobody. If it recurs, lower project limits or reduce the number of projects using the property. |
+| Google authorization is broken | Changes the connection to **Reconnect required** and stops all traffic and presence calls for it. | Reconnect the Google account from **Integrations**. |
+
+Quota exhaustion never requires manual unpausing. Only broken Google
+authorization requires user action.
+
+Rank positions still come exclusively from SERP providers. Search Console adds
+owned traffic and index-status context; it never sets positions.
+
+Plausible connects with these fields:
+
+| Field in bisibility | Plausible value |
+| - | - |
+| `Site domain` | The Plausible site (its `site_id`), such as `example.com`. API and MCP clients send it as `login`; it defaults to the project domain when omitted. |
+| `API token` | Plausible Stats API key from plausible.io Settings. |
+| `API base URL` | Leave blank for Plausible Cloud. Set this only for a self-hosted Plausible instance. |
+
+Plausible imports add traffic and sessions context; they do not run rank checks.

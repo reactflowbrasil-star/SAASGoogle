@@ -1,0 +1,238 @@
+"use client";
+import { buildOnboardingStepHref } from "@/components/onboarding/onboarding-fixtures";
+import { displayProvider, onboardingFormId } from "@/components/onboarding/onboarding-form-utils";
+import { Button } from "@/components/ui/Button";
+import { ArrowLeftIcon as ArrowLeft } from "@phosphor-icons/react/dist/csr/ArrowLeft";
+import { useTranslations } from "next-intl";
+import { useRef, useState } from "react";
+import { FirstCheckErrors } from "./FirstCheckErrors";
+import { FirstCheckPolicyNotice } from "./FirstCheckPolicyNotice";
+import { FirstCheckQueueMessage } from "./FirstCheckQueueMessage";
+import { FirstCheckResults } from "./FirstCheckResults";
+import { localizedFrequency, selectedDevices, selectedMarkets } from "./first-check-selection";
+import { InlineProviderSetup } from "./InlineProviderSetup";
+import type { StepFirstCheckProps } from "./StepFirstCheck.types";
+import { StepFirstCheckCompletion } from "./StepFirstCheckCompletion";
+import { StepFirstCheckFooter } from "./StepFirstCheckFooter";
+import { StepFirstCheckReview } from "./StepFirstCheckReview";
+import { useFirstCheckKeyword } from "./use-first-check-keyword";
+import { useFirstCheckRun } from "./use-first-check-run";
+import { useFirstCheckSubmit } from "./use-first-check-submit";
+export function StepFirstCheck({
+  completeOnboardingAction,
+  connectProviderAction,
+  defaults,
+  flowState,
+  keywordCount = 0,
+  keywordDraft,
+  initialConnections,
+  initialKeywordText,
+  initialFirstCheckCandidates,
+  listFirstCheckCandidatesAction,
+  nextCheckAt,
+  onBack,
+  onProviderConnected,
+  project,
+  providerConnected,
+  providerDefaultValues,
+  providerId,
+  runFirstCheckPreviewAction,
+  saveMarketsAction,
+  testProviderConnectionAction,
+}: Readonly<StepFirstCheckProps>) {
+  const t = useTranslations("onboarding.firstCheck");
+  const projectId = flowState?.projectId ?? defaults?.projectId ?? null;
+  const hasProject = Boolean(projectId);
+  const navigationProjectId = project?.publicId ?? projectId;
+  const sampleProject = Boolean(project?.isSample);
+  const providerReady = !sampleProject && (providerConnected ?? Boolean(flowState?.providerId));
+  const markets = selectedMarkets(defaults),
+    devices = selectedDevices(defaults);
+  const sampleCount = keywordCount > 0 ? markets.length * devices.length : 0;
+  const deviceLabel =
+    devices.length === 2 && devices.includes("desktop") && devices.includes("mobile")
+      ? t("review.bothDevices")
+      : t("review.devices", { count: devices.length });
+  const matrixLabel =
+    sampleCount > 1
+      ? t("matrix", { checks: sampleCount, devices: deviceLabel, markets: markets.length })
+      : null;
+  const { keywordError, retryKeyword, sampleKeyword } = useFirstCheckKeyword({
+    initialKeywordText,
+    keywordDraft,
+    listFirstCheckCandidatesAction,
+    projectId,
+  });
+  const [providerExpanded, setProviderExpanded] = useState(false);
+  const providerToggleRef = useRef<HTMLButtonElement>(null);
+  const providerCloseFocusRef = useRef<"run" | "trigger">("trigger");
+  const timezone = defaults?.timezone ?? "UTC";
+  const { onSubmit, submitError, submitting } = useFirstCheckSubmit({
+    completeOnboardingAction,
+    marketKeys: markets.map((market) => market.canonicalKey),
+    navigationProjectId,
+    saveMarketsAction,
+  });
+  const { retryFailed, start, state } = useFirstCheckRun(
+    {
+      listFirstCheckCandidatesAction,
+      runFirstCheckPreviewAction,
+    },
+    initialFirstCheckCandidates?.filter((candidate) => candidate.text === sampleKeyword),
+    projectId,
+  );
+  const canPreview = providerReady || sampleProject;
+  const previewDisabled =
+    state.status === "running" ||
+    state.status === "queued" ||
+    !hasProject ||
+    keywordCount === 0 ||
+    sampleProject ||
+    (providerReady && !sampleKeyword);
+  const providerLabel = providerReady
+    ? displayProvider(providerId ?? flowState?.providerId)
+    : t("notConnected");
+  const frequency = "manual";
+  const frequencyLabel = localizedFrequency(t, frequency);
+  const hasFailedSampleChecks = state.rows.some((row) => row.status === "failed");
+  const queueMessage = sampleProject
+    ? t("queue.sample")
+    : !providerReady
+      ? null
+      : state.status === "running"
+        ? t("queue.running")
+        : state.status === "queued"
+          ? t("queue.queued")
+          : state.status === "completed"
+            ? hasFailedSampleChecks
+              ? t("queue.completedWithFailures", { checks: state.rows.length })
+              : t("queue.completed", { checks: state.rows.length })
+            : t("queue.initial", { checks: sampleCount });
+  function openProvider() {
+    providerCloseFocusRef.current = "trigger";
+    setProviderExpanded(true);
+  }
+  function closeProvider() {
+    setProviderExpanded(false);
+  }
+  function focusRunWhenMounted(node: HTMLButtonElement | null) {
+    if (node && providerCloseFocusRef.current === "run") {
+      providerCloseFocusRef.current = "trigger";
+      node.focus();
+    }
+  }
+  function focusAfterProviderClose() {
+    if (providerCloseFocusRef.current === "trigger") providerToggleRef.current?.focus();
+  }
+  function onPreviewClick() {
+    void start({
+      keywordText: sampleKeyword,
+      limit: sampleCount || undefined,
+      projectId,
+    });
+  }
+  const backAction = onBack ? (
+    <Button
+      onClick={onBack}
+      size="lg"
+      startIcon={<ArrowLeft aria-hidden size={15} weight="regular" />}
+      style={{ "--control-color": "var(--fg-muted)" }}
+      type="button"
+      variant="secondary"
+    >
+      {t("back")}
+    </Button>
+  ) : (
+    <Button
+      href={buildOnboardingStepHref(3, flowState)}
+      size="lg"
+      startIcon={<ArrowLeft aria-hidden size={15} weight="regular" />}
+      style={{ "--control-color": "var(--fg-muted)" }}
+      variant="secondary"
+    >
+      {t("back")}
+    </Button>
+  );
+  const reviewDescription =
+    state.status === "completed"
+      ? t("description.completed")
+      : !providerReady
+        ? t("description.noProvider")
+        : t("description.manual");
+  return (
+    <form id={onboardingFormId} onSubmit={onSubmit}>
+      <h2 className="m-0 text-lg font-semibold tracking-[-0.4px]">{t("title")}</h2>
+      <div className="mt-1 text-[13px] text-fg-muted">{reviewDescription}</div>
+      <StepFirstCheckReview
+        devices={devices}
+        keywordCount={keywordCount}
+        markets={markets}
+        providerLabel={providerLabel}
+        providerAction={
+          !providerReady ? (
+            <Button
+              aria-expanded={providerExpanded}
+              aria-haspopup="dialog"
+              onClick={openProvider}
+              ref={providerToggleRef}
+              size="xs"
+              type="button"
+              variant="secondary"
+            >
+              {t("connect")}
+            </Button>
+          ) : undefined
+        }
+        providerReady={providerReady}
+      />
+      <FirstCheckErrors
+        keywordError={
+          keywordError ?? (!sampleKeyword && providerReady ? t("errors.keyword") : null)
+        }
+        onRetryKeyword={retryKeyword}
+        submitError={submitError}
+        timezoneError={null}
+      />
+      {!providerReady ? (
+        <InlineProviderSetup
+          connectProviderAction={connectProviderAction}
+          defaultValues={providerDefaultValues}
+          flowState={flowState}
+          initialConnections={initialConnections}
+          onCollapse={closeProvider}
+          open={providerExpanded}
+          onExited={focusAfterProviderClose}
+          onComplete={(values, connections) => {
+            onProviderConnected?.(values, connections);
+            providerCloseFocusRef.current = "run";
+          }}
+          testProviderConnectionAction={testProviderConnectionAction}
+        />
+      ) : null}
+      {queueMessage ? <FirstCheckQueueMessage message={queueMessage} /> : null}
+      <FirstCheckResults onRetryFailed={() => void retryFailed()} state={state} />
+      <FirstCheckPolicyNotice projectId={navigationProjectId ?? null} state={state} />
+      {state.status === "completed" && !hasFailedSampleChecks && navigationProjectId ? (
+        <StepFirstCheckCompletion
+          frequency="manual"
+          frequencyLabel={frequencyLabel}
+          keywordCount={keywordCount}
+          nextCheckAt={nextCheckAt}
+          projectId={navigationProjectId}
+          timezone={timezone}
+        />
+      ) : null}
+      <StepFirstCheckFooter
+        backAction={backAction}
+        canPreview={canPreview}
+        matrixLabel={matrixLabel}
+        onPreview={onPreviewClick}
+        runButtonRef={focusRunWhenMounted}
+        previewDisabled={previewDisabled}
+        sampleCount={sampleCount}
+        state={state}
+        submitting={submitting}
+      />
+    </form>
+  );
+}

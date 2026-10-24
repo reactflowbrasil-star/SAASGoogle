@@ -1,0 +1,173 @@
+import { keywordRows } from "@/components/keywords/keywords-fixtures";
+import { ToastProvider } from "@/components/ui/Toast";
+import { renderWithProjectRankTrackerMessages as render } from "@/i18n/test-support/render-with-feature-messages";
+import type { KeywordRow } from "@/lib/queries/keywords";
+import { fireEvent, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { KeywordPendingDetail } from "./KeywordPendingDetail";
+
+const fetchMock = vi.hoisted(() => vi.fn());
+const request = vi.hoisted(() => vi.fn());
+vi.mock("@/components/rank-runs/useRunPreflight", () => ({
+  useRunPreflight: () => ({ request, opening: false, dialog: null }),
+}));
+
+vi.mock("./KeywordMarketsDrawer", () => ({
+  KeywordMarketsDrawer: () => null,
+}));
+vi.mock("./KeywordHeaderActions", () => ({
+  KeywordHeaderActions: ({
+    effectiveDepth,
+    onToggleEdit,
+    onRunCheck,
+  }: {
+    effectiveDepth: number;
+    onToggleEdit: () => void;
+    onRunCheck: (depth: number) => void;
+  }) => (
+    <div>
+      <button type="button" onClick={() => onRunCheck(effectiveDepth)}>
+        Run check
+      </button>
+      <button type="button" onClick={onToggleEdit}>
+        Edit
+      </button>
+      <output>Selected depth {effectiveDepth}</output>
+    </div>
+  ),
+}));
+
+function pendingKeyword(overrides: Partial<KeywordRow> = {}): KeywordRow {
+  return {
+    ...keywordRows[0],
+    checkSchedule: null,
+    checkState: "never_checked",
+    hasRankData: false,
+    position: 101,
+    positionHistory: [],
+    rankingUrl: null,
+    rankingUrlHistory: [],
+    targetUrl: "/self-host",
+    trackedDepth: 20,
+    ...overrides,
+  };
+}
+
+function renderDetail(
+  keyword = pendingKeyword(),
+  rankState: "never_checked" | "not_ranked" | "unknown" = "never_checked",
+) {
+  render(
+    <ToastProvider>
+      <KeywordPendingDetail
+        canUpdateKeyword
+        keyword={keyword}
+        projectId="prj_1"
+        projectRef="prj_1"
+        providerConnected
+        rankState={rankState}
+        runCheckNowAction={vi.fn()}
+        updateKeywordAction={vi.fn()}
+      />
+    </ToastProvider>,
+  );
+}
+
+describe("KeywordPendingDetail", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockReset();
+    request.mockReset();
+  });
+
+  it("uses the same quoted preflight for a pending keyword instead of the legacy launch action", () => {
+    const keyword = pendingKeyword();
+    renderDetail(keyword);
+    fireEvent.click(screen.getByRole("button", { name: "Run check" }));
+    expect(request).toHaveBeenCalledWith({
+      depth: 100,
+      rows: [keyword],
+      spec: { kind: "single", keywordId: keyword.id, v: 1 },
+    });
+  });
+  it("keeps pending content below the shared header without duplicate details", () => {
+    renderDetail();
+
+    expect(screen.getByLabelText("Keyword check metadata")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Position history" })).toBeInTheDocument();
+    expect(screen.queryByText("What changed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Keyword context")).not.toBeInTheDocument();
+  });
+
+  it("shows Manual and opens SetScheduleModal from set schedule", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              cronExpression: null,
+              enabled: true,
+              frequency: "daily",
+              isDefault: true,
+              jitterMinutes: 15,
+              keywordCount: 1,
+              name: "Daily 06:00",
+              publicId: "sch_daily",
+              serpDepth: null,
+              timeOfDay: "06:00",
+              timezone: "UTC",
+            },
+          ],
+        }),
+      ),
+    );
+    renderDetail();
+
+    const header = screen.getByLabelText("Keyword check metadata");
+    expect(header).toHaveTextContent("Schedule for this market and device");
+    expect(header).toHaveTextContent("Manual");
+    fireEvent.click(screen.getByRole("button", { name: "set schedule" }));
+
+    expect(await screen.findByRole("dialog", { name: /Set schedule/ })).toBeInTheDocument();
+    expect(screen.getByText("Set schedule for 1 keyword / 1 target")).toBeInTheDocument();
+  });
+
+  it("uses the last completed depth for position while keeping the default for the next run", () => {
+    renderDetail(
+      pendingKeyword({
+        projectSerpDepth: 50,
+        schedule: { ...keywordRows[0].schedule, serp_depth: 100 },
+        trackedDepth: 20,
+      }),
+      "not_ranked",
+    );
+
+    expect(screen.getByText("Not ranked")).toBeInTheDocument();
+    expect(screen.getByText("Checked top 20")).toBeInTheDocument();
+    expect(screen.getByText("Selected depth 50")).toBeInTheDocument();
+  });
+  it("opens keyword details including the target URL without requiring market management actions", async () => {
+    renderDetail();
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(await screen.findByLabelText("Target URL")).toHaveDisplayValue("/self-host");
+    expect(screen.getByRole("heading", { name: /Edit keyword/ })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save markets and devices" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+it("describes unknown coverage in the shared header and pending history", () => {
+  renderDetail(
+    pendingKeyword({
+      hasRankData: true,
+      position: 101,
+      checkState: "unknown",
+      observationCompleteness: "unknown",
+    }),
+    "unknown",
+  );
+  expect(screen.getAllByText("Coverage unknown")).toHaveLength(2);
+  expect(screen.queryByText("Not ranked in the top 20")).not.toBeInTheDocument();
+  expect(screen.queryByText("#101")).not.toBeInTheDocument();
+});

@@ -1,0 +1,26 @@
+---
+title: "Locations"
+description: "Search canonical country, region, and city keys for keyword operations."
+---
+
+`searchLocations` is an authenticated reference-data endpoint. It is not scoped
+to one project. It returns countries, regions, and cities from the shared
+bundled catalog without using a project's provider credentials or making live
+provider requests.
+
+| Query | Description |
+| - | - |
+| `q` | Required search text, 2 to 120 characters. |
+| `country` | Optional ISO country code or supported country name. |
+| `limit` | Defaults to `20`, maximum `100`. |
+
+Pass the returned `location_key` verbatim when creating or updating keywords.
+To select a non-default language, append an `@language` qualifier from the
+[supported languages](/markets#supported-languages), for example
+`ES/Andalusia/Malaga@en`. An unqualified key uses the country's default language.
+
+## Related operations
+
+- [`GET /locations/search`](/api-reference/keyword-research/search-supported-keyword-locations) (`searchLocations`)
+
+Exact request and response schemas live in the generated API Reference.

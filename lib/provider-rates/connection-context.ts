@@ -1,0 +1,150 @@
+import "server-only";
+
+import { prisma } from "@/lib/db/prisma";
+import { Prisma, type PrismaClient } from "@/lib/generated/prisma/client";
+import type { ProviderCostFeature } from "@/lib/generated/prisma/enums";
+import { canonicalUsageSql } from "@/lib/metering/usage-sql";
+import { loadNativeRankContexts } from "./native-rank-context";
+import {
+  MAX_PROVIDER_RATE_SAMPLES,
+  PROVIDER_RATE_FEATURES,
+  PROVIDER_RATE_TRAILING_DAYS,
+  type ProviderRateContext,
+  type ProviderRateEntry,
+  type ProviderRateFeature,
+} from "./resolver";
+import { providerRateSampleEvidence } from "./sample-evidence";
+
+export type { ProviderRateContext } from "./resolver";
+export { MAX_PROVIDER_RATE_SAMPLES };
+export type ProviderRateContextMap = ReadonlyMap<string, ProviderRateContext>;
+
+export function providerRateContextKey(
+  connectionId: string,
+  feature: ProviderCostFeature | ProviderRateFeature,
+) {
+  return `${connectionId}:${feature}`;
+}
+
+type CostEntryRow = ProviderRateEntry & {
+  connectionId: string;
+  feature: ProviderRateFeature;
+};
+
+export async function loadRecentProviderRateEntries(
+  connectionIds: readonly string[],
+  features: readonly ProviderRateFeature[],
+  cutoff: Date,
+  client: Pick<PrismaClient, "$queryRaw"> = prisma,
+) {
+  if (connectionIds.length === 0 || features.length === 0) return [] as CostEntryRow[];
+  return client.$queryRaw<CostEntryRow[]>(Prisma.sql`
+    SELECT
+      "cached",
+      "connectionId",
+      "costCents",
+      "createdAt",
+      "failed",
+      "feature",
+      "unitCostCents"
+    FROM (
+      SELECT
+        "cached",
+        "connectionId",
+        "costCents",
+        "createdAt",
+        "failed",
+        "feature",
+        "unitCostCents",
+        ROW_NUMBER() OVER (
+          PARTITION BY "connectionId", "feature"
+          ORDER BY "createdAt" DESC, e.id
+        ) AS "sampleRank"
+      FROM (${canonicalUsageSql()}) e
+      WHERE
+        "cached" = FALSE
+        AND "connectionId" IN (${Prisma.join(connectionIds)})
+        AND ${providerRateSampleEvidence}
+        AND "costCents" > 0
+        AND "createdAt" >= ${cutoff}
+        AND "failed" = FALSE
+        AND "feature" IN (${Prisma.join(features)})
+    ) AS "rankedProviderCosts"
+    WHERE "sampleRank" <= ${MAX_PROVIDER_RATE_SAMPLES}
+    ORDER BY "createdAt" DESC
+  `);
+}
+
+export async function loadProviderRateContexts(
+  connectionIds: readonly string[],
+  features: readonly ProviderRateFeature[] = PROVIDER_RATE_FEATURES,
+  now = new Date(),
+  client: Pick<
+    PrismaClient,
+    "$queryRaw" | "providerConnectionRate" | "providerConnection"
+  > = prisma,
+): Promise<ProviderRateContextMap> {
+  const uniqueConnectionIds = [...new Set(connectionIds)];
+  const uniqueFeatures = [...new Set(features)];
+  const cutoff = new Date(now.getTime() - PROVIDER_RATE_TRAILING_DAYS * 24 * 60 * 60 * 1000);
+  const manualRates =
+    uniqueConnectionIds.length === 0 || uniqueFeatures.length === 0
+      ? []
+      : await client.providerConnectionRate.findMany({
+          select: { amountCents: true, connectionId: true, feature: true },
+          where: {
+            connection: { credentialSource: "own" },
+            connectionId: { in: uniqueConnectionIds },
+            feature: { in: uniqueFeatures },
+          },
+        });
+  const entries = await loadRecentProviderRateEntries(
+    uniqueConnectionIds,
+    uniqueFeatures,
+    cutoff,
+    client,
+  );
+  const contexts = new Map<string, ProviderRateContext>();
+  for (const connectionId of uniqueConnectionIds) {
+    for (const feature of uniqueFeatures) {
+      const key = providerRateContextKey(connectionId, feature);
+      contexts.set(key, { entries: [], manualAmountCents: null });
+    }
+  }
+  for (const rate of manualRates) {
+    const key = providerRateContextKey(rate.connectionId, rate.feature);
+    contexts.set(key, {
+      entries: contexts.get(key)?.entries ?? [],
+      manualAmountCents: rate.amountCents,
+    });
+  }
+  for (const entry of entries) {
+    const key = providerRateContextKey(entry.connectionId, entry.feature);
+    const context = contexts.get(key) ?? { entries: [], manualAmountCents: null };
+    contexts.set(key, { ...context, entries: [...context.entries, entry] });
+  }
+  if (uniqueFeatures.includes("rank_check")) {
+    const native = await loadNativeRankContexts(client, uniqueConnectionIds, now);
+    for (const [connectionId, nativeRankCosts] of native) {
+      const key = providerRateContextKey(connectionId, "rank_check");
+      const context = contexts.get(key);
+      if (context) contexts.set(key, { ...context, entries: [], nativeRankCosts });
+    }
+  }
+  return contexts;
+}
+
+export async function loadProviderRateContext(
+  connectionId: string,
+  feature: ProviderRateFeature,
+  now = new Date(),
+  client: Parameters<typeof loadProviderRateContexts>[3] = prisma,
+): Promise<ProviderRateContext> {
+  const contexts = await loadProviderRateContexts([connectionId], [feature], now, client);
+  return (
+    contexts.get(providerRateContextKey(connectionId, feature)) ?? {
+      entries: [],
+      manualAmountCents: null,
+    }
+  );
+}

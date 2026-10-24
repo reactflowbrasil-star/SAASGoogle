@@ -1,0 +1,150 @@
+import {
+  renderWithSearchInsightsMessages as render,
+  renderWithFeatureMessages,
+  searchInsightsFeatureTestMessages,
+} from "@/i18n/test-support/render-with-feature-messages";
+import { routerMock } from "@/tests/next-navigation";
+import { act, fireEvent, screen } from "@testing-library/react";
+import type { TransitionStartFunction } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const transition = vi.hoisted(() => ({ pending: false }));
+vi.mock("react", async () => {
+  const actual = await vi.importActual<typeof import("react")>("react");
+  return {
+    ...actual,
+    useTransition: (): [boolean, TransitionStartFunction] => [
+      transition.pending,
+      (callback) => callback(),
+    ],
+  };
+});
+
+import { SearchInsightsRefresh } from "./SearchInsightsRefresh";
+
+function setVisibilityState(value: "hidden" | "visible") {
+  Object.defineProperty(document, "hidden", { configurable: true, value: value === "hidden" });
+  Object.defineProperty(document, "visibilityState", { configurable: true, value });
+}
+
+function visibility(value: "hidden" | "visible") {
+  setVisibilityState(value);
+  fireEvent(document, new Event("visibilitychange"));
+}
+
+describe("SearchInsightsRefresh", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    transition.pending = false;
+    visibility("visible");
+  });
+  it("waits a supplied interval before polling", () => {
+    const view = render(<SearchInsightsRefresh active intervalMs={90_000} />);
+    act(() => vi.advanceTimersByTime(45_000));
+    expect(routerMock.refresh).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(45_000));
+    expect(routerMock.refresh).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+  it("polls around 45 seconds without duplicate timers and stops when inactive or unmounted", () => {
+    const view = render(<SearchInsightsRefresh active />);
+    act(() => vi.advanceTimersByTime(44_999));
+    expect(routerMock.refresh).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(routerMock.refresh).toHaveBeenCalledTimes(1);
+    view.rerender(<SearchInsightsRefresh active={false} />);
+    act(() => vi.advanceTimersByTime(90_000));
+    expect(routerMock.refresh).toHaveBeenCalledTimes(1);
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("cancels while hidden and resumes once without overlap", () => {
+    const view = render(<SearchInsightsRefresh active />);
+    visibility("hidden");
+    expect(vi.getTimerCount()).toBe(0);
+    act(() => vi.advanceTimersByTime(90_000));
+    expect(routerMock.refresh).not.toHaveBeenCalled();
+    visibility("visible");
+    expect(routerMock.refresh).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+    act(() => vi.advanceTimersByTime(45_000));
+    expect(routerMock.refresh).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(1);
+    view.unmount();
+  });
+  it("does not refresh if the document becomes hidden before the timer fires", () => {
+    const view = render(<SearchInsightsRefresh active />);
+    setVisibilityState("hidden");
+
+    act(() => vi.advanceTimersByTime(45_000));
+
+    expect(routerMock.refresh).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    view.unmount();
+  });
+  it("does not start another refresh while the transition is pending", () => {
+    const view = render(<SearchInsightsRefresh active />);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh stored insights" }));
+    expect(routerMock.refresh).toHaveBeenCalledTimes(1);
+
+    transition.pending = true;
+    view.rerender(<SearchInsightsRefresh active />);
+    act(() => vi.advanceTimersByTime(45_000));
+
+    expect(routerMock.refresh).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+  it("uses the Button loading contract while preserving the spinning refresh icon", () => {
+    transition.pending = true;
+    render(<SearchInsightsRefresh active={false} />);
+
+    const button = screen.getByRole("button", { name: "Refresh stored insights" });
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button.querySelector("svg")).toHaveClass("animate-spin");
+  });
+  it("returns from pending to one idle transparent refresh icon", () => {
+    transition.pending = true;
+    const view = render(<SearchInsightsRefresh active={false} />);
+    let button = screen.getByRole("button", { name: "Refresh stored insights" });
+
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button.querySelectorAll("svg")).toHaveLength(1);
+    expect(button.querySelector("svg")).toHaveClass("animate-spin");
+
+    transition.pending = false;
+    view.rerender(<SearchInsightsRefresh active={false} />);
+    button = screen.getByRole("button", { name: "Refresh stored insights" });
+
+    expect(button).toBeEnabled();
+    expect(button).not.toHaveAttribute("aria-busy", "true");
+    expect(button.querySelectorAll("svg")).toHaveLength(1);
+    expect(button.querySelector("svg")).not.toHaveClass("animate-spin");
+    expect(button).toHaveAttribute("data-variant", "ghost");
+  });
+
+  it("keeps manual refresh available while polling is inactive", () => {
+    render(<SearchInsightsRefresh active={false} />);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh stored insights" }));
+    expect(routerMock.refresh).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("renders the localized action and accessible name without changing its polling behavior", () => {
+    const messages = structuredClone(searchInsightsFeatureTestMessages);
+    messages.projectSearchInsights.copy.refresh = "Odswiez";
+    messages.projectSearchInsights.copy.refreshAriaLabel = "Odswiez stan importu";
+
+    renderWithFeatureMessages(<SearchInsightsRefresh active={false} />, {
+      locale: "pl",
+      messages,
+    });
+
+    expect(screen.getByRole("button", { name: "Odswiez stan importu" })).toHaveTextContent(
+      "Odswiez",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Refresh stored insights" }),
+    ).not.toBeInTheDocument();
+  });
+});

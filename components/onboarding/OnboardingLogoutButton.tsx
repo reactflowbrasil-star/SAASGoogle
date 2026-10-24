@@ -1,0 +1,41 @@
+"use client";
+
+import { Button } from "@/components/ui/Button";
+import { authClient } from "@/lib/auth/client";
+import { notifyAuthenticatedSessionEnd } from "@/lib/auth/session-end";
+import { SignOutIcon as SignOut } from "@phosphor-icons/react/dist/csr/SignOut";
+import { useTranslations } from "next-intl";
+import { useState } from "react";
+
+/** Uses the dashboard sign-out path so onboarding clears the session before login. */
+export function OnboardingLogoutButton() {
+  const t = useTranslations("onboarding");
+  const [pending, setPending] = useState(false);
+
+  async function handleSignOut() {
+    setPending(true);
+    await authClient.signOut();
+    notifyAuthenticatedSessionEnd();
+    window.location.href = "/login";
+  }
+
+  return (
+    <Button
+      className="inline-flex items-center gap-1 font-semibold text-accent-text disabled:bg-bg-sunken disabled:text-fg-muted"
+      disabled={pending}
+      onClick={() => void handleSignOut()}
+      size="xs"
+      startIcon={<SignOut aria-hidden size={13} weight="regular" />}
+      style={{
+        "--control-color": "var(--accent-text)",
+        minWidth: 0,
+        paddingLeft: "8px",
+        paddingRight: "8px",
+      }}
+      type="button"
+      variant="ghost"
+    >
+      {t("logout")}
+    </Button>
+  );
+}

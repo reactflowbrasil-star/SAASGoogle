@@ -1,0 +1,234 @@
+import "server-only";
+import type { PaidCallPayment } from "@/lib/action-payment/paid-call";
+import { domainOverviewRates, rankedKeywordPageRate } from "@/lib/cost-estimate/provider-rates";
+import {
+  ProviderLookupSignal,
+  paidProviderCall,
+  preflightProviderBudget,
+  requiredEstimatedCostCents,
+} from "@/lib/provider-lookups/paid-call";
+import { LIST_PROVIDER_RATE_CONTEXT } from "@/lib/provider-rates/resolver";
+import type { RequestCostLimit } from "@/lib/provider-usage/request-cost-limit";
+import { type ProviderRequestOrigin, surfaceOf } from "@/lib/provider-usage/surface";
+import { DOMAIN_HISTORY_MONTHS, previousFullHistoryMonths } from "@/lib/providers/history-window";
+import type { SerpRankLocation } from "@/lib/serp/location";
+import {
+  researchProviderLanguageCode,
+  researchProviderLocation,
+} from "@/lib/serp/research-capability";
+import type { DomainOverviewSource } from "./context";
+import type { DomainOverviewResearchScope, DomainOverviewScope } from "./types";
+
+function estimate(input: {
+  itemCount: number;
+  rate: Parameters<typeof requiredEstimatedCostCents>[0]["rate"];
+  source: DomainOverviewSource;
+}) {
+  return requiredEstimatedCostCents({
+    context: LIST_PROVIDER_RATE_CONTEXT,
+    itemCount: input.itemCount,
+    providerId: input.source.provider.id,
+    rate: input.rate,
+  });
+}
+
+export function domainOverviewEstimate(input: {
+  keywordLimit: number;
+  pageLimit: number;
+  source: DomainOverviewSource;
+}) {
+  const rates = domainOverviewRates(input.source.provider.id);
+  const overview = estimate({ itemCount: 1, rate: rates.overview, source: input.source });
+  const history = estimate({
+    itemCount: DOMAIN_HISTORY_MONTHS,
+    rate: rates.history,
+    source: input.source,
+  });
+  const keywords = estimate({
+    itemCount: input.keywordLimit,
+    rate: rankedKeywordPageRate(input.source.provider.id),
+    source: input.source,
+  });
+  const pages = estimate({ itemCount: input.pageLimit, rate: rates.pages, source: input.source });
+  return { core: overview + keywords + pages, history, keywords, overview, pages };
+}
+
+function paidCallInput(input: {
+  payment?: PaidCallPayment;
+  costLimit?: RequestCostLimit;
+  origin: ProviderRequestOrigin;
+  projectId: string;
+  source: DomainOverviewSource;
+}) {
+  return {
+    payment: input.payment,
+    connection: input.source.connection,
+    costLimit: input.costLimit,
+    credential: input.origin.credential,
+    feature: "domain_overview" as const,
+    projectId: input.projectId,
+    provider: input.source.provider,
+    source: input.origin.source,
+    trigger: "manual" as const,
+  };
+}
+
+function providerLocation(researchScope: DomainOverviewResearchScope): SerpRankLocation {
+  return researchProviderLocation(researchScope);
+}
+
+function providerTarget(
+  input: DomainOverviewResearchScope & {
+    scope: DomainOverviewScope;
+    target: string;
+  },
+) {
+  const languageCode = researchProviderLanguageCode(input.countryCode ?? "", input.languageCode);
+  return {
+    includeSubdomains: input.scope === "root",
+    languageCode,
+    location: providerLocation(input),
+    locationCode: input.locationCode,
+    target: input.target,
+  };
+}
+
+export function assertDomainOverviewMaxCost(estimatedCostCents: number, maxCostCents?: number) {
+  if (maxCostCents !== undefined && estimatedCostCents > maxCostCents) {
+    throw new ProviderLookupSignal({
+      estimatedCostCents,
+      ok: false,
+      reason: "cost_limit_exceeded",
+    });
+  }
+}
+
+export function domainOverviewCostReservation(maxCostCents: number | undefined) {
+  let reserved = 0;
+  return (nextCostCents: number) => {
+    assertDomainOverviewMaxCost(reserved + nextCostCents, maxCostCents);
+    reserved += nextCostCents;
+  };
+}
+
+export function preflightDomainOverview(input: {
+  connectionId: string;
+  estimatedCostCents: number;
+  estimatedUsageQuantity?: number;
+  origin: ProviderRequestOrigin;
+  projectId: string;
+  provider: string;
+}) {
+  return preflightProviderBudget({ ...input, surface: surfaceOf(input.origin.source) });
+}
+
+export function fetchDomainOverviewMetrics(
+  input: DomainOverviewResearchScope & {
+    payment?: PaidCallPayment;
+    costLimit?: RequestCostLimit;
+    origin: ProviderRequestOrigin;
+    projectId: string;
+    scope: DomainOverviewScope;
+    source: DomainOverviewSource;
+    target: string;
+  },
+) {
+  return paidProviderCall({
+    ...paidCallInput(input),
+    call: (credentials, usage) =>
+      input.source.provider.fetchDomainRankOverview(credentials, {
+        ...providerTarget(input),
+        attribution: usage,
+        tag: usage?.tag,
+      }),
+    itemCount: 1,
+    rate: domainOverviewRates(input.source.provider.id).overview,
+  });
+}
+
+export function fetchDomainHistory(
+  input: DomainOverviewResearchScope & {
+    payment?: PaidCallPayment;
+    costLimit?: RequestCostLimit;
+    origin: ProviderRequestOrigin;
+    projectId: string;
+    scope: DomainOverviewScope;
+    source: DomainOverviewSource;
+    target: string;
+  },
+) {
+  const historyWindow = previousFullHistoryMonths(DOMAIN_HISTORY_MONTHS);
+  return paidProviderCall({
+    ...paidCallInput(input),
+    call: (credentials, usage) =>
+      input.source.provider.fetchHistoricalRankOverview(credentials, {
+        ...providerTarget(input),
+        dateFrom: historyWindow.dateFrom,
+        dateTo: historyWindow.dateTo,
+        attribution: usage,
+        tag: usage?.tag,
+      }),
+    itemCount: DOMAIN_HISTORY_MONTHS,
+    historyWindow,
+    rate: domainOverviewRates(input.source.provider.id).history,
+  });
+}
+
+export function fetchDomainKeywords(
+  input: DomainOverviewResearchScope & {
+    limit: number;
+    offset: number;
+    payment?: PaidCallPayment;
+    costLimit?: RequestCostLimit;
+    origin: ProviderRequestOrigin;
+    projectId: string;
+    source: DomainOverviewSource;
+    target: string;
+  },
+) {
+  const languageCode = researchProviderLanguageCode(input.countryCode ?? "", input.languageCode);
+  return paidProviderCall({
+    ...paidCallInput(input),
+    call: (credentials, usage) =>
+      input.source.provider.fetchRankedKeywords(credentials, {
+        domain: input.target,
+        languageCode,
+        limit: input.limit,
+        location: providerLocation(input),
+        locationCode: input.locationCode,
+        offset: input.offset,
+        attribution: usage,
+        tag: usage?.tag,
+      }),
+    itemCount: input.limit,
+    rate: rankedKeywordPageRate(input.source.provider.id),
+  });
+}
+
+export function fetchDomainPages(
+  input: DomainOverviewResearchScope & {
+    limit: number;
+    offset: number;
+    payment?: PaidCallPayment;
+    costLimit?: RequestCostLimit;
+    origin: ProviderRequestOrigin;
+    projectId: string;
+    scope: DomainOverviewScope;
+    source: DomainOverviewSource;
+    target: string;
+  },
+) {
+  return paidProviderCall({
+    ...paidCallInput(input),
+    call: (credentials, usage) =>
+      input.source.provider.fetchRelevantPages(credentials, {
+        ...providerTarget(input),
+        limit: input.limit,
+        offset: input.offset,
+        attribution: usage,
+        tag: usage?.tag,
+      }),
+    itemCount: input.limit,
+    rate: domainOverviewRates(input.source.provider.id).pages,
+  });
+}

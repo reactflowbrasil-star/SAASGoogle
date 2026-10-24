@@ -1,0 +1,463 @@
+import {
+  authFeatureTestMessages,
+  renderWithFeatureMessages,
+} from "@/i18n/test-support/render-with-feature-messages";
+import type { LoginFormValues } from "@/lib/auth/login-schema";
+import type { SignInCapacity, SignInCapacityMiss } from "@/lib/auth/signin-capacity-types";
+import type { LegalConsentLinks } from "@/lib/deployment/legal";
+import { screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import type { UseFormRegister } from "react-hook-form";
+import { describe, expect, it, vi } from "vitest";
+import { type EnabledOAuthProviders, LoginEmailStep, type OAuthProvider } from "./LoginEmailStep";
+import { JoinedToday } from "./SignInCapacity";
+
+function render(
+  ui: ReactElement,
+  options: Parameters<typeof renderWithFeatureMessages>[1] = { messages: authFeatureTestMessages },
+) {
+  return renderWithFeatureMessages(ui, options);
+}
+
+const enabledProviders = {
+  github: true,
+  google: true,
+} satisfies EnabledOAuthProviders;
+
+const disabledProviders = {
+  github: false,
+  google: false,
+} satisfies EnabledOAuthProviders;
+
+const cloudLegalConsentLinks = {
+  privacyHref: "/privacy",
+  termsHref: "/terms",
+} satisfies LegalConsentLinks;
+
+const betaEmailCapacity = {
+  emailCodes: { binding: "daily", cap: 200, left: 143 },
+  googleSpots: { cap: 100, left: 14 },
+  signupsToday: 0,
+} satisfies SignInCapacity;
+
+function renderStep(
+  providers: EnabledOAuthProviders,
+  legalConsentLinks: LegalConsentLinks | null = cloudLegalConsentLinks,
+  capacity: SignInCapacity | null = null,
+  capacityMiss: SignInCapacityMiss = null,
+  emailSignInUnavailable = false,
+  options: Parameters<typeof renderWithFeatureMessages>[1] = { messages: authFeatureTestMessages },
+) {
+  const register = (() => ({
+    name: "email",
+    onBlur: vi.fn(),
+    onChange: vi.fn(),
+    ref: vi.fn(),
+  })) as UseFormRegister<LoginFormValues>;
+
+  return render(
+    <LoginEmailStep
+      capacity={capacity}
+      capacityMiss={capacityMiss}
+      dataResidencyMessage="Your data is stored and processed in the EU."
+      emailSignInUnavailable={emailSignInUnavailable}
+      enabledProviders={providers}
+      errors={{}}
+      formError={null}
+      isSubmitting={false}
+      legalConsentLinks={legalConsentLinks}
+      onProviderSignIn={vi.fn<(provider: OAuthProvider) => void>()}
+      onSubmit={(event) => event.preventDefault()}
+      register={register}
+      socialProvider={null}
+    />,
+    options,
+  );
+}
+
+describe("LoginEmailStep", () => {
+  it("renders only server-enabled social providers", () => {
+    renderStep({ github: true, google: false });
+
+    expect(screen.getByRole("button", { name: /continue with github/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /continue with google/i })).toBeNull();
+    expect(screen.getByText("OR")).toBeInTheDocument();
+  });
+
+  it("hides social provider controls when none are enabled", () => {
+    renderStep(disabledProviders);
+
+    expect(screen.queryByRole("button", { name: /continue with github/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /continue with google/i })).toBeNull();
+    expect(screen.queryByText("OR")).toBeNull();
+  });
+
+  it("keeps the email section off the residency note when no provider block precedes it", () => {
+    const withProviders = renderStep(enabledProviders);
+    expect(withProviders.getByTestId("login-email-section")).not.toHaveClass("mt-[26px]");
+    withProviders.unmount();
+
+    renderStep(disabledProviders);
+    expect(screen.getByTestId("login-email-section")).toHaveClass("mt-[26px]");
+  });
+
+  it("hides the joined-today line when nobody joined yet", () => {
+    renderStep(enabledProviders, cloudLegalConsentLinks, {
+      emailCodes: { binding: "daily", cap: 200, left: 143 },
+      googleSpots: { cap: 100, left: 14 },
+      signupsToday: 0,
+    });
+
+    expect(screen.queryByText(/people joined today/)).toBeNull();
+  });
+
+  it("uses injected Polish one, few, and many forms for joined-today counts", () => {
+    const messages = structuredClone(authFeatureTestMessages);
+    messages.auth.capacity.joinedToday =
+      "{count, plural, one {# osoba dołączyła dzisiaj} few {# osoby dołączyły dzisiaj} many {# osób dołączyło dzisiaj} other {# osoby dołączyły dzisiaj}}";
+    const options = { locale: "pl" as const, messages };
+
+    for (const [signupsToday, expected] of [
+      [1, "1 osoba dołączyła dzisiaj"],
+      [2, "2 osoby dołączyły dzisiaj"],
+      [5, "5 osób dołączyło dzisiaj"],
+    ] as const) {
+      const rendered = render(<JoinedToday count={signupsToday} />, options);
+      expect(screen.getByText(expected)).toBeInTheDocument();
+      rendered.unmount();
+    }
+
+    render(<JoinedToday count={0} />, options);
+    expect(screen.queryByText(/dołączy/)).toBeNull();
+  });
+
+  it("renders both configured social providers", () => {
+    renderStep(enabledProviders);
+
+    expect(screen.getByRole("button", { name: /continue with github/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue with google/i })).toBeInTheDocument();
+  });
+
+  it("renders the data residency note", () => {
+    renderStep(disabledProviders);
+
+    expect(screen.getByText("Your data is stored and processed in the EU.")).toBeInTheDocument();
+  });
+
+  it("replaces the email form with an unavailable state while retaining OAuth", () => {
+    renderStep(enabledProviders, cloudLegalConsentLinks, null, null, true);
+
+    expect(screen.getByRole("button", { name: "Continue with GitHub" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue with Google" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Email sign-in unavailable" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This instance has no email provider configured, so sign-in codes cannot be sent. The instance admin needs to set EMAIL_PROVIDER.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send login code" })).not.toBeInTheDocument();
+    const docsLink = screen.getByRole("link", { name: "Configure email delivery" });
+    expect(docsLink).toHaveAttribute("href", "https://bisibility.com/docs/self-hosting/email");
+    expect(docsLink.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("reminds users to keep the submitted inbox available", () => {
+    renderStep(disabledProviders);
+
+    expect(screen.getByText(/Make sure you can open that inbox\./)).toBeInTheDocument();
+  });
+
+  it("keeps both consent links and their spacing unchanged in cloud mode", () => {
+    const { container } = renderStep(disabledProviders);
+
+    const terms = screen.getByRole("link", { name: "Terms" });
+    const privacy = screen.getByRole("link", { name: "Privacy Policy" });
+    const consent = container.querySelector("p.mt-5\\.5");
+    // No capacity means no hosted beta, so the beta-email clause is deliberately absent here.
+    expect(consent).toHaveTextContent("By continuing you agree to the Terms and Privacy Policy.");
+    expect(terms).toHaveAttribute("href", "/terms");
+    expect(terms).not.toHaveAttribute("target");
+    expect(privacy).toHaveAttribute("href", "/privacy");
+  });
+
+  it("omits the consent line when no operator links are configured", () => {
+    renderStep(disabledProviders, null);
+
+    expect(screen.queryByText(/By continuing you agree/)).toBeNull();
+  });
+
+  it.each([
+    {
+      betaEnabled: false,
+      expected: "By continuing you agree to the Terms and Privacy Policy.",
+      name: "both links",
+      links: cloudLegalConsentLinks,
+      privacy: { href: "/privacy", external: false },
+      terms: { href: "/terms", external: false },
+    },
+    {
+      betaEnabled: true,
+      expected:
+        "By continuing you agree to the Terms and Privacy Policy, and to service emails (updates, incidents, pricing).",
+      name: "both links",
+      links: cloudLegalConsentLinks,
+      privacy: { href: "/privacy", external: false },
+      terms: { href: "/terms", external: false },
+    },
+    {
+      betaEnabled: false,
+      expected: "By continuing you agree to the Terms.",
+      name: "terms only",
+      links: { privacyHref: null, termsHref: "HTTPS://operator.example.com/terms" },
+      privacy: null,
+      terms: { href: "HTTPS://operator.example.com/terms", external: true },
+    },
+    {
+      betaEnabled: true,
+      expected:
+        "By continuing you agree to the Terms, and to service emails (updates, incidents, pricing).",
+      name: "terms only",
+      links: { privacyHref: null, termsHref: "HTTPS://operator.example.com/terms" },
+      privacy: null,
+      terms: { href: "HTTPS://operator.example.com/terms", external: true },
+    },
+    {
+      betaEnabled: false,
+      expected: "By continuing you agree to the Privacy Policy.",
+      name: "privacy only",
+      links: { privacyHref: "/operator-privacy", termsHref: null },
+      privacy: { href: "/operator-privacy", external: false },
+      terms: null,
+    },
+    {
+      betaEnabled: true,
+      expected:
+        "By continuing you agree to the Privacy Policy, and to service emails (updates, incidents, pricing).",
+      name: "privacy only",
+      links: { privacyHref: "/operator-privacy", termsHref: null },
+      privacy: { href: "/operator-privacy", external: false },
+      terms: null,
+    },
+    {
+      betaEnabled: false,
+      expected: null,
+      name: "no links",
+      links: null,
+      privacy: null,
+      terms: null,
+    },
+    {
+      betaEnabled: true,
+      expected: null,
+      name: "no links",
+      links: null,
+      privacy: null,
+      terms: null,
+    },
+  ] as const)(
+    "preserves consent for $name with beta enabled: $betaEnabled",
+    ({ betaEnabled, expected, links, privacy, terms }) => {
+      const { container } = renderStep(
+        disabledProviders,
+        links,
+        betaEnabled ? betaEmailCapacity : null,
+      );
+      const consent = container.querySelector("p.mt-5\\.5");
+
+      if (!expected) {
+        expect(consent).toBeNull();
+        expect(screen.queryByRole("link", { name: "Terms" })).toBeNull();
+        expect(screen.queryByRole("link", { name: "Privacy Policy" })).toBeNull();
+        return;
+      }
+
+      expect(consent).toHaveTextContent(expected);
+
+      for (const [label, expectedLink] of [
+        ["Terms", terms],
+        ["Privacy Policy", privacy],
+      ] as const) {
+        const link = screen.queryByRole("link", { name: label });
+
+        if (!expectedLink) {
+          expect(link).toBeNull();
+          continue;
+        }
+
+        expect(link).toHaveAttribute("href", expectedLink.href);
+        if (expectedLink.external) {
+          expect(link).toHaveAttribute("target", "_blank");
+          expect(link).toHaveAttribute("rel", "noreferrer");
+        } else {
+          expect(link).not.toHaveAttribute("target");
+          expect(link).not.toHaveAttribute("rel");
+        }
+      }
+    },
+  );
+
+  it("renders terms-only wording and external-link attributes", () => {
+    renderStep(disabledProviders, {
+      privacyHref: null,
+      termsHref: "HTTPS://operator.example.com/terms",
+    });
+
+    const terms = screen.getByRole("link", { name: "Terms" });
+    expect(screen.getByText(/By continuing you agree/)).toHaveTextContent(
+      "By continuing you agree to the Terms.",
+    );
+    expect(terms).toHaveAttribute("href", "HTTPS://operator.example.com/terms");
+    expect(terms).toHaveAttribute("target", "_blank");
+    expect(terms).toHaveAttribute("rel", "noreferrer");
+    expect(screen.queryByRole("link", { name: "Privacy Policy" })).toBeNull();
+  });
+
+  it("renders privacy-only wording with a relative link", () => {
+    renderStep(disabledProviders, {
+      privacyHref: "/operator-privacy",
+      termsHref: null,
+    });
+
+    const privacy = screen.getByRole("link", { name: "Privacy Policy" });
+    expect(screen.getByText(/By continuing you agree/)).toHaveTextContent(
+      "By continuing you agree to the Privacy Policy.",
+    );
+    expect(privacy).toHaveAttribute("href", "/operator-privacy");
+    expect(privacy).not.toHaveAttribute("target");
+    expect(screen.queryByRole("link", { name: "Terms" })).toBeNull();
+  });
+
+  it("does not render a rejected terms URL", () => {
+    renderStep(disabledProviders, {
+      privacyHref: "/safe-privacy",
+      termsHref: null,
+    });
+
+    expect(screen.queryByRole("link", { name: "Terms" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Privacy Policy" })).toHaveAttribute(
+      "href",
+      "/safe-privacy",
+    );
+  });
+
+  it("keeps login behavior free of capacity UI when capacity is unavailable", () => {
+    renderStep(enabledProviders, null);
+
+    expect(screen.getByLabelText("Email")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send login code" })).toBeInTheDocument();
+    expect(screen.queryByText(/early-access spots left/)).toBeNull();
+    expect(screen.queryByText(/login codes left today/)).toBeNull();
+    expect(screen.queryByText(/people joined today/)).toBeNull();
+  });
+
+  it("hides the positive Google counter while preserving email capacity", () => {
+    renderStep(enabledProviders, cloudLegalConsentLinks, {
+      emailCodes: { binding: "daily", cap: 200, left: 143 },
+      googleSpots: { cap: 100, left: 14 },
+      signupsToday: 26,
+    });
+
+    expect(
+      screen.getByRole("heading", { name: "Sign in or create an account" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Google sign-up spots left/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue with Google" })).toBeEnabled();
+    expect(screen.getByText("143 of 200 login codes left today")).toBeInTheDocument();
+  });
+
+  it("omits the email meter and gate when capacity is unknown", () => {
+    renderStep(enabledProviders, cloudLegalConsentLinks, {
+      emailCodes: null,
+      googleSpots: { cap: 100, left: 14 },
+      signupsToday: 26,
+    });
+
+    expect(screen.getByLabelText("Email")).toBeInTheDocument();
+    expect(screen.queryByText(/login codes left today/)).toBeNull();
+  });
+
+  it("keeps Google enabled while new sign-ups are full", () => {
+    renderStep(enabledProviders, cloudLegalConsentLinks, {
+      emailCodes: { binding: "daily", cap: 200, left: 143 },
+      googleSpots: { cap: 100, left: 0 },
+      signupsToday: 26,
+    });
+
+    expect(screen.getByRole("button", { name: "Continue with Google" })).toBeEnabled();
+    expect(
+      screen.getByText(
+        "New Google sign-ups are full while Google reviews our verification request. Existing Google accounts still work - or use email below.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the approved full-card copy when both providers are full", () => {
+    renderStep(enabledProviders, cloudLegalConsentLinks, {
+      emailCodes: { binding: "daily", cap: 200, left: 0 },
+      googleSpots: { cap: 100, left: 0 },
+      signupsToday: 26,
+    });
+
+    expect(screen.getByRole("heading", { name: "We're at capacity today" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Self-host bisibility - it's open source" }),
+    ).toHaveAttribute("href", "https://bisibility.com/docs/self-hosting");
+    expect(screen.queryByRole("button", { name: "Continue with Google" })).toBeNull();
+  });
+
+  it("uses next-month copy when the monthly email limit binds", () => {
+    renderStep(enabledProviders, cloudLegalConsentLinks, {
+      emailCodes: { binding: "monthly", cap: 3_000, left: 0 },
+      googleSpots: { cap: 100, left: 14 },
+      signupsToday: 26,
+    });
+
+    expect(screen.getByText(/More free up at the start of next month \(UTC\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/More free up within 24 hours/)).toBeNull();
+  });
+
+  it("uses next-month copy in the full-card state", () => {
+    renderStep(enabledProviders, cloudLegalConsentLinks, {
+      emailCodes: { binding: "monthly", cap: 3_000, left: 0 },
+      googleSpots: { cap: 100, left: 0 },
+      signupsToday: 26,
+    });
+
+    expect(
+      screen.getByRole("heading", { name: "We're at capacity this month" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/More codes free up at the start of next month \(UTC\)/),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "google",
+      "The last Google sign-up spots were taken a moment ago. Existing Google accounts still work - or use email below.",
+    ],
+    [
+      "email",
+      "The last login codes went out while you were on this page - nothing was sent to your address.",
+    ],
+  ] as const)("renders the %s just-missed state", (miss, copy) => {
+    renderStep(
+      enabledProviders,
+      cloudLegalConsentLinks,
+      {
+        emailCodes: { binding: "daily", cap: 200, left: 143 },
+        googleSpots: { cap: 100, left: 14 },
+        signupsToday: 26,
+      },
+      miss,
+    );
+
+    expect(
+      screen.getByText(
+        (_content, element) =>
+          element?.tagName === "P" && element.textContent === `Just missed it. ${copy}`,
+      ),
+    ).toBeInTheDocument();
+  });
+});

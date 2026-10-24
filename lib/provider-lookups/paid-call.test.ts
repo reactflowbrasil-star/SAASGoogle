@@ -1,0 +1,1254 @@
+import {
+  BacklinksHistoryEvidenceError,
+  fetchBacklinksAnalysis,
+} from "@/lib/backlinks/provider-call";
+import {
+  BudgetExhaustedError,
+  ProviderAllocationExhaustedError,
+} from "@/lib/metering/admission-errors";
+import {
+  adoptedTimestampQuery,
+  projectTestBudget,
+  utcTimestampControl,
+} from "@/lib/metering/read.test-fixture";
+import { encode } from "@/lib/metering/store/codec";
+import { OperationAccessDeniedError } from "@/lib/operations/access-error";
+import { type byokTestEvidence, testOwnAdmission } from "@/lib/provider-usage/byok-test-evidence";
+import { byokTestJournal } from "@/lib/provider-usage/byok-test-journal";
+import type { ProviderCredentials } from "@/lib/providers/types";
+import type { SerpRankLocation } from "@/lib/serp/location";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  attribution: vi.fn(),
+  assertOperationAccess: vi.fn(),
+  correlationId: "00000000-0000-4000-8000-000000000000",
+  entries: [] as Array<Record<string, unknown>>,
+  ledger: [] as Array<{ costCents: number; failed: boolean }>,
+  prisma: {
+    meteringUsageEvidence: undefined as unknown as ReturnType<
+      typeof byokTestEvidence
+    >["meteringUsageEvidence"],
+    $executeRaw: vi.fn(),
+    $queryRawUnsafe: vi.fn(),
+    $queryRaw: vi.fn(),
+    $transaction: vi.fn(),
+    project: { findUnique: vi.fn() },
+    providerConnection: { findFirst: vi.fn(), findUnique: vi.fn() },
+    providerConnectionRate: { findMany: vi.fn() },
+    providerCostEntry: {
+      aggregate: vi.fn(),
+      count: vi.fn(),
+      create: vi.fn(),
+      createMany: vi.fn(),
+      deleteMany: vi.fn(),
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      groupBy: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    rankCheck: { aggregate: vi.fn() },
+  },
+  resolveCredentials: vi.fn(),
+  consumeLimit: vi.fn(),
+  startExecution: vi.fn(),
+  markReauth: vi.fn(),
+}));
+
+// Where-clause matcher for the fake provider cost entry table.
+function _entryMatches(row: Record<string, unknown>, where: Record<string, unknown> = {}): boolean {
+  return Object.entries(where).every(([key, value]) => {
+    if (key === "OR") {
+      return (value as Array<Record<string, unknown>>).some((clause) => _entryMatches(row, clause));
+    }
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      if ("notIn" in value) return !(value as { notIn: unknown[] }).notIn.includes(row[key]);
+      if ("in" in value) return (value as { in: unknown[] }).in.includes(row[key]);
+      if ("not" in value) return row[key] !== (value as { not: unknown }).not;
+    }
+    if (value === null) return row[key] == null;
+    return row[key] === value;
+  });
+}
+
+vi.mock("@/lib/db/prisma", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/operations/access-extension", () => ({
+  assertOperationAccess: mocks.assertOperationAccess,
+}));
+vi.mock("@/lib/provider-usage/tag", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/provider-usage/tag")>();
+  return {
+    ...actual,
+    createProviderRequestAttribution: (
+      ...args: Parameters<typeof actual.createProviderRequestAttribution>
+    ) => {
+      mocks.attribution(args[0]);
+      return actual.createProviderRequestAttribution(
+        { ...args[0], correlationId: mocks.correlationId },
+        args[1],
+        args[2],
+      );
+    },
+  };
+});
+vi.mock("@/lib/providers/credentials", () => ({
+  resolveProviderCredentials: mocks.resolveCredentials,
+}));
+vi.mock("@/lib/providers/rate-limit", () => ({ consumeProviderLimit: mocks.consumeLimit }));
+vi.mock("@/lib/providers/auth-state", () => ({ markProviderNeedsReauth: mocks.markReauth }));
+vi.mock("@/lib/providers/execution-extension", () => ({
+  startDeploymentExecution: mocks.startExecution,
+}));
+vi.mock("@/lib/providers/execution-authority", () => ({
+  readDeploymentMeteringPreflightAuthority: async () => "legacy",
+}));
+
+import {
+  backlinksRates,
+  keywordMetricsRate,
+  keywordResearchRate,
+} from "@/lib/cost-estimate/provider-rates";
+import { LIST_PROVIDER_RATE_CONTEXT } from "@/lib/provider-rates/resolver";
+import { ProviderAuthError } from "@/lib/providers/auth-error";
+import { ProviderCallError } from "@/lib/providers/call-error";
+import * as historyWindow from "@/lib/providers/history-window";
+import { dataForSeoProvider } from "@/lib/providers/serp/dataforseo";
+import { DataForSeoUnsupportedLocationError } from "@/lib/providers/serp/dataforseo-errors";
+import { ProviderUsagePersistenceError } from "@/lib/providers/usage";
+import { monthlySpendCents } from "@/lib/rank-check/budget";
+import { paidProviderCall, requiredEstimatedCostCents } from "./paid-call";
+import { deploymentEstimate } from "./paid-call-deployment";
+
+const location: SerpRankLocation = {
+  gl: "us",
+  hl: "en",
+  primaryGeoCode: null,
+  primaryGeoName: "United States",
+  secondaryGeoName: "United States",
+};
+
+function runSuggestions(
+  call = dataForSeoProvider.fetchKeywordSuggestions,
+  requiredCredentialSource?: "own",
+  onNotDispatched?: () => void,
+) {
+  if (!call) throw new Error("Suggestions capability is unavailable.");
+  return paidProviderCall({
+    call: (credentials) =>
+      call(credentials, {
+        includeClickstream: false,
+        limit: 100,
+        location,
+        seed: "rank tracker",
+      }),
+    connection: { credentialsEncrypted: "encrypted", id: "connection_1", provider: "dataforseo" },
+    feature: "keyword_research",
+    itemCount: 100,
+    projectId: "project_1",
+    provider: dataForSeoProvider,
+    requiredCredentialSource,
+    onNotDispatched,
+    rate: keywordResearchRate("dataforseo", "suggestions"),
+    source: "app",
+    trigger: "manual",
+  });
+}
+
+function observedMock<T extends { costCents: number }>(result: T) {
+  return vi.fn(async (credentials: ProviderCredentials) => {
+    const observer = credentials.usageObserver;
+    if (!observer) throw new ProviderUsagePersistenceError();
+    const id = await observer.begin({ attemptKey: crypto.randomUUID() });
+    await observer.beforeDispatch?.(id);
+    await observer.settle(id, {
+      cached: false,
+      failed: false,
+      costCents: result.costCents,
+      quantity: 1,
+    });
+    return result;
+  });
+}
+
+function observedFailure(error: DataForSeoUnsupportedLocationError) {
+  return async (credentials: ProviderCredentials) => {
+    const observer = credentials.usageObserver;
+    if (!observer) throw new ProviderUsagePersistenceError();
+    const id = await observer.begin({ attemptKey: crypto.randomUUID() });
+    await observer.beforeDispatch?.(id);
+    await observer.settle(id, {
+      cached: false,
+      failed: true,
+      costCents: error.costCents,
+      quantity: 1,
+    });
+    throw error;
+  };
+}
+
+describe("paid provider lookup", () => {
+  it.each(["unpriced", "unconfirmed"])(
+    "retains summary evidence for %s history",
+    async (scenario) => {
+      const invalidWindow =
+        scenario === "unpriced"
+          ? vi
+              .spyOn(historyWindow, "previousFullHistoryMonths")
+              .mockReturnValue(Object.freeze({ dateFrom: "invalid", dateTo: "invalid" }))
+          : null;
+      const provider = dataForSeoProvider;
+      if (
+        !provider.fetchBacklinksSummary ||
+        !provider.fetchBacklinksHistory ||
+        !provider.fetchBacklinksRows
+      )
+        throw new Error("Backlinks capability is unavailable.");
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({
+            cost: 0.012,
+            status_code: 20000,
+            tasks: [
+              { cost: 0.012, id: "summary", status_code: 20000, result: [{ backlinks: 12 }] },
+            ],
+          }),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            status_code: 20000,
+            tasks: [{ id: "history", status_code: 40501, status_message: "History unavailable" }],
+          }),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+      const failure = await fetchBacklinksAnalysis({
+        includeSubdomains: true,
+        mode: "as_is",
+        origin: { source: "mcp" },
+        projectId: "project_1",
+        resultLimit: 100,
+        scope: "site",
+        source: {
+          connection: {
+            credentialSource: "own",
+            publicId: "conn_a00000000000000000000000",
+            updatedAt: new Date("2026-10-21T12:00:00Z"),
+            credentialsEncrypted: "encrypted",
+            id: "connection_1",
+            provider: "dataforseo",
+          },
+          provider: {
+            ...provider,
+            fetchBacklinksSummary: provider.fetchBacklinksSummary,
+            fetchBacklinksHistory: provider.fetchBacklinksHistory,
+            fetchBacklinksRows: provider.fetchBacklinksRows,
+          },
+        },
+        target: "example.com",
+      }).catch((error: unknown) => error);
+      invalidWindow?.mockRestore();
+      expect(failure, failure instanceof Error ? failure.stack : undefined).toBeInstanceOf(
+        BacklinksHistoryEvidenceError,
+      );
+      expect(failure).toMatchObject({
+        knownSummaryCostCents: 1.2,
+        summary: { backlinksTotal: 12 },
+        historyFailure: {
+          code: "provider_usage_unconfirmed",
+          phase: scenario === "unpriced" ? "admission" : "measurement",
+        },
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(scenario === "unpriced" ? 1 : 2);
+      expect(mocks.entries).toEqual([
+        expect.objectContaining({ feature: "backlinks", source: "mcp", costCents: 1.2 }),
+        ...(scenario === "unconfirmed"
+          ? [
+              expect.objectContaining({
+                feature: "backlinks",
+                source: "mcp",
+                providerRequestId: "history",
+                measurementStatus: "unknown",
+                receipt: expect.objectContaining({ costCents: null, failed: true }),
+              }),
+            ]
+          : []),
+      ]);
+    },
+  );
+  it.each(["own", "hosted"])(
+    "passes internal scheduled correlation through %s accounting admission",
+    async (credentialSource) => {
+      mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+        credentialSource,
+        credentialsEncrypted: "encrypted",
+        projectId: "project_1",
+        provider: "dataforseo",
+      });
+      const request = paidProviderCall({
+        call: observedMock({ costCents: 1 }),
+        connection: {
+          credentialsEncrypted: "encrypted",
+          id: "connection_1",
+          provider: "dataforseo",
+        },
+        correlationId: "tracking-attempt",
+        feature: "ai_tracking",
+        itemCount: 1,
+        projectId: "project_1",
+        provider: dataForSeoProvider,
+        rate: {
+          costCents: 1,
+          feature: "prompt_explorer",
+          providerId: "dataforseo",
+          checkedAt: "2026-10-08",
+          sourceUrl: "https://dataforseo.com/pricing",
+        },
+        source: "worker",
+        trigger: "scheduled",
+      });
+      if (credentialSource === "hosted")
+        await expect(request).rejects.toBeInstanceOf(ProviderUsagePersistenceError);
+      else await expect(request).resolves.toMatchObject({ costCents: 1 });
+      expect(mocks.attribution).toHaveBeenCalledWith(
+        expect.objectContaining({
+          correlationId: "tracking-attempt",
+          feature: "ai_tracking",
+          source: "worker",
+          trigger: "scheduled",
+        }),
+      );
+    },
+  );
+  it("accepts representational float noise from the actual provider rate estimator", () => {
+    for (const itemCount of [28, 53, 57, 72, 78, 97]) {
+      const estimate = requiredEstimatedCostCents({
+        context: { entries: [], manualAmountCents: null },
+        itemCount,
+        providerId: "dataforseo",
+        rate: backlinksRates("dataforseo").rows,
+      });
+      expect(Number(deploymentEstimate(estimate, 4))).toBe(
+        Number((2.4 + itemCount * 0.0036).toFixed(4)),
+      );
+    }
+    expect(() => deploymentEstimate(2.28001, 4)).toThrow(RangeError);
+  });
+  it("rejects estimates that cannot be admitted as exact decimals", () => {
+    for (const value of [0, -1, NaN, Infinity, 0.00001, 1e-7, 1e12]) {
+      expect(() => deploymentEstimate(value, 4)).toThrow(RangeError);
+    }
+    expect(deploymentEstimate(0.0625, 4)).toBe("0.0625");
+    expect(deploymentEstimate(3, 6)).toBe("3");
+    expect(deploymentEstimate(99999999.9999, 4)).toBe("99999999.9999");
+    expect(() => deploymentEstimate(100000000, 4)).toThrow(RangeError);
+    expect(deploymentEstimate(999999999999, 6)).toBe("999999999999");
+    expect(() => deploymentEstimate(1000000000000, 6)).toThrow(RangeError);
+  });
+  beforeEach(() => {
+    mocks.prisma.$queryRawUnsafe.mockImplementation(adoptedTimestampQuery);
+    mocks.prisma.$executeRaw.mockImplementation(utcTimestampControl);
+    vi.setSystemTime(new Date("2026-10-11T12:00:00Z"));
+    const fixture = byokTestJournal("dataforseo");
+    mocks.prisma.meteringUsageEvidence = fixture.table;
+    Object.defineProperty(mocks, "entries", { configurable: true, get: () => fixture.rows });
+    Object.defineProperty(mocks, "ledger", {
+      configurable: true,
+      get: () =>
+        fixture.rows
+          .filter((row) => row.measurementStatus === "recorded")
+          .map((row) => ({ costCents: row.costCents, failed: Boolean(row.failed) })),
+    });
+    mocks.correlationId = "00000000-0000-4000-8000-000000000000";
+    mocks.ledger.length = 0;
+    mocks.entries.length = 0;
+    mocks.resolveCredentials.mockReturnValue({ login: "login", password: "secret" });
+    mocks.consumeLimit.mockResolvedValue({ success: true });
+    mocks.startExecution.mockResolvedValue(null);
+    mocks.prisma.project.findUnique.mockResolvedValue({
+      ownerId: "owner_1",
+      providerAllocationsInitializedAt: null,
+    });
+    mocks.prisma.rankCheck.aggregate.mockResolvedValue({
+      _sum: { costCents: null, estimatedCostCents: null },
+    });
+    mocks.prisma.providerConnectionRate.findMany.mockResolvedValue([]);
+    mocks.prisma.providerConnection.findFirst.mockResolvedValue({
+      allocationAmountPerMonth: 100,
+      allocationUnit: "cents",
+    });
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+      credentialSource: "own",
+      credentialsEncrypted: "encrypted",
+      projectId: "project_1",
+      provider: "dataforseo",
+      project: { ownerId: "owner_1" },
+      enabled: true,
+      status: "connected",
+      rates: [],
+    });
+    mocks.prisma.$queryRaw.mockImplementation(async (sql: { text?: string }) =>
+      sql.text?.includes('SUM("costCents")')
+        ? [{ total: mocks.entries.reduce((sum, entry) => sum + Number(entry.costCents ?? 0), 0) }]
+        : sql.text?.includes("FROM metering_budget b")
+          ? [{ body: encode(projectTestBudget(5000)) }]
+          : [],
+    );
+    mocks.prisma.providerCostEntry.count.mockResolvedValue(0);
+    mocks.prisma.providerCostEntry.createMany = fixture.table
+      .createMany as typeof mocks.prisma.providerCostEntry.createMany;
+    mocks.prisma.providerCostEntry.update = fixture.table
+      .update as typeof mocks.prisma.providerCostEntry.update;
+    mocks.prisma.$transaction.mockImplementation(async (run: (tx: unknown) => Promise<unknown>) =>
+      run(mocks.prisma),
+    );
+    mocks.prisma.providerCostEntry.aggregate.mockImplementation(async () => ({
+      _count: { _all: mocks.entries.length },
+      _sum: {
+        costCents: mocks.entries.reduce((sum, entry) => sum + Number(entry.costCents ?? 0), 0),
+        usageQuantity: null,
+      },
+    }));
+    mocks.prisma.providerCostEntry.groupBy.mockImplementation(async (args: unknown) => {
+      const aggregate = await mocks.prisma.providerCostEntry.aggregate(args);
+      return [{ credentialSource: "own", _count: aggregate._count, _sum: aggregate._sum }];
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("refuses a paid call estimate when no provider rate is configured", () => {
+    expect(() =>
+      requiredEstimatedCostCents({
+        context: LIST_PROVIDER_RATE_CONTEXT,
+        itemCount: 100,
+        providerId: "unknown",
+        rate: null,
+      }),
+    ).toThrow("No rate configured for provider unknown.");
+  });
+
+  it("enforces an sdk-sourced call against the programmatic surface", async () => {
+    mocks.prisma.project.findUnique.mockResolvedValue({
+      providerAllocationsInitializedAt: new Date("2026-08-01T00:00:00.000Z"),
+    });
+    mocks.prisma.providerConnection.findFirst.mockResolvedValue({
+      allocationAmountPerMonth: 1000,
+      allocationUnit: "cents",
+      programmaticAllocationAmountPerMonth: 1000,
+    });
+    mocks.prisma.providerCostEntry.aggregate.mockResolvedValue({
+      _count: { _all: 0 },
+      _sum: { costCents: 0, usageQuantity: null },
+    });
+    const call = observedMock({ costCents: 1 });
+
+    await paidProviderCall({
+      call,
+      connection: { credentialsEncrypted: "encrypted", id: "connection_1", provider: "dataforseo" },
+      feature: "keyword_metrics",
+      itemCount: 1,
+      projectId: "project_1",
+      provider: dataForSeoProvider,
+      rate: keywordMetricsRate("dataforseo"),
+      source: "sdk",
+      trigger: "manual",
+    });
+
+    expect(mocks.entries).toEqual([expect.objectContaining({ source: "sdk" })]);
+  });
+
+  it("enforces an app-sourced call against the app surface with legacy rows", async () => {
+    mocks.prisma.project.findUnique.mockResolvedValue({
+      providerAllocationsInitializedAt: new Date("2026-08-01T00:00:00.000Z"),
+    });
+    mocks.prisma.providerConnection.findFirst.mockResolvedValue({
+      allocationAmountPerMonth: 1000,
+      allocationUnit: "cents",
+      programmaticAllocationAmountPerMonth: 1000,
+    });
+    mocks.prisma.providerCostEntry.aggregate.mockResolvedValue({
+      _count: { _all: 0 },
+      _sum: { costCents: 0, usageQuantity: null },
+    });
+    const call = observedMock({ costCents: 1 });
+
+    await paidProviderCall({
+      call,
+      connection: { credentialsEncrypted: "encrypted", id: "connection_1", provider: "dataforseo" },
+      feature: "keyword_metrics",
+      itemCount: 1,
+      projectId: "project_1",
+      provider: dataForSeoProvider,
+      rate: keywordMetricsRate("dataforseo"),
+      source: "app",
+      trigger: "manual",
+    });
+
+    expect(mocks.entries).toEqual([expect.objectContaining({ source: "app" })]);
+  });
+
+  it("carries the exhausted surface on the budget failure outcome", async () => {
+    mocks.prisma.project.findUnique.mockResolvedValue({
+      providerAllocationsInitializedAt: new Date("2026-08-01T00:00:00.000Z"),
+    });
+    mocks.prisma.providerConnection.findFirst.mockResolvedValue({
+      allocationAmountPerMonth: 1000,
+      allocationUnit: "cents",
+      programmaticAllocationAmountPerMonth: 8,
+    });
+    mocks.prisma.providerCostEntry.aggregate.mockResolvedValue({
+      _count: { _all: 8 },
+      _sum: { costCents: 8, usageQuantity: null },
+    });
+    const call = observedMock({ costCents: 1 });
+    const onNotDispatched = vi.fn();
+
+    testOwnAdmission.reserve.mockRejectedValueOnce(
+      new ProviderAllocationExhaustedError("connection_1", "programmatic"),
+    );
+    await expect(
+      paidProviderCall({
+        call,
+        onNotDispatched,
+        connection: {
+          credentialsEncrypted: "encrypted",
+          id: "connection_1",
+          provider: "dataforseo",
+        },
+        feature: "keyword_metrics",
+        itemCount: 1,
+        projectId: "project_1",
+        provider: dataForSeoProvider,
+        rate: keywordMetricsRate("dataforseo"),
+        source: "cli",
+        trigger: "manual",
+      }),
+    ).rejects.toMatchObject({
+      outcome: { provider: "dataforseo", reason: "budget_exhausted", surface: "programmatic" },
+    });
+    expect(onNotDispatched).toHaveBeenCalledTimes(1);
+    expect(testOwnAdmission.acknowledge).not.toHaveBeenCalled();
+  });
+
+  it("ledgers charged validation failures and includes them in monthly spend", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            cost: 0.01,
+            status_code: 20000,
+            tasks: [{ cost: 0.01, status_code: 40501, status_message: "Invalid Field: 'limit'" }],
+          }),
+          { headers: { "Content-Type": "application/json" }, status: 200 },
+        ),
+      ),
+    );
+
+    let validationError: unknown;
+    try {
+      await runSuggestions();
+    } catch (error) {
+      validationError = error;
+    }
+    expect(validationError).toBeInstanceOf(Error);
+    expect((validationError as Error).message).toContain("Invalid Field: 'limit' Sent parameters:");
+    expect((validationError as Error).message).toContain('"keyword":"rank tracker"');
+    expect((validationError as Error).message).toContain('"limit":100');
+    // The journal settles the charged failure onto the durable row it opened.
+    expect(mocks.prisma.providerCostEntry.update).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        receipt: { cached: false, costCents: "1.0000", failed: true, quantity: "1.000000" },
+        measurementStatus: "recorded",
+      }),
+      where: expect.objectContaining({ id: expect.any(String) }),
+    });
+    expect(mocks.entries).toEqual([
+      expect.objectContaining({
+        connectionId: "connection_1",
+        costCents: 1,
+        failed: true,
+        feature: "keyword_research",
+        measurementStatus: "recorded",
+        projectId: "project_1",
+        provider: "dataforseo",
+        source: "app",
+        usageQuantity: 1,
+      }),
+    ]);
+    await expect(monthlySpendCents("project_1")).resolves.toBe(1);
+  });
+
+  it.each([undefined, "own"] as const)(
+    "returns all confirmed request charges with credential requirement %s",
+    async (requiredCredentialSource) => {
+      const result = await paidProviderCall({
+        call: async (credentials) => {
+          const observer = credentials.usageObserver;
+          if (!observer) throw new Error("Missing durable request accounting");
+          await observer.settle(await observer.begin(), {
+            cached: false,
+            failed: true,
+            costCents: 0.25,
+            quantity: 1,
+            providerRequestId: "charged-retry",
+          });
+          await observer.settle(await observer.begin(), {
+            cached: false,
+            failed: false,
+            costCents: 1,
+            quantity: 1,
+            providerRequestId: "success",
+          });
+          return { costCents: 1 };
+        },
+        connection: {
+          credentialsEncrypted: "encrypted",
+          id: "connection_1",
+          provider: "dataforseo",
+        },
+        feature: "keyword_metrics",
+        itemCount: 1,
+        projectId: "project_1",
+        provider: dataForSeoProvider,
+        requiredCredentialSource,
+        rate: keywordMetricsRate("dataforseo"),
+        source: "app",
+        trigger: "manual",
+      });
+      expect(result.costCents).toBe(1.25);
+      expect(mocks.entries).toHaveLength(2);
+      await expect(monthlySpendCents("project_1")).resolves.toBe(1.25);
+    },
+  );
+
+  it("makes no HTTP request when the journal cannot persist its begin row", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    mocks.prisma.providerCostEntry.createMany.mockRejectedValueOnce(
+      new Error("ledger unavailable"),
+    );
+
+    await expect(runSuggestions()).rejects.toBeInstanceOf(ProviderUsagePersistenceError);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.entries).toEqual([]);
+  });
+
+  it("does not issue another paid request when settlement fails and keeps the unknown row", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          cost: 0.01,
+          status_code: 50000,
+          status_message: "Internal error",
+          tasks: [{ cost: 0.01, status_code: 50000, status_message: "Internal error" }],
+        }),
+        { headers: { "Content-Type": "application/json" }, status: 500 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    mocks.prisma.providerCostEntry.update.mockRejectedValue(new Error("ledger unavailable"));
+
+    await expect(runSuggestions()).rejects.toBeInstanceOf(ProviderUsagePersistenceError);
+    // The retryable HTTP 500 must not be retried once accounting has failed.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.entries).toEqual([
+      expect.objectContaining({ costCents: 0, measurementStatus: "unknown" }),
+    ]);
+  });
+
+  it("passes complete attribution to the paid client and ledger", async () => {
+    const call = observedMock({ costCents: 1 });
+
+    await paidProviderCall({
+      call,
+      connection: { credentialsEncrypted: "encrypted", id: "connection_1", provider: "dataforseo" },
+      feature: "keyword_metrics",
+      itemCount: 1,
+      projectId: "project_1",
+      provider: dataForSeoProvider,
+      rate: keywordMetricsRate("dataforseo"),
+      source: "sdk",
+      trigger: "manual",
+    });
+
+    expect(call).toHaveBeenCalledWith(
+      expect.objectContaining({
+        login: "login",
+        password: "secret",
+        usageObserver: expect.objectContaining({
+          begin: expect.any(Function),
+          settle: expect.any(Function),
+        }),
+      }),
+      expect.objectContaining({
+        context: expect.objectContaining({
+          feature: "keyword_metrics",
+          projectId: "project_1",
+          source: "sdk",
+          trigger: "manual",
+        }),
+        tag: expect.stringMatching(/;src=sdk;trg=manual;f=keyword_metrics;p=project_1;c=/),
+      }),
+    );
+    expect(mocks.prisma.providerCostEntry.createMany).toHaveBeenCalledWith({
+      data: expect.objectContaining({ source: "sdk" }),
+    });
+  });
+
+  it("passes the credential through the attribution to the ledger on success and charged failure", async () => {
+    const credential = { id: "key_1", kind: "project_key" as const };
+    const call = observedMock({ costCents: 1 });
+
+    await paidProviderCall({
+      call,
+      connection: { credentialsEncrypted: "encrypted", id: "connection_1", provider: "dataforseo" },
+      credential,
+      feature: "keyword_metrics",
+      itemCount: 1,
+      projectId: "project_1",
+      provider: dataForSeoProvider,
+      rate: keywordMetricsRate("dataforseo"),
+      source: "sdk",
+      trigger: "manual",
+    });
+
+    expect(call).toHaveBeenCalledWith(
+      expect.objectContaining({
+        login: "login",
+        password: "secret",
+        usageObserver: expect.objectContaining({
+          begin: expect.any(Function),
+          settle: expect.any(Function),
+        }),
+      }),
+      expect.objectContaining({ credential: { id: "key_1", kind: "project_key" } }),
+    );
+    expect(mocks.prisma.providerCostEntry.createMany).toHaveBeenCalledWith({
+      data: expect.objectContaining({ credentialId: "key_1", credentialKind: "project_key" }),
+    });
+
+    mocks.prisma.providerCostEntry.createMany.mockClear();
+    await expect(
+      paidProviderCall({
+        call: observedFailure(new DataForSeoUnsupportedLocationError("unsupported", 7)),
+        connection: {
+          credentialsEncrypted: "encrypted",
+          id: "connection_1",
+          provider: "dataforseo",
+        },
+        credential,
+        feature: "keyword_metrics",
+        itemCount: 1,
+        projectId: "project_1",
+        provider: dataForSeoProvider,
+        rate: keywordMetricsRate("dataforseo"),
+        source: "sdk",
+        trigger: "manual",
+      }),
+    ).rejects.toMatchObject({ outcome: { costCents: 7, reason: "unsupported_location" } });
+    expect(mocks.prisma.providerCostEntry.createMany).toHaveBeenCalledWith({
+      data: expect.objectContaining({ credentialId: "key_1", credentialKind: "project_key" }),
+    });
+  });
+
+  it("rejects an adjacent over-boundary correlation before calling or recording cost", async () => {
+    const shortestPrefix = "app=b;stage=dev;src=sdk;trg=manual;f=keyword_metrics;p=p;c=";
+    const acceptedCorrelationId = "c".repeat(255 - Buffer.byteLength(shortestPrefix, "utf8"));
+    mocks.correlationId = `${acceptedCorrelationId}c`;
+    expect(Buffer.byteLength(`${shortestPrefix}${mocks.correlationId}`, "utf8")).toBe(256);
+    const call = observedMock({ costCents: 1 });
+
+    await expect(
+      paidProviderCall({
+        call,
+        connection: {
+          credentialsEncrypted: "encrypted",
+          id: "connection_1",
+          provider: "dataforseo",
+        },
+        feature: "keyword_metrics",
+        itemCount: 1,
+        projectId: "project_1",
+        provider: dataForSeoProvider,
+        rate: keywordMetricsRate("dataforseo"),
+        source: "sdk",
+        trigger: "manual",
+      }),
+    ).rejects.toThrow("correlationId is too long");
+    expect(call).not.toHaveBeenCalled();
+    expect(mocks.prisma.providerCostEntry.createMany).not.toHaveBeenCalled();
+  });
+
+  it("does not ledger transport errors", async () => {
+    await expect(
+      runSuggestions(async () => {
+        throw new TypeError("network unavailable");
+      }),
+    ).rejects.toThrow("network unavailable");
+
+    expect(mocks.prisma.providerCostEntry.createMany).not.toHaveBeenCalled();
+  });
+
+  it("propagates charged usage recorder storage failures", async () => {
+    const storageFailure = new Error("ledger unavailable");
+    mocks.prisma.providerCostEntry.createMany.mockRejectedValueOnce(storageFailure);
+
+    await expect(
+      runSuggestions(observedFailure(new DataForSeoUnsupportedLocationError("unsupported", 7))),
+    ).rejects.toBeInstanceOf(ProviderUsagePersistenceError);
+  });
+
+  it("preserves an auth outcome when charged usage recording fails", async () => {
+    mocks.prisma.providerCostEntry.createMany.mockRejectedValueOnce(
+      new Error("ledger unavailable"),
+    );
+    await expect(
+      paidProviderCall({
+        call: async () => {
+          throw Object.assign(new ProviderAuthError("dataforseo", "Unauthorized"), {
+            costCents: 7,
+          });
+        },
+        connection: {
+          credentialsEncrypted: "encrypted",
+          id: "connection_1",
+          provider: "dataforseo",
+        },
+        feature: "keyword_metrics",
+        itemCount: 1,
+        projectId: "project_1",
+        provider: dataForSeoProvider,
+        rate: keywordMetricsRate("dataforseo"),
+        source: "app",
+        trigger: "manual",
+      }),
+    ).rejects.toMatchObject({ outcome: { costCents: 7, reason: "needs_reauth" } });
+  });
+
+  it("preserves charged cost when mapping unsupported locations to a signal", async () => {
+    await expect(
+      paidProviderCall({
+        call: observedFailure(new DataForSeoUnsupportedLocationError("unsupported", 7)),
+        connection: {
+          credentialsEncrypted: "encrypted",
+          id: "connection_1",
+          provider: "dataforseo",
+        },
+        feature: "keyword_metrics",
+        itemCount: 1,
+        projectId: "project_1",
+        provider: dataForSeoProvider,
+        rate: keywordMetricsRate("dataforseo"),
+        source: "app",
+        trigger: "manual",
+      }),
+    ).rejects.toMatchObject({
+      outcome: { costCents: 7, reason: "unsupported_location" },
+    });
+    expect(mocks.ledger).toEqual([{ costCents: 7, failed: true }]);
+  });
+
+  it.each([
+    ["manual", { entries: [], manualAmountCents: 0.01 }],
+    [
+      "measured",
+      {
+        entries: Array.from({ length: 5 }, () => ({
+          cached: false,
+          costCents: 1.1,
+          createdAt: new Date("2026-07-27T00:00:00.000Z"),
+          failed: false,
+          unitCostCents: 0.01,
+        })),
+        manualAmountCents: null,
+      },
+    ],
+    ["list", LIST_PROVIDER_RATE_CONTEXT],
+  ] as const)(
+    "applies the budget gate despite stale caller %s rates",
+    async (_source, rateContext) => {
+      const call = observedMock({ costCents: 11, rows: [] });
+      mocks.prisma.project.findUnique.mockResolvedValue({
+        providerAllocationsInitializedAt: null,
+      });
+
+      testOwnAdmission.reserve.mockRejectedValueOnce(
+        new BudgetExhaustedError({ projectId: "project_1", capCents: 10.5, spentCents: 10.5 }),
+      );
+      await expect(
+        paidProviderCall({
+          call,
+          connection: {
+            credentialsEncrypted: "encrypted",
+            id: "connection_1",
+            provider: "dataforseo",
+          },
+          feature: "keyword_metrics",
+          itemCount: 700,
+          projectId: "project_1",
+          provider: dataForSeoProvider,
+          rate: keywordMetricsRate("dataforseo"),
+          rateContext,
+          source: "app",
+          trigger: "manual",
+        }),
+      ).rejects.toMatchObject({ outcome: { reason: "budget_exhausted" } });
+      expect(testOwnAdmission.acknowledge).not.toHaveBeenCalled();
+    },
+  );
+
+  it("denies a new paid provider request before any provider work when the access gate refuses", async () => {
+    mocks.assertOperationAccess.mockRejectedValueOnce(new OperationAccessDeniedError());
+    const call = vi.fn();
+
+    await expect(runSuggestions(call)).rejects.toThrow(new OperationAccessDeniedError());
+
+    expect(mocks.assertOperationAccess).toHaveBeenCalledWith("project_1");
+    expect(mocks.resolveCredentials).not.toHaveBeenCalled();
+    expect(mocks.consumeLimit).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
+    expect(mocks.ledger).toEqual([]);
+  });
+
+  it("admits the paid provider call when the access gate allows the project", async () => {
+    mocks.assertOperationAccess.mockResolvedValueOnce(undefined);
+
+    await runSuggestions(observedMock({ costCents: 20, rows: [] }));
+
+    expect(mocks.assertOperationAccess).toHaveBeenCalledWith("project_1");
+    expect(mocks.ledger).toEqual([{ costCents: 20, failed: false }]);
+  });
+
+  it("fails closed when a hosted connection has no deployment execution", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+      credentialSource: "hosted",
+      projectId: "project_1",
+      provider: "dataforseo",
+    });
+    const call = vi.fn();
+    await expect(runSuggestions(call)).rejects.toBeInstanceOf(ProviderUsagePersistenceError);
+    expect(call).not.toHaveBeenCalled();
+    expect(mocks.resolveCredentials).not.toHaveBeenCalled();
+    expect(mocks.prisma.providerCostEntry.createMany).not.toHaveBeenCalled();
+    expect(mocks.startExecution).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["hosted", "unexpected", null])(
+    "requires own credentials before any provider work when the current source is %s",
+    async (credentialSource) => {
+      mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+        credentialSource,
+        projectId: "project_1",
+        provider: "dataforseo",
+      });
+      const call = vi.fn();
+
+      await expect(runSuggestions(call, "own")).rejects.toMatchObject({
+        outcome: { ok: false, reason: "own_credentials_required" },
+      });
+      expect(mocks.prisma.providerConnectionRate.findMany).not.toHaveBeenCalled();
+      expect(mocks.prisma.project.findUnique).not.toHaveBeenCalled();
+      expect(mocks.startExecution).not.toHaveBeenCalled();
+      expect(mocks.resolveCredentials).not.toHaveBeenCalled();
+      expect(mocks.consumeLimit).not.toHaveBeenCalled();
+      expect(mocks.prisma.providerCostEntry.createMany).not.toHaveBeenCalled();
+      expect(call).not.toHaveBeenCalled();
+      expect(mocks.ledger).toEqual([]);
+    },
+  );
+
+  it.each([
+    null,
+    { credentialSource: "hosted", projectId: "other_project", provider: "dataforseo" },
+    { credentialSource: "hosted", projectId: "project_1", provider: "serpapi" },
+  ])(
+    "preserves connection isolation before checking required credentials: %j",
+    async (connection) => {
+      mocks.prisma.providerConnection.findUnique.mockResolvedValue(connection);
+      const call = vi.fn();
+
+      await expect(runSuggestions(call, "own")).rejects.toBeInstanceOf(
+        ProviderUsagePersistenceError,
+      );
+      expect(mocks.prisma.providerConnectionRate.findMany).not.toHaveBeenCalled();
+      expect(mocks.startExecution).not.toHaveBeenCalled();
+      expect(mocks.resolveCredentials).not.toHaveBeenCalled();
+      expect(mocks.consumeLimit).not.toHaveBeenCalled();
+      expect(call).not.toHaveBeenCalled();
+    },
+  );
+
+  it("ignores a stale own-key caller rate when estimating deployment execution", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+      credentialSource: "hosted",
+      projectId: "project_1",
+      provider: "dataforseo",
+    });
+    const call = vi.fn();
+    await expect(
+      paidProviderCall({
+        call,
+        connection: {
+          credentialsEncrypted: "encrypted",
+          id: "connection_1",
+          provider: "dataforseo",
+        },
+        feature: "keyword_research",
+        itemCount: 100,
+        projectId: "project_1",
+        provider: dataForSeoProvider,
+        rate: keywordResearchRate("dataforseo", "suggestions"),
+        rateContext: { entries: [], manualAmountCents: 0.0001 },
+        source: "app",
+        trigger: "manual",
+      }),
+    ).rejects.toBeInstanceOf(ProviderUsagePersistenceError);
+    expect(mocks.startExecution).toHaveBeenCalledWith(
+      expect.objectContaining({ estimatedCostCents: "2.4" }),
+    );
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("rejects provider mismatch before credentials or deployment admission", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+      credentialSource: "hosted",
+      projectId: "project_1",
+      provider: "serpapi",
+    });
+    const call = vi.fn();
+    await expect(runSuggestions(call)).rejects.toBeInstanceOf(ProviderUsagePersistenceError);
+    expect(mocks.startExecution).not.toHaveBeenCalled();
+    expect(mocks.resolveCredentials).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "own"] as const)(
+    "refuses an own-to-hosted source change before decryption with requirement %s",
+    async (requiredCredentialSource) => {
+      mocks.prisma.providerConnection.findUnique
+        .mockResolvedValueOnce({
+          credentialSource: "own",
+          credentialsEncrypted: "encrypted",
+          projectId: "project_1",
+          provider: "dataforseo",
+        })
+        .mockResolvedValueOnce({
+          credentialSource: "hosted",
+          projectId: "project_1",
+          provider: "dataforseo",
+        });
+      const call = vi.fn();
+      await expect(runSuggestions(call, requiredCredentialSource)).rejects.toBeInstanceOf(
+        ProviderUsagePersistenceError,
+      );
+      expect(mocks.startExecution).not.toHaveBeenCalled();
+      expect(mocks.resolveCredentials).not.toHaveBeenCalled();
+      expect(mocks.consumeLimit).not.toHaveBeenCalled();
+      expect(call).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["first", "second"])(
+    "refuses own credential rotation at the %s authoritative read",
+    async (stage) => {
+      const original = {
+        credentialSource: "own",
+        credentialsEncrypted: "encrypted",
+        projectId: "project_1",
+        provider: "dataforseo",
+      };
+      const rotated = { ...original, credentialsEncrypted: "fictional-rotated-reference" };
+      if (stage === "first")
+        mocks.prisma.providerConnection.findUnique.mockResolvedValueOnce(rotated);
+      else
+        mocks.prisma.providerConnection.findUnique
+          .mockResolvedValueOnce(original)
+          .mockResolvedValueOnce(rotated);
+      const call = vi.fn();
+      await expect(runSuggestions(call, "own")).rejects.toMatchObject({
+        outcome: { ok: false, reason: "credentials_changed" },
+      });
+      expect(mocks.startExecution).not.toHaveBeenCalled();
+      expect(mocks.resolveCredentials).not.toHaveBeenCalled();
+      expect(mocks.consumeLimit).not.toHaveBeenCalled();
+      expect(call).not.toHaveBeenCalled();
+      expect(mocks.ledger).toEqual([]);
+    },
+  );
+
+  it("uses deployment credentials and credit attribution despite a retained own key", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+      credentialSource: "hosted",
+      credentialsEncrypted: "retained-key",
+      projectId: "project_1",
+      provider: "dataforseo",
+    });
+    const credentials = { login: "shared", password: "hosted-only" };
+    const finish = vi.fn();
+    mocks.startExecution.mockResolvedValue({
+      credentials,
+      started: true,
+      costCents: 1.25,
+      quantity: 1,
+      finish,
+    });
+    const call = vi.fn().mockResolvedValue({ rows: [], costCents: 99 });
+    await expect(runSuggestions(call)).resolves.toMatchObject({ costCents: 1.25 });
+    expect(call).toHaveBeenCalledOnce();
+    expect(call).toHaveBeenCalledWith(
+      credentials,
+      expect.objectContaining({ seed: "rank tracker" }),
+    );
+    expect(mocks.startExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attribution: expect.objectContaining({ tag: expect.stringContaining(";cs=hosted;") }),
+        connectionId: "connection_1",
+      }),
+    );
+    expect(mocks.resolveCredentials).not.toHaveBeenCalled();
+    expect(mocks.ledger).toEqual([]);
+    expect(finish).toHaveBeenCalledOnce();
+  });
+
+  it("finishes a hosted rate-limit refusal without calling the provider", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+      credentialSource: "hosted",
+      projectId: "project_1",
+      provider: "dataforseo",
+    });
+    const finish = vi.fn().mockResolvedValue(undefined);
+    mocks.startExecution.mockResolvedValue({
+      credentials: { login: "shared", password: "fixture" },
+      started: false,
+      costCents: null,
+      quantity: null,
+      finish,
+    });
+    mocks.consumeLimit.mockResolvedValue({ success: false, resetAt: new Date() });
+    const call = vi.fn();
+    await expect(runSuggestions(call)).rejects.toMatchObject({
+      outcome: { reason: "rate_limited" },
+    });
+    expect(finish).toHaveBeenCalledTimes(1);
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("does not record a hosted callback that never begins or mark shared auth reauth", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+      credentialSource: "hosted",
+      projectId: "project_1",
+      provider: "dataforseo",
+    });
+    const finish = vi.fn().mockResolvedValue(undefined);
+    mocks.startExecution.mockResolvedValue({
+      credentials: { login: "shared", password: "fixture" },
+      started: false,
+      costCents: null,
+      quantity: null,
+      finish,
+    });
+    await expect(runSuggestions(observedMock({ costCents: 12, rows: [] }))).rejects.toBeInstanceOf(
+      ProviderUsagePersistenceError,
+    );
+    await expect(
+      runSuggestions(vi.fn().mockRejectedValue(new ProviderAuthError("dataforseo"))),
+    ).rejects.toBeInstanceOf(ProviderAuthError);
+    expect(mocks.markReauth).not.toHaveBeenCalled();
+    expect(mocks.prisma.providerCostEntry.createMany).not.toHaveBeenCalled();
+    expect(finish).toHaveBeenCalledTimes(2);
+  });
+
+  it("marks only proven unsent hosted admission failures as retryable", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+      credentialSource: "hosted",
+      projectId: "project_1",
+      provider: "dataforseo",
+    });
+    const onNotDispatched = vi.fn();
+    mocks.startExecution.mockResolvedValue({
+      credentials: { login: "shared", password: "fixture" },
+      started: false,
+      costCents: null,
+      quantity: null,
+      finish: vi.fn().mockResolvedValue(undefined),
+    });
+    await expect(
+      runSuggestions(
+        vi
+          .fn()
+          .mockRejectedValue(
+            new BudgetExhaustedError({ projectId: "project_1", capCents: 1, spentCents: 1 }),
+          ),
+        undefined,
+        onNotDispatched,
+      ),
+    ).rejects.toMatchObject({ code: "budget_exhausted" });
+    expect(onNotDispatched).toHaveBeenCalledTimes(1);
+    onNotDispatched.mockClear();
+    await expect(
+      runSuggestions(
+        vi.fn().mockRejectedValue(new ProviderCallError("charged", 99)),
+        undefined,
+        onNotDispatched,
+      ),
+    ).rejects.toBeInstanceOf(ProviderUsagePersistenceError);
+    expect(onNotDispatched).not.toHaveBeenCalled();
+    mocks.startExecution.mockResolvedValue({
+      credentials: { login: "shared", password: "fixture" },
+      started: true,
+      costCents: 0.06,
+      quantity: 1,
+      finish: vi.fn().mockResolvedValue(undefined),
+    });
+    await expect(
+      runSuggestions(
+        vi
+          .fn()
+          .mockRejectedValue(
+            new BudgetExhaustedError({ projectId: "project_1", capCents: 1, spentCents: 1 }),
+          ),
+        undefined,
+        onNotDispatched,
+      ),
+    ).rejects.toMatchObject({ code: "budget_exhausted" });
+    expect(onNotDispatched).not.toHaveBeenCalled();
+  });
+
+  it("preserves a measured hosted failure cost and refuses an unobserved charged error", async () => {
+    mocks.prisma.providerConnection.findUnique.mockResolvedValue({
+      credentialSource: "hosted",
+      projectId: "project_1",
+      provider: "dataforseo",
+    });
+    mocks.startExecution.mockResolvedValue({
+      credentials: { login: "shared", password: "fixture" },
+      started: true,
+      costCents: 0.06,
+      quantity: 1,
+      finish: vi.fn().mockResolvedValue(undefined),
+    });
+    await expect(
+      runSuggestions(vi.fn().mockRejectedValue(new ProviderCallError("charged", 99))),
+    ).rejects.toMatchObject({ costCents: 0.06 });
+    mocks.startExecution.mockResolvedValue({
+      credentials: { login: "shared", password: "fixture" },
+      started: false,
+      costCents: null,
+      quantity: null,
+      finish: vi.fn().mockResolvedValue(undefined),
+    });
+    await expect(
+      runSuggestions(vi.fn().mockRejectedValue(new ProviderCallError("charged", 99))),
+    ).rejects.toBeInstanceOf(ProviderUsagePersistenceError);
+    expect(mocks.prisma.providerCostEntry.createMany).not.toHaveBeenCalled();
+  });
+});
+
+vi.mock("@/lib/provider-usage/admission-extension", async () => ({
+  ownAdmission: (await import("@/lib/provider-usage/byok-test-evidence")).testOwnAdmission,
+}));

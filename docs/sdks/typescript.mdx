@@ -1,0 +1,81 @@
+---
+title: "TypeScript SDK"
+description: "Install and authenticate the TypeScript SDK, then list projects."
+---
+
+## Install
+
+```bash
+npm install @bisibility/sdk
+```
+
+The current docs-tested package is `@bisibility/sdk@0.14.1`. It requires
+Node 18+ and is ESM-only. See [Versioning and support](/versioning).
+
+## Authenticate
+
+Keep the API root and credential in environment variables:
+
+```bash
+export BISIBILITY_API_KEY="your-api-key"
+export BISIBILITY_BASE_URL="https://your-host.example/api/v1"
+```
+
+The client accepts project API keys and
+[personal access tokens](/api/personal-access-tokens).
+
+## List projects
+
+This copyable quickstart constructs the client and lists projects with the
+current resource-namespace API. Paste it into a fresh file after the install
+and environment steps above:
+
+{/* docs-example:start typescript-client-usage */}
+{/* Generated from examples/ts/list-projects.ts. Do not edit. */}
+```typescript
+import { BisibilityClient } from "@bisibility/sdk";
+
+const apiKey = process.env.BISIBILITY_API_KEY;
+const baseUrl = process.env.BISIBILITY_BASE_URL;
+
+if (!apiKey || !baseUrl) {
+  throw new Error("Set BISIBILITY_API_KEY and BISIBILITY_BASE_URL before running this example.");
+}
+
+const bisibility = new BisibilityClient({
+  apiKey,
+  baseUrl,
+});
+
+const projects = await bisibility.projects.list();
+
+for (const project of projects.data) {
+  console.log(project.id, project.name);
+}
+
+console.log("OK ts-list-projects");
+```
+{/* docs-example:end typescript-client-usage */}
+
+A successful run prints each project id and name, then `OK ts-list-projects`.
+
+The TypeScript SDK prefers resource namespaces such as `projects.list()`.
+Flat methods such as `listProjects()` remain only as deprecated compatibility
+delegates until 1.0.
+
+See [`GET /projects`](/api-reference/projects/list-projects-visible-to-this-api-key)
+for the request and response contract.
+
+The [complete TypeScript example](https://github.com/CorgiCorner/bisibility/blob/main/examples/ts/quickstart.ts)
+also creates a keyword, runs a rank check, and cleans up.
+
+## Next steps
+
+The [SDK method reference](/sdks/methods) maps common workflows to TypeScript
+method names.
+
+The [canonical SDK behavior contract](/sdks/behavior) defines retries, timeouts,
+cancellation, errors, headers, and cursor iteration across languages.
+
+The [TypeScript SDK source](https://github.com/CorgiCorner/bisibility-sdk-ts)
+contains the complete client surface and exported types.

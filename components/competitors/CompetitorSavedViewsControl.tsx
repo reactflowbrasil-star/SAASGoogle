@@ -1,0 +1,190 @@
+"use client";
+
+import { useSharedErrorMessages } from "@/components/i18n/useSharedErrorMessages";
+import { presentSafeActionError } from "@/components/keywords/safe-action-error";
+import { Button } from "@/components/ui/Button";
+import { Divider } from "@/components/ui/Divider";
+import { Menu } from "@/components/ui/Menu";
+import { MenuItem } from "@/components/ui/MenuItem";
+import { StatusPill } from "@/components/ui/StatusPill";
+import { useToast } from "@/components/ui/toast-context";
+import {
+  type CompetitorSavedViewConfig,
+  competitorSavedViewHref,
+} from "@/lib/competitors/saved-view-model";
+import { competitorScopeHref } from "@/lib/competitors/scope-model";
+import type { DeleteSavedViewInput } from "@/lib/keywords/saved-view-model";
+import type { ProjectRef } from "@/lib/routing/app-path";
+import type { KeywordPersonalViewContext } from "@/lib/saved-views/keyword-personal-context";
+import type {
+  CompetitorSavedView,
+  CreateProjectSavedViewInput,
+  SavedViewResource,
+} from "@/lib/saved-views/model";
+import { BookmarkSimpleIcon as BookmarkSimple } from "@phosphor-icons/react/dist/csr/BookmarkSimple";
+import { CaretDownIcon as CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
+import { CheckIcon as Check } from "@phosphor-icons/react/dist/csr/Check";
+import { TrashIcon as Trash } from "@phosphor-icons/react/dist/csr/Trash";
+import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { useState, useTransition } from "react";
+import { CompetitorPersonalViewControl } from "./CompetitorPersonalViewControl";
+import { SaveCompetitorViewModal } from "./SaveCompetitorViewModal";
+
+type CompetitorSavedViewsControlProps = {
+  activeViewId: string | null;
+  config: CompetitorSavedViewConfig;
+  createSavedViewAction?: (input: CreateProjectSavedViewInput) => Promise<SavedViewResource>;
+  deletableSavedViewIds: readonly string[];
+  deleteSavedViewAction?: (input: DeleteSavedViewInput) => Promise<unknown>;
+  modified: boolean;
+  onDiscard: () => void;
+  onSaved: () => void;
+  projectId: string;
+  projectRef: ProjectRef;
+  savedViews: CompetitorSavedView[];
+  personalViews?: KeywordPersonalViewContext;
+  canCreateSharedView?: boolean;
+  onClearDraft?: () => void;
+};
+
+export function CompetitorSavedViewsControl(props: Readonly<CompetitorSavedViewsControlProps>) {
+  if (props.personalViews)
+    return (
+      <CompetitorPersonalViewControl
+        context={props.personalViews}
+        config={props.config}
+        activeViewId={props.activeViewId}
+        projectId={props.projectId}
+        canCreateShared={props.canCreateSharedView ?? false}
+        modified={props.modified}
+        onDiscard={props.onDiscard}
+        onClearDraft={props.onClearDraft}
+      />
+    );
+  return <SharedCompetitorSavedViewsControl {...props} />;
+}
+
+function SharedCompetitorSavedViewsControl({
+  activeViewId,
+  config,
+  createSavedViewAction,
+  deletableSavedViewIds,
+  deleteSavedViewAction,
+  modified,
+  onDiscard,
+  onSaved,
+  projectId,
+  projectRef,
+  savedViews,
+}: Readonly<CompetitorSavedViewsControlProps>) {
+  const t = useTranslations("projectCompetitors.ui");
+  const sharedErrors = useSharedErrorMessages();
+  const router = useRouter();
+  const { showToast } = useToast();
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const active = savedViews.find((view) => view.id === activeViewId) ?? null;
+  const deletableSavedViewIdSet = new Set(deletableSavedViewIds);
+
+  function remove(view: CompetitorSavedView) {
+    if (!deleteSavedViewAction || !deletableSavedViewIdSet.has(view.id)) return;
+    setAnchorEl(null);
+    startTransition(() => {
+      void deleteSavedViewAction({ projectId, viewId: view.id })
+        .then(() => {
+          showToast(t("viewDeleted"), { severity: "success" });
+          if (view.id === activeViewId) {
+            router.push(competitorScopeHref(projectRef, config.scope));
+          }
+          router.refresh();
+        })
+        .catch((error) =>
+          showToast(presentSafeActionError(error, sharedErrors, t("deleteViewError")), {
+            severity: "error",
+          }),
+        );
+    });
+  }
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          aria-label={active?.name ?? t("comparisonViews")}
+          onClick={(event) => setAnchorEl(event.currentTarget)}
+          size="sm"
+          startIcon={<BookmarkSimple weight="regular" aria-hidden size={14} />}
+          variant="secondary"
+        >
+          {active?.name ?? t("comparisonViews")}
+          {modified ? (
+            <span aria-hidden>
+              <StatusPill status="update" label={t("unsavedChanges")} />
+            </span>
+          ) : null}
+          <CaretDown weight="regular" aria-hidden size={11} />
+        </Button>
+        {createSavedViewAction ? (
+          <Button onClick={() => setSaveOpen(true)} size="sm" variant="secondary">
+            {t("saveView")}
+          </Button>
+        ) : null}
+      </div>
+      <Menu anchorEl={anchorEl} onClose={() => setAnchorEl(null)} open={Boolean(anchorEl)}>
+        {savedViews.map((view) => (
+          <MenuItem
+            disabled={pending}
+            key={view.id}
+            onClick={() => router.push(competitorSavedViewHref(projectRef, view.id, view.config))}
+          >
+            <span className="mr-2 grid w-4 place-items-center">
+              {view.id === activeViewId ? <Check size={13} weight="regular" /> : null}
+            </span>
+            <span className="min-w-0 flex-1 truncate">{view.name}</span>
+            {deleteSavedViewAction && deletableSavedViewIdSet.has(view.id) ? (
+              <button
+                aria-label={t("deleteView", { name: view.name })}
+                className="ml-3 text-fg-muted hover:text-red-text"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  remove(view);
+                }}
+                type="button"
+              >
+                <Trash weight="regular" aria-hidden size={13} />
+              </button>
+            ) : null}
+          </MenuItem>
+        ))}
+        {savedViews.length === 0 ? <MenuItem disabled>{t("noSavedViews")}</MenuItem> : null}
+        {modified ? (
+          <>
+            <Divider />
+            <MenuItem
+              disabled={pending}
+              onClick={() => {
+                setAnchorEl(null);
+                onDiscard();
+              }}
+            >
+              {t("discard")}
+            </MenuItem>
+          </>
+        ) : null}
+      </Menu>
+      {saveOpen ? (
+        <SaveCompetitorViewModal
+          config={config}
+          createSavedViewAction={createSavedViewAction}
+          onClose={() => setSaveOpen(false)}
+          onSaved={onSaved}
+          open
+          projectId={projectId}
+          projectRef={projectRef}
+        />
+      ) : null}
+    </>
+  );
+}

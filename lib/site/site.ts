@@ -1,0 +1,58 @@
+export const DOCS_URL =
+  process.env.NEXT_PUBLIC_DOCS_URL?.trim().replace(/\/$/, "") || "https://bisibility.com/docs";
+// Self-hosted builds have no marketing pages, so vendor routes use this absolute
+// origin instead of broken instance-relative links.
+export const MARKETING_URL =
+  process.env.NEXT_PUBLIC_MARKETING_URL?.trim().replace(/\/$/, "") || "https://bisibility.com";
+export const GITHUB_URL = "https://github.com/CorgiCorner/bisibility";
+export const YOUTUBE_URL = "https://www.youtube.com/@bisibility";
+export const LINKEDIN_URL = "https://www.linkedin.com/company/bisibility";
+export const MEDIUM_URL = "https://medium.com/bisibility";
+export const INSTAGRAM_URL = "https://www.instagram.com/bisibility_com";
+export const X_URL = "https://x.com/bisibility_com";
+export const CLOUD_BETA_SIGNUP_HREF = "/login";
+export const GITHUB_ISSUES_URL = `${GITHUB_URL}/issues/new`;
+export const DISCORD_URL = "https://discord.gg/HcYpvfn79w";
+export const FEEDBACK_URL = "mailto:feedback@bisibility.com?subject=bisibility%20feedback";
+export const LICENSE = "AGPL-3.0-only";
+
+export function isDocsHref(href: string): boolean {
+  const docsBase = DOCS_URL.replace(/\/$/, "");
+  const normalizedHref = href.split(/[?#]/, 1)[0]?.replace(/\/$/, "") ?? "";
+
+  return (
+    normalizedHref === docsBase ||
+    normalizedHref.startsWith(`${docsBase}/`) ||
+    normalizedHref === "/docs" ||
+    normalizedHref.startsWith("/docs/")
+  );
+}
+
+export type DocsLinkPropsOptions = {
+  /** Request external treatment for any href, not just docs links. */
+  external?: boolean;
+};
+
+type ResolvedLinkProps = {
+  href: string;
+  rel: "noreferrer noopener";
+  target: "_blank";
+};
+
+export function docsLinkProps(href: string, options: { external: true }): ResolvedLinkProps;
+export function docsLinkProps(
+  href: string,
+  options?: DocsLinkPropsOptions,
+): Partial<ResolvedLinkProps>;
+export function docsLinkProps(
+  href: string,
+  options?: DocsLinkPropsOptions,
+): Partial<ResolvedLinkProps> {
+  const isDocs = isDocsHref(href);
+  if (!isDocs && !options?.external) {
+    return {};
+  }
+  const externalHref = isDocs && href.startsWith("/docs") ? `${DOCS_URL}${href.slice(5)}` : href;
+
+  return { href: externalHref, rel: "noreferrer noopener", target: "_blank" };
+}

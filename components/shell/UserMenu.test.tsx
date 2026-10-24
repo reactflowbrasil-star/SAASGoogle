@@ -1,0 +1,161 @@
+import { renderWithShellMessages as render } from "@/i18n/test-support/render-with-feature-messages";
+import { deferred } from "@/tests/deferred";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  notifySessionEnd: vi.fn(),
+  showToast: vi.fn(),
+  signOut: vi.fn(),
+}));
+
+vi.mock("@/components/ui/Avatar", () => ({
+  Avatar: ({ initials, src }: { initials: string; src?: string | null }) =>
+    src ? <span data-avatar-src={src} /> : <span>{initials}</span>,
+}));
+vi.mock("@/components/ui/toast-context", () => ({
+  useToast: () => ({ showToast: mocks.showToast }),
+}));
+vi.mock("@/lib/auth/client", () => ({ authClient: { signOut: mocks.signOut } }));
+vi.mock("@/lib/auth/session-end", () => ({
+  notifyAuthenticatedSessionEnd: mocks.notifySessionEnd,
+}));
+vi.mock("@/components/ui/Divider", () => ({
+  Divider: ({ style }: { style?: Record<string, string> }) => (
+    <div data-divider-margin-x={style?.marginLeft} data-testid="user-menu-divider" />
+  ),
+}));
+vi.mock("@/components/ui/Menu", () => ({
+  Menu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("./UserMenuRow", () => ({
+  UserMenuRow: ({
+    disabled,
+    item,
+    onSelect,
+  }: {
+    disabled?: boolean;
+    item: { label: string };
+    onSelect?: () => void;
+  }) =>
+    onSelect ? (
+      <button disabled={disabled} onClick={onSelect} type="button">
+        {item.label}
+      </button>
+    ) : null,
+}));
+
+import { UserMenu } from "./UserMenu";
+
+let assignedHref: string | null = null;
+
+function renderMenu(roleLine = "Member") {
+  render(
+    <UserMenu
+      anchorEl={document.createElement("button")}
+      avatarUrl="https://example.com/avatar.png"
+      email="member@example.com"
+      name="Member Example"
+      onClose={vi.fn()}
+      roleLine={roleLine}
+    />,
+  );
+}
+
+async function clickSignOut() {
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+  await waitFor(() => expect(mocks.signOut).toHaveBeenCalledOnce());
+}
+
+function interceptLocation() {
+  assignedHref = null;
+  vi.stubGlobal("window", {
+    location: {
+      set href(href: string) {
+        assignedHref = href;
+      },
+    },
+  });
+}
+
+describe("UserMenu", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.signOut.mockResolvedValue({});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renders the server-derived avatar URL", () => {
+    renderMenu();
+
+    expect(
+      document.querySelector('[data-avatar-src="https://example.com/avatar.png"]'),
+    ).not.toBeNull();
+  });
+
+  it("renders dividers without a horizontal inset", () => {
+    renderMenu();
+
+    for (const divider of screen.getAllByTestId("user-menu-divider")) {
+      expect(divider).toHaveAttribute("data-divider-margin-x", "-6px");
+    }
+  });
+
+  it("does not render the Keyboard shortcuts command palette row", () => {
+    renderMenu();
+
+    expect(screen.queryByRole("button", { name: "Keyboard shortcuts" })).not.toBeInTheDocument();
+  });
+
+  it("uses the quiet metadata color for the uppercase role line", () => {
+    renderMenu();
+
+    const roleLine = screen.getByText("Member");
+
+    expect(roleLine).toHaveClass("text-fg-muted");
+    expect(roleLine).not.toHaveClass("text-accent-text");
+  });
+
+  it("renders the server-localized role line without rewriting its project name", () => {
+    renderMenu("Właściciel w Projekt Example");
+
+    expect(screen.getByText("Właściciel w Projekt Example")).toBeInTheDocument();
+  });
+
+  it("keeps the user informed when sign out fails", async () => {
+    const signOut = deferred<unknown>();
+    mocks.signOut.mockReturnValue(signOut.promise);
+    renderMenu();
+    const hrefBefore = window.location.href;
+
+    await clickSignOut();
+    signOut.reject(new Error("network"));
+
+    await waitFor(() =>
+      expect(mocks.showToast).toHaveBeenCalledWith("Could not sign out. Please try again.", {
+        severity: "error",
+      }),
+    );
+    expect(window.location.href).toBe(hrefBefore);
+    expect(mocks.notifySessionEnd).not.toHaveBeenCalled();
+  });
+
+  it("navigates to sign in on success", async () => {
+    const signOut = deferred<unknown>();
+    mocks.signOut.mockReturnValue(signOut.promise);
+    renderMenu();
+
+    await clickSignOut();
+    interceptLocation();
+    await act(async () => {
+      signOut.resolve({});
+    });
+
+    expect(assignedHref).toBe("/login");
+    expect(mocks.notifySessionEnd).toHaveBeenCalledOnce();
+  });
+});

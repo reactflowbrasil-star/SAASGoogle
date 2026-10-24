@@ -1,0 +1,41 @@
+---
+title: "Back up and upgrade"
+description: "Protect self-hosted data, upgrade safely, verify health, and plan rollbacks."
+---
+
+## What to back up
+
+The canonical backup and restore procedure - application PostgreSQL,
+`BETTER_AUTH_SECRET`, `BISIBILITY_SECRETS_KEY`, Valkey, Temporal persistence,
+restore commands, and restore rehearsal - lives on the Self-host page:
+[Backup and restore](/self-hosting/backup-restore).
+
+## Upgrade Docker Compose
+
+The canonical upgrade procedure - prerequisites, backup as rollback, release
+asset verification, migration, restart, readiness validation, failure paths,
+and restore - lives on the Self-host page:
+[Self-hosted upgrades](/self-hosting/upgrades). Never enable demo OTP or demo
+seeding on a real deployment. Historical one-time procedures live under
+[Legacy upgrades](/self-hosting/legacy-upgrades).
+
+## Keep web and worker on the same version
+
+The web app and Temporal worker share one Prisma schema. For a split deployment,
+back up PostgreSQL, deploy the web app so migrations apply, then immediately
+deploy the worker from the same release tag. Version skew commonly appears as
+"The column ... does not exist" errors in worker logs or as failing scheduled
+checks while the web app works. For startup and version-skew diagnosis, see
+the canonical [Troubleshooting](/self-hosting/troubleshooting) runbook. Follow
+the canonical [upgrade procedure](/self-hosting/upgrades) for both services.
+
+## Verify and roll back
+
+Readiness checks and rollback procedure live on the canonical Self-host pages.
+After an upgrade, validate readiness using the checks on
+[Self-hosted upgrades](/self-hosting/upgrades). Rolling the application image
+back does not reverse Prisma migrations; see
+[Backup and restore](/self-hosting/backup-restore) for the restore-and-migrate
+rollback path. For managed platforms, use the platform database backup and
+rollback features, but keep independent exports for disaster recovery.
+Deployment topology is in [Self-hosting](/self-hosting).

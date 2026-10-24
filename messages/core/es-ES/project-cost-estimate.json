@@ -1,0 +1,31 @@
+{
+  "projectCostEstimate": {
+    "providerSpend": {
+      "headerUnavailable": "Uso no disponible",
+      "headerUsageUnknown": "Consumo desconocido",
+      "headerCapTooltip": "Uso de presupuestos, incluidas las reservas. Abre Uso para ver los detalles.",
+      "headerNoCap": "Sin presupuesto · Definir uno",
+      "headerNoCapAria": "Sin presupuesto, definir uno",
+      "headerUsed": "{percent}% usado",
+      "headerAtLeastUsed": "Al menos {percent}% usado",
+      "headerUnderOne": "Menos del 1% usado",
+      "headerAtLeastUnderOne": "Al menos algo de uso",
+      "headerExceeded": "Presupuesto excedido",
+      "headerUsageAria": "Uso del presupuesto: {status}. Ver detalles",
+      "headerNoLimit": "Sin límite",
+      "headerWarning": "Alerta de presupuesto"
+    },
+    "status": {
+      "unavailable": "Estimación no disponible.",
+      "retry": "Reintentar",
+      "updating": "Actualizando la estimación…"
+    },
+    "spendInfo": {
+      "aria": "Información sobre el gasto de proveedores",
+      "description": "Tu límite mensual de proveedores y el uso actual.",
+      "session": "{spent} en esta sesión",
+      "details": "Detalles",
+      "setBudget": "Definir presupuesto"
+    }
+  }
+}

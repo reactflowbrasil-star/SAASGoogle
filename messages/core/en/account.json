@@ -1,0 +1,370 @@
+{
+  "account": {
+    "connected": {
+      "connect": "Connect",
+      "connectError": "Could not start the connection.",
+      "connectProvider": "Connect {provider}",
+      "connected": "Connected",
+      "connectedDetail": "Connected to {provider}",
+      "connecting": "Connecting",
+      "description": "Link a provider for one-click sign-in. Sign-in is by email code today; OAuth is optional.",
+      "notConnectedDetail": "Not connected. Sign-in is by email code today.",
+      "providerUnavailable": "{provider} sign-in is not configured.",
+      "title": "Connected accounts"
+    },
+    "delete": {
+      "action": "Delete account",
+      "description": "Permanently delete your account, owned projects and all tracked data. This cannot be undone.",
+      "error": "Account could not be deleted.",
+      "title": "Danger zone",
+      "unavailable": "Delete account is not available."
+    },
+    "demo": {
+      "description": "This shared account is read-only. Email, profile and security settings cannot be changed.",
+      "title": "Demo account"
+    },
+    "email": {
+      "codeSent": "If this address can be used, a verification code will arrive.",
+      "confirm": "Confirm email",
+      "confirmDescription": "Enter the code sent to {email} to verify this account email.",
+      "confirmError": "Account email could not be confirmed.",
+      "description": "The email address used to sign in and receive verification codes.",
+      "errors": {
+        "alreadyVerified": "This email is already verified. Refresh the page to continue.",
+        "currentCodeExpired": "The code from your current email is invalid or expired. Request a new one.",
+        "differentAddress": "Enter a different email address.",
+        "newCodeInvalidOrUnavailable": "The new email verification code is invalid or expired, or the address is unavailable.",
+        "verificationCodeInvalidOrExpired": "The verification code is invalid or expired. Request a new one."
+      },
+      "invalidCode": "Enter the 6-digit verification code.",
+      "invalidEmail": "Enter a valid account email.",
+      "label": "Account email",
+      "sendCode": "Send code",
+      "sendError": "Verification code could not be sent.",
+      "title": "Account email",
+      "unverified": "Unverified",
+      "unverifiedFallback": "No code has been confirmed for this address yet.",
+      "verificationCode": "Verification code",
+      "verified": "Verified",
+      "verifiedFallback": "Verified with your login code. Changing it sends a new code.",
+      "change": {
+        "cancel": "Cancel",
+        "confirm": "Confirm email change",
+        "confirmError": "Account email could not be confirmed.",
+        "currentCode": "Code from your current email",
+        "finishDescription": "Enter the code sent to {email} to finish the change.",
+        "newCode": "Code from your new email",
+        "newEmail": "New email address",
+        "restart": "Start over",
+        "sendError": "Verification code could not be sent.",
+        "sendNewCode": "Send code to the new address",
+        "start": "Change email"
+      }
+    },
+    "navigation": {
+      "ariaLabel": "Account section",
+      "preferences": "Preferences",
+      "profile": "Profile",
+      "security": "Security",
+      "activity": "Activity & badges"
+    },
+    "profile": {
+      "copyUserId": "Copy user ID",
+      "description": "How you appear across bisibility. Email is your sign-in identity.",
+      "displayName": "Display name",
+      "email": "Email",
+      "nameRequired": "Name is required.",
+      "nameTooLong": "Name is too long.",
+      "save": "Save",
+      "saveError": "Profile could not be saved.",
+      "saved": "Profile saved.",
+      "saving": "Saving",
+      "title": "Profile",
+      "unverified": "Unverified",
+      "userId": "User ID",
+      "verified": "Verified via OTP"
+    },
+    "privacy": {
+      "action": "Privacy choices",
+      "description": "Review or change the optional analytics and setup replay choices stored in this browser.",
+      "title": "Privacy choices"
+    },
+    "security": {
+      "backupCodes": {
+        "description": "Save these codes now. They will not be shown again.",
+        "download": "Download .txt",
+        "downloadAriaLabel": "Download recovery codes",
+        "title": "Backup codes"
+      },
+      "twoFactor": {
+        "authenticatorApp": "Authenticator app",
+        "authenticatorCode": "Authenticator code",
+        "backupCode": "Backup code",
+        "backupCodes": "Backup codes",
+        "backupCodesGenerated": "New backup codes generated. Save them now.",
+        "cancel": "Cancel",
+        "currentAuthenticatorCode": "Current authenticator code",
+        "currentBackupCode": "Current backup code",
+        "description": "Add a second step after the email login code.",
+        "disable": "Disable",
+        "disabledRedirecting": "Two-factor authentication disabled. Redirecting to sign in.",
+        "enable": "Enable",
+        "enabled": "Two-factor authentication enabled. Save the backup codes.",
+        "invalidInput": "Enter a valid value and try again.",
+        "notEnabled": "Not enabled",
+        "newCode": "New authenticator code",
+        "password": "Account password",
+        "qrAlt": "Authenticator app QR code",
+        "qrUnavailable": "QR unavailable",
+        "reauthRequired": "Sign out and sign in again before enabling two-factor authentication.",
+        "replaced": "Authenticator replaced. Save the new backup codes.",
+        "replaceAuthenticator": "Replace authenticator",
+        "scanAndVerify": "Scan the QR code and verify the new authenticator.",
+        "secret": "Secret",
+        "signInAgain": "Sign in again",
+        "signOutError": "Sign-out failed. Refresh the page and try again.",
+        "signingOut": "Signing out",
+        "title": "Two-factor authentication",
+        "updateError": "Two-factor authentication could not be updated. Try again.",
+        "verificationMethod": "Verification method",
+        "verificationFailed": "Verification failed. Try again.",
+        "verify": "Verify",
+        "verifyError": "The authenticator could not be verified. Try again.",
+        "verifying": "Verifying",
+        "working": "Working",
+        "manage": {
+          "backup": {
+            "description": "Verify a current factor before replacing every existing backup code.",
+            "label": "Generate new backup codes"
+          },
+          "disable": {
+            "description": "Verify a current factor before removing 2FA. You will be signed out on every device.",
+            "label": "Disable two-factor authentication"
+          },
+          "replace": {
+            "description": "Verify a current factor before replacing the authenticator app.",
+            "label": "Continue"
+          },
+          "setup": {
+            "description": "For security, initial enrollment requires a sign-in from the last five minutes.",
+            "label": "Continue"
+          }
+        },
+        "returnToAdmin": "Return to administration"
+      },
+      "personalTokens": {
+        "cancel": "Cancel",
+        "copyKey": "Copy {name}",
+        "create": "Create token",
+        "createDescription": "Choose the access this token needs. You can revoke it at any time.",
+        "createError": "Personal token could not be created.",
+        "createTitle": "Create personal access token",
+        "creating": "Creating",
+        "dates": {
+          "created": "created {date}",
+          "expired": "expired {date}",
+          "expires": "expires {date}",
+          "lastUsed": "last used {date}",
+          "neverExpires": "never expires",
+          "neverUsed": "never used"
+        },
+        "description": "Account-wide API tokens (bsb_pat_) that act as you across every project you belong to. Also issued by `bisibility auth login`.",
+        "done": "Done",
+        "empty": {
+          "action": "Create your first token",
+          "description": "Create a token for CI or another trusted integration.",
+          "title": "No personal tokens yet"
+        },
+        "expiry": {
+          "30": "30 days",
+          "90": "90 days",
+          "365": "1 year",
+          "label": "Expiry",
+          "never": "Never"
+        },
+        "key": "Token",
+        "name": "Token name",
+        "namePlaceholder": "CI automation",
+        "newTitle": "Personal access token",
+        "oneTimeSecret": "Copy this token now. It will not be shown again.",
+        "revealStorage": "Store it in your password manager or secure CI secret store.",
+        "revealWarning": "Anyone with this token can act as you. Do not share it.",
+        "revealedOnce": "This token has been shown once.",
+        "revokeAriaLabel": "Revoke {name} token",
+        "revokeError": "Personal token could not be revoked.",
+        "revoked": "Personal token revoked.",
+        "scope": {
+          "admin": {
+            "description": "Full access to account and projects.",
+            "label": "Admin"
+          },
+          "read": {
+            "description": "Read projects and their data.",
+            "label": "Read"
+          },
+          "write": {
+            "description": "Read and change project data.",
+            "label": "Write"
+          }
+        },
+        "scopeLabel": "Scope",
+        "storedPrefix": "Stored as {prefix}",
+        "title": "Personal access tokens"
+      },
+      "sessions": {
+        "activeDays": "active {count, number}d ago",
+        "activeHours": "active {count, number}h ago",
+        "activeJustNow": "active just now",
+        "activeMinutes": "active {count, number}m ago",
+        "browserUnknown": "Browser",
+        "description": "Devices currently signed in to your account.",
+        "device": "{browser} · {operatingSystem}",
+        "locationUnknown": "Unknown location",
+        "none": "No other sessions were active.",
+        "operatingSystemUnknown": "Unknown",
+        "revoke": "Revoke",
+        "revokeAriaLabel": "Revoke session",
+        "revokeError": "Session could not be revoked.",
+        "retry": "Retry",
+        "retryRevokeAriaLabel": "Retry revoke session",
+        "revoking": "Revoking",
+        "signedOut": "Signed out {count, plural, =0 {no other sessions} one {# other session} other {# other sessions}}.",
+        "signOutError": "Other sessions could not be signed out.",
+        "signOutEverywhere": "Sign out everywhere",
+        "signingOut": "Signing out",
+        "thisDevice": "This device",
+        "title": "Active sessions"
+      },
+      "connectedApps": {
+        "title": "Connected apps",
+        "description": "Review and revoke apps with access to your account.",
+        "dynamic": "Registered automatically",
+        "empty": "No apps are connected to your account.",
+        "connected": "Connected {date}",
+        "lastUsed": "Last used {date}",
+        "neverUsed": "Not used yet",
+        "noScopes": "No additional permissions",
+        "scopeSeparator": ", ",
+        "createdTokens": "{count, plural, one {# linked API token} other {# linked API tokens}}",
+        "revoke": "Revoke",
+        "revokeApp": "Revoke access for {name}",
+        "confirmTitle": "Revoke access for {name}?",
+        "confirmDescription": "This stops the app from renewing access. API tokens keep working unless you revoke them too.",
+        "issuedAccess": "Access already issued can keep working for up to 1 hour.",
+        "alsoRevoke": "Also revoke {count, plural, one {# API token this app created} other {# API tokens this app created}}",
+        "unlinkedTokens": "Older API tokens, or tokens without retained issuance history, cannot be reliably linked to an app. Review them separately.",
+        "manageTokens": "Manage personal tokens",
+        "cancel": "Cancel",
+        "revoking": "Revoking",
+        "error": "App access could not be revoked. Try again.",
+        "scopes": {
+          "identity": "Confirm your identity",
+          "profile": "Read your profile",
+          "email": "Read your email address",
+          "renew": "Renew access",
+          "read": "Read project data",
+          "write": "Change project data",
+          "admin": "Manage projects and access",
+          "tokens": "Create API tokens",
+          "other": "Additional permission: {scope}"
+        }
+      }
+    },
+    "preferences": {
+      "date": {
+        "ariaLabel": "Date format",
+        "auto": "Auto - {date}",
+        "label": "Date format"
+      },
+      "density": {
+        "ariaLabel": "Default table density",
+        "comfortable": "Comfortable",
+        "compact": "Compact",
+        "label": "Default table density",
+        "standard": "Standard",
+        "subtitle": "Row height in the keyword grid"
+      },
+      "description": "Personal to you, <emphasis>applied on every device you sign in from.</emphasis>",
+      "landing": {
+        "ariaLabel": "Default landing page",
+        "backlinks": "Backlinks",
+        "competitors": "Competitors",
+        "dashboard": "Dashboard",
+        "domain-overview": "Domain Overview",
+        "keyword-research": "Keyword Research",
+        "label": "Default landing page",
+        "rank-tracker": "Rank Tracker",
+        "search-console": "Search Console",
+        "timeline": "Timeline"
+      },
+      "language": {
+        "description": "More languages are being prepared. English is active now.",
+        "english": "English",
+        "label": "Language"
+      },
+      "saveError": "Preferences could not be saved.",
+      "theme": {
+        "ariaLabel": "Theme",
+        "dark": "Dark",
+        "label": "Theme",
+        "light": "Light",
+        "subtitle": "Light, dark, or follow your system",
+        "system": "System"
+      },
+      "title": "Preferences"
+    },
+    "achievements": {
+      "title": "Activity & badges",
+      "intro": "A little progress, one day at a time.",
+      "presenceTitle": "In a good rhythm",
+      "practiceTitle": "From data to action",
+      "presenceDescription": "Visit bisibility on seven consecutive days.",
+      "practiceDescription": "Use a feature on seven consecutive days. Saved and cached data count too.",
+      "days": "{count, plural, one {# day} other {# days}}",
+      "longest": "Longest: {count}",
+      "earned": "Earned {date}",
+      "next": "Your next visit starts day 1.",
+      "milestone": "{count} of 7 days",
+      "today": "Today",
+      "help": "One day counts once, in {zone}. A missed day restarts the current streak; earned badges stay.",
+      "criteria": "Visits count while the app is visible. Successful searches, audits, saved report opens and supported personal API requests count as practice. Automatic jobs, estimates and failed requests do not count.",
+      "settings": "Your preferences",
+      "participate": "Track my activity",
+      "showHeader": "Show my streak in the header",
+      "email": "Email me when I earn a badge",
+      "zone": "Day boundary",
+      "restart": "Restart my current streaks in the selected time zone",
+      "restartHelp": "Changing the time zone starts a new calendar. Earned badges and longest streaks are kept.",
+      "save": "Save",
+      "saved": "Saved",
+      "error": "Progress could not be loaded. Try again.",
+      "conflict": "Preferences changed elsewhere. Refresh and try again.",
+      "restartRequired": "Confirm the calendar restart to change time zone.",
+      "refresh": "Refresh",
+      "disabled": "Activity badges are disabled for this installation.",
+      "share": "Share badge",
+      "revoke": "Turn off public link",
+      "createLink": "Create public link",
+      "publicHint": "Anyone with the link can see this badge. Your email, projects and activity history stay private.",
+      "copy": "Copy link",
+      "copied": "Copied",
+      "download": "Download image",
+      "replay": "Replay",
+      "locked": "Keep going at your own pace.",
+      "publicTitle": "Seven days with bisibility",
+      "publicDescription": "An activity achievement, not a ranking result.",
+      "emailSubject": "Your 7-day badge",
+      "emailIntro": "You built a seven-day habit. Here is what you earned.",
+      "emailCta": "View my badges",
+      "emailUnsubscribe": "Stop badge emails",
+      "emailNotice": "You can keep using badges with these emails turned off.",
+      "unsubscribed": "Badge milestone emails are turned off.",
+      "emailUnavailable": "Badges work without email. Delivery requires the installation’s configured mail provider.",
+      "completedDay": "Activity recorded",
+      "emptyDay": "No activity recorded",
+      "calendarLabel": "Your last seven days",
+      "shareError": "The sharing change could not be saved. Try again.",
+      "badgeOptions": "Badge options"
+    }
+  }
+}

@@ -1,0 +1,112 @@
+"use client";
+
+import type { CsvKeywordReviewItem } from "@/components/keywords/AddKeywordCsvReviewModel";
+import { Button } from "@/components/ui/Button";
+import { ArrowLeftIcon as ArrowLeft } from "@phosphor-icons/react/dist/csr/ArrowLeft";
+import { CheckCircleIcon as CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
+import { useTranslations } from "next-intl";
+
+type AddKeywordCsvReviewProps = {
+  items: CsvKeywordReviewItem[];
+  onEdit: () => void;
+};
+
+function itemMetadata(item: CsvKeywordReviewItem) {
+  return [
+    item.locationLabel,
+    item.device,
+    item.targetUrl,
+    item.tags.length > 0 ? item.tags.join(", ") : null,
+  ]
+    .filter(Boolean)
+    .join(" | ");
+}
+
+function ItemStatus({ item }: Readonly<{ item: CsvKeywordReviewItem }>) {
+  const t = useTranslations("projectRankTracker.keywordImport.management.add");
+  if (item.issues[0]) {
+    return (
+      <span className="ml-auto flex-none rounded-full bg-bg-sunken px-2 py-0.5 font-sans tabular-nums text-[10.5px] text-red-text">
+        {t("reviewRow", { row: item.row })}: {item.issues[0].message}
+      </span>
+    );
+  }
+  if (item.alreadyTracked) {
+    return (
+      <span className="ml-auto flex-none rounded-full bg-bg-sunken px-2 py-0.5 font-sans tabular-nums text-[10.5px] text-yellow-text">
+        {t("reviewSkipped")}
+      </span>
+    );
+  }
+  return null;
+}
+
+export function AddKeywordCsvReview({ items, onEdit }: Readonly<AddKeywordCsvReviewProps>) {
+  const t = useTranslations("projectRankTracker.keywordImport.management.add");
+  const preview = items.slice(0, 10);
+  const remaining = Math.max(0, items.length - preview.length);
+  const alreadyTracked = items.filter((item) => item.alreadyTracked).length;
+  const invalidRows = items.filter((item) => item.issues.length > 0).length;
+
+  return (
+    <div className="grid gap-4">
+      <div className="rounded-control border border-border bg-bg-sunken px-4 py-3">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 grid h-8 w-8 flex-none place-items-center rounded-control bg-accent-soft text-accent-solid">
+            <CheckCircle size={18} weight="regular" />
+          </span>
+          <div className="min-w-0">
+            <h3 className="m-0 text-[14px] font-semibold text-fg">{t("reviewTitle")}</h3>
+            <p className="m-0 mt-1 text-[12.5px] leading-[1.5] text-fg-muted">
+              {t("reviewSummary", {
+                alreadyTracked,
+                count: items.length,
+                invalidRows,
+              })}
+            </p>
+          </div>
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-control border border-border">
+        {preview.map((item) => (
+          <div
+            className="flex items-center gap-3 border-t border-border px-3.5 py-2.5 first:border-t-0"
+            key={item.key}
+          >
+            <span className="w-6 flex-none font-sans tabular-nums text-[11px] text-fg-muted">
+              {item.position}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] font-medium text-fg">
+                {item.keyword || t("reviewRow", { row: item.row })}
+              </span>
+              <span className="block truncate font-sans tabular-nums text-[10.5px] text-fg-muted">
+                {itemMetadata(item)}
+              </span>
+            </span>
+            <ItemStatus item={item} />
+          </div>
+        ))}
+        {remaining > 0 ? (
+          <div className="border-t border-border px-3.5 py-2.5 font-sans tabular-nums text-[11px] text-fg-muted">
+            {t("reviewMore", { count: remaining })}
+          </div>
+        ) : null}
+      </div>
+      <Button
+        onClick={onEdit}
+        size="sm"
+        startIcon={<ArrowLeft size={13} weight="regular" />}
+        style={{
+          alignSelf: "flex-start",
+          "--control-color": "var(--fg-muted)",
+          width: "max-content",
+        }}
+        type="button"
+        variant="secondary"
+      >
+        {t("editCsv")}
+      </Button>
+    </div>
+  );
+}

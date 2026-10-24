@@ -1,0 +1,149 @@
+"use client";
+
+import { CountryFlag } from "@/components/ui/CountryFlag";
+import {
+  MenuSelect,
+  type MenuSelectOption,
+  type MenuSelectOptionGroup,
+} from "@/components/ui/MenuSelect";
+import { useTranslations } from "next-intl";
+import type { ReactNode } from "react";
+import { MARKET_PICKER_SEARCH_THRESHOLD } from "./market-picker-constants";
+
+export type MarketComboboxOption<T> = {
+  ariaLabel?: string;
+  countryCode: string;
+  disabled?: boolean;
+  languageCode: string;
+  languageLabel: string;
+  locationLabel: string;
+  payload: T;
+  secondary?: string;
+  tooltip?: string;
+  value: string;
+};
+
+export type MarketComboboxProps<T> = {
+  ariaLabel: string;
+  catalogLabel?: string;
+  catalogMarkets: readonly MarketComboboxOption<T>[];
+  catalogSearchOnly?: boolean;
+  disabled?: boolean;
+  emptyMessage?: string;
+  leadingIcon?: ReactNode;
+  menuWidth?: number;
+  noResultsMessage?: string;
+  onChange: (payload: T) => void;
+  selectedCountryCode?: string;
+  trackedLabel?: string;
+  trackedMarkets: readonly MarketComboboxOption<T>[];
+  triggerClassName?: string;
+  triggerWrapperClassName?: string;
+  triggerTitle?: string;
+  value: string;
+};
+
+function toMenuSelectOption<T>(market: MarketComboboxOption<T>): MenuSelectOption {
+  const label = market.languageLabel
+    ? `${market.locationLabel} / ${market.languageLabel}`
+    : market.locationLabel;
+  return {
+    ariaLabel: market.ariaLabel,
+    icon: (
+      <CountryFlag
+        className="h-3 w-4 flex-none rounded-[2px] shadow-sm"
+        code={market.countryCode}
+        fallback="globe"
+      />
+    ),
+    disabled: market.disabled,
+    label,
+    secondary: market.secondary,
+    searchText: `${market.locationLabel} ${market.countryCode} ${market.languageLabel} ${market.languageCode}`,
+    tooltip: market.tooltip,
+    value: market.value,
+  };
+}
+
+export function MarketCombobox<T>({
+  ariaLabel,
+  catalogLabel,
+  catalogMarkets,
+  catalogSearchOnly = true,
+  disabled,
+  emptyMessage,
+  leadingIcon,
+  menuWidth,
+  noResultsMessage,
+  onChange,
+  selectedCountryCode,
+  trackedLabel,
+  trackedMarkets,
+  triggerClassName,
+  triggerWrapperClassName,
+  triggerTitle,
+  value,
+}: Readonly<MarketComboboxProps<T>>) {
+  const t = useTranslations("shared.markets");
+  const trackedValues = new Set(trackedMarkets.map((market) => market.value));
+  const dedupedCatalog = catalogMarkets.filter((market) => !trackedValues.has(market.value));
+  const allMarkets = [...trackedMarkets, ...dedupedCatalog];
+  const groups: MenuSelectOptionGroup[] = [];
+  if (trackedMarkets.length > 0) {
+    groups.push({
+      id: "tracked",
+      label: trackedLabel ?? t("trackedMarkets"),
+      options: trackedMarkets.map(toMenuSelectOption),
+    });
+  }
+  if (dedupedCatalog.length > 0) {
+    groups.push({
+      id: "catalog",
+      label: catalogLabel ?? t("catalog"),
+      options: dedupedCatalog.map(toMenuSelectOption),
+      searchOnly: catalogSearchOnly && allMarkets.length > MARKET_PICKER_SEARCH_THRESHOLD,
+    });
+  }
+  const searchable = allMarkets.length > MARKET_PICKER_SEARCH_THRESHOLD;
+  const onlyGroup = groups[0];
+  const menuInput =
+    groups.length === 1 && onlyGroup?.searchOnly
+      ? { groups: [{ ...onlyGroup, hideHeading: true }] }
+      : groups.length === 1
+        ? { options: onlyGroup?.options ?? [] }
+        : { groups };
+
+  function handleChange(nextValue: string) {
+    const market = allMarkets.find((market) => market.value === nextValue);
+    if (market) onChange(market.payload);
+  }
+
+  return (
+    <MenuSelect
+      ariaLabel={ariaLabel}
+      disabled={disabled}
+      emptyMessage={emptyMessage}
+      {...menuInput}
+      leadingIcon={
+        selectedCountryCode ? (
+          <CountryFlag
+            className="h-3 w-4 flex-none rounded-[2px] shadow-sm"
+            code={selectedCountryCode}
+            fallback="globe"
+          />
+        ) : (
+          leadingIcon
+        )
+      }
+      menuWidth={menuWidth}
+      noResultsMessage={noResultsMessage}
+      onChange={handleChange}
+      searchPlaceholder={t("searchMarkets")}
+      searchable={searchable}
+      triggerClassName={triggerClassName}
+      triggerTitle={triggerTitle}
+      triggerWrapperClassName={triggerWrapperClassName}
+      value={value}
+    />
+  );
+}

@@ -1,0 +1,229 @@
+import type { ActiveIntegrationKind } from "@/lib/integrations/category-copy";
+import type { GooglePropertyFailure } from "@/lib/integrations/google-property-failure";
+import type { ProviderFailureClass } from "@/lib/providers/failure-class";
+import type {
+  ConnectProviderInput,
+  ProviderConnectionRefInput,
+  DisconnectProviderInput as ProviderDisconnectInput,
+  TestProviderConnectionInput,
+  UpdateProviderCostInput,
+  UpdateProviderRateInput,
+} from "@/lib/schemas/provider";
+import type { SerpDepth, SerpDevice } from "@/lib/serp/constants";
+import type { StatusKind } from "@/lib/ui/status-kind";
+
+export type ProviderStatusKind = Extract<
+  StatusKind,
+  "connected" | "needs_reauth" | "ready" | "planned" | "optional"
+>;
+
+export type ProviderIconName =
+  | "chart"
+  | "database"
+  | "globe"
+  | "link"
+  | "magnifier"
+  | "table"
+  | "trend";
+
+export type CredentialField = {
+  description?: string;
+  label: string;
+  name: "endpoint" | "login" | "secret";
+  optional?: boolean;
+  placeholder: string;
+  type?: "password" | "text";
+};
+
+export type ProviderMetaLabelKey =
+  | "account"
+  | "apiService"
+  | "connectionUpdated"
+  | "fallbackState"
+  | "lastRankCheck"
+  | "lastSync"
+  | "lastUsed"
+  | "property"
+  | "siteDomain"
+  | "state";
+
+export type ProviderMetaValueKey =
+  | "disabled"
+  | "enabled"
+  | "never"
+  | "notConnected"
+  | "notSelected"
+  | "ready";
+
+/**
+ * A meta row never carries display copy. The label is always a catalog key, and the value is
+ * either a catalog key, a timestamp rendered as relative time in the viewer's locale, or a
+ * literal the reader supplied (an account, an endpoint, a number).
+ */
+export type ProviderMetaRow = {
+  labelKey: ProviderMetaLabelKey;
+  /** The instant the relative time is measured from, so server and client agree. */
+  relativeTo?: string;
+  value?: string;
+  valueAt?: string;
+  valueKey?: ProviderMetaValueKey;
+};
+
+export type ProviderConsumerStatus = {
+  detail?: string;
+  state:
+    | "backfill_running"
+    | "first_view_ready"
+    | "kept_current"
+    | "last_synced"
+    | "needs_reauth"
+    | "never_synced"
+    | "not_configured"
+    | "paused_by_user"
+    | "ready"
+    | "sync_failed";
+  summary: string;
+};
+
+export type ProviderConsumerStatuses = {
+  searchModule: ProviderConsumerStatus;
+  trafficEnrichment: ProviderConsumerStatus;
+};
+
+export type GooglePropertyOption = {
+  kind: "domain" | "ga4" | "url-prefix";
+  label: string;
+  permissionLevel: string;
+  value: string;
+};
+
+export type ArchivedGoogleProperty = GooglePropertyOption & {
+  lastSyncedDate: string;
+};
+
+export type GoogleOAuthSetup = {
+  accountEmail?: string;
+  archivedProperties?: readonly ArchivedGoogleProperty[];
+  error?: string;
+  failureClass?: ProviderFailureClass;
+  failure?: GooglePropertyFailure;
+  preferredProperty?: string;
+  projectDomain?: string;
+  properties: readonly GooglePropertyOption[];
+  provider?: "ga4" | "gsc";
+  requiresReauth?: boolean;
+};
+
+export type GooglePropertySaveResult =
+  | { property: string; status: "saved" }
+  | { status: "reauth_required"; failure?: GooglePropertyFailure }
+  | { status: "failed"; failure: GooglePropertyFailure };
+
+export type GooglePropertySelectionResult = GooglePropertySaveResult | { property: string };
+
+export type DrawerDefaults = {
+  costPerCheck?: number;
+  depth: `Top ${SerpDepth}`;
+  device: Capitalize<SerpDevice>;
+  endpoint: string;
+  language: string;
+  locationKey: string;
+  login: string;
+  secret: string;
+};
+
+export type ProviderConnectionReadState = {
+  readonly connectionId?: string;
+  readonly credentialSource?: "own" | "hosted";
+  readonly connectionUpdatedAt?: string;
+  readonly hasStoredCredentials?: boolean;
+  readonly enabled?: boolean;
+  readonly primary?: boolean;
+  readonly priority?: number;
+};
+
+export type IntegrationProviderData = ProviderConnectionReadState & {
+  credentialIssue?: "unreadable";
+  consumerStatuses?: ProviderConsumerStatuses;
+  description: string;
+  drawer: {
+    accountEmail?: string;
+    activities: readonly ProviderMetaRow[];
+    costHelp: string;
+    credentialFields: readonly CredentialField[];
+    defaults: DrawerDefaults;
+    envHint?: string;
+    googleOAuth?: GoogleOAuthSetup;
+  };
+  icon: ProviderIconName;
+  id: string;
+  kind: ActiveIntegrationKind;
+  logoDomain?: string;
+  meta: readonly ProviderMetaRow[];
+  name: string;
+  neverSynced?: boolean;
+  syncFailure?: {
+    consecutiveFailures: number;
+    errorClass: string;
+    since: string;
+  };
+  secondaryAction?: string;
+  status: ProviderStatusKind;
+  tint: string;
+};
+
+export type IntegrationCategoryData = {
+  description: string;
+  eyebrow: string;
+  id: string;
+  providers: readonly IntegrationProviderData[];
+  title: string;
+};
+
+export type ProviderTestResult = {
+  ok: boolean;
+  message: string;
+  balance?: number;
+  availabilityTotal?: number;
+};
+
+export type ProviderTrafficSyncResult = {
+  connections: number;
+  keywordSnapshots: number;
+  pageSnapshots: number;
+  runs: readonly { status: string }[];
+};
+
+export type ConnectProviderActionInput = ConnectProviderInput & {
+  enabled?: boolean;
+};
+
+export type ProviderConnectionSettingsInput = ProviderConnectionRefInput & {
+  enabled?: boolean;
+  priority?: number;
+};
+
+export type DisconnectProviderInput = ProviderDisconnectInput;
+
+export type ProviderActionHandlers = {
+  completeGooglePropertySelection?(input: {
+    projectId: string;
+    property: string;
+  }): Promise<GooglePropertySelectionResult>;
+  loadStoredGoogleProperties?(input: {
+    projectId: string;
+    provider: "ga4" | "gsc";
+  }): Promise<GoogleOAuthSetup>;
+  saveStoredGoogleProperty?(input: {
+    projectId: string;
+    property: string;
+    provider: "ga4" | "gsc";
+  }): Promise<GooglePropertySaveResult>;
+  connectProvider(input: ConnectProviderActionInput): Promise<unknown>;
+  disconnectProvider?(input: DisconnectProviderInput): Promise<unknown>;
+  updateProviderSettings(input: ProviderConnectionSettingsInput): Promise<unknown>;
+  syncProjectTraffic?(input: { projectId: string }): Promise<ProviderTrafficSyncResult>;
+  testProviderConnection(input: TestProviderConnectionInput): Promise<ProviderTestResult>;
+  updateProviderCost(input: UpdateProviderCostInput): Promise<unknown>;
+  updateProviderRate?(input: UpdateProviderRateInput): Promise<unknown>;
+};

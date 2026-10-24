@@ -1,0 +1,118 @@
+"use client";
+
+import { Button } from "@/components/ui/Button";
+import { Menu } from "@/components/ui/Menu";
+import { menuSelectPaperStyle } from "@/components/ui/MenuSelect";
+import { MenuSelectOptionItem } from "@/components/ui/MenuSelectOptionItem";
+import type { GroupedResearchRow } from "@/lib/keyword-research/grouping";
+import { csvRowWithNumberFormat } from "@/lib/ui/csv";
+import { downloadTextFile } from "@/lib/ui/download";
+import { DownloadSimpleIcon as DownloadSimple } from "@phosphor-icons/react/dist/csr/DownloadSimple";
+import { useTranslations } from "next-intl";
+import { useState } from "react";
+
+// Client-only export UI. Pure table/panel helpers live in research-results-model.tsx
+// so consumers that only format data do not pull the interactive menu chain in.
+
+export type ResearchExportFormat = "csv" | "json";
+
+export function researchExportContent(
+  rows: readonly GroupedResearchRow[],
+  format: ResearchExportFormat,
+) {
+  if (format === "json") {
+    return JSON.stringify(
+      rows.map((row) => ({
+        cpcCents: row.cpcCents,
+        difficulty: row.difficulty,
+        intent: row.intent,
+        keyword: row.keyword,
+        searchVolume: row.searchVolume,
+        source: row.source,
+        tracked: row.alreadyTracked,
+        variants: row.variants.map((variant) => variant.keyword),
+      })),
+      null,
+      2,
+    );
+  }
+  const lines = rows.map((row) =>
+    csvRowWithNumberFormat(
+      [
+        row.keyword,
+        row.searchVolume ?? "",
+        row.difficulty ?? "",
+        row.cpcCents == null ? null : row.cpcCents / 100,
+        row.intent ?? "",
+        row.source,
+        row.alreadyTracked ? "yes" : "no",
+        row.variants.map((variant) => variant.keyword).join("; "),
+      ],
+      (value, index) => (index === 3 ? value.toFixed(2) : String(value)),
+    ),
+  );
+  return ["keyword,volume,kd,cpc_usd,intent,source,tracked,variants", ...lines].join("\n");
+}
+
+function downloadResearchExport(
+  rows: readonly GroupedResearchRow[],
+  seed: string,
+  format: ResearchExportFormat,
+) {
+  const slug =
+    seed
+      .trim()
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9]+/g, "-")
+      .replaceAll(/^-|-$/g, "") || "results";
+  downloadTextFile(
+    researchExportContent(rows, format),
+    `keyword-research-${slug}.${format}`,
+    format === "csv" ? "text/csv;charset=utf-8" : "application/json",
+  );
+}
+
+export function ResearchExportMenu({
+  rows,
+  seed,
+}: Readonly<{ rows: GroupedResearchRow[]; seed: string }>) {
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const t = useTranslations("projectResearch.results");
+
+  function exportAs(format: ResearchExportFormat) {
+    downloadResearchExport(rows, seed, format);
+    setAnchorEl(null);
+  }
+
+  return (
+    <>
+      <Button
+        onClick={(event) => setAnchorEl(event.currentTarget)}
+        size="sm"
+        startIcon={<DownloadSimple weight="regular" size={14} />}
+        variant="secondary"
+      >
+        {t("export")}
+      </Button>
+      <Menu
+        modal={false}
+        anchorEl={anchorEl}
+        onClose={() => setAnchorEl(null)}
+        open={Boolean(anchorEl)}
+        listProps={{ "aria-label": t("exportAria"), style: { padding: 0 } }}
+        contentProps={{ style: menuSelectPaperStyle }}
+      >
+        <MenuSelectOptionItem
+          current={false}
+          onSelect={() => exportAs("csv")}
+          option={{ label: t("exportCsv"), value: "csv" }}
+        />
+        <MenuSelectOptionItem
+          current={false}
+          onSelect={() => exportAs("json")}
+          option={{ label: t("exportJson"), value: "json" }}
+        />
+      </Menu>
+    </>
+  );
+}

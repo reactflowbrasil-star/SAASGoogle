@@ -1,0 +1,343 @@
+import { writeAudit } from "@/lib/auth/audit";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getAuditLogView } from "./audit";
+import { diffFor } from "./audit-diff";
+
+const mocks = vi.hoisted(() => ({
+  prisma: {
+    auditLog: { findFirst: vi.fn(), findMany: vi.fn() },
+    project: { findFirst: vi.fn() },
+    user: { findUnique: vi.fn() },
+  },
+  requireSession: vi.fn(),
+  writeAudit: vi.fn(),
+  writeAuditFailure: vi.fn(),
+}));
+
+vi.mock("@/lib/auth/audit", () => ({
+  writeAudit: mocks.writeAudit,
+  writeAuditFailure: mocks.writeAuditFailure,
+}));
+
+vi.mock("server-only", () => ({}));
+
+vi.mock("@/lib/auth/session", () => ({
+  requireSession: mocks.requireSession,
+}));
+
+vi.mock("@/lib/db/prisma", () => ({
+  prisma: mocks.prisma,
+}));
+
+const project = {
+  domain: "example.com",
+  id: "project_1",
+  name: "Example",
+  publicId: "prj_abcdefghijklmnopqrstuvwx",
+};
+const RAW_CUID = "clx0123456789abcdefghijklm";
+
+function auditRow() {
+  return {
+    action: "provider.test",
+    appVersion: "1.2.3",
+    actor: {
+      email: "auditor@example.com",
+      id: "user_1",
+      image: "https://example.com/auditor.png",
+      name: "Auditor User",
+      publicId: "usr_abcdefghijklmnopqrstuvwx",
+    },
+    after: { provider: "dataforseo" },
+    before: null,
+    correlationId: "corr_1",
+    createdAt: new Date("2026-01-10T12:00:00.000Z"),
+    publicId: "audit_abcdefghijklmnopqrstuvwx",
+    sourceIpMasked: "203.0.113.0",
+    status: "failed",
+    statusReason: "provider unavailable",
+    targetId: "conn_abcdefghijklmnopqrstuvwx",
+    targetType: "provider_connection",
+    userAgent: "Vitest",
+  };
+}
+
+describe("getAuditLogView", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.requireSession.mockResolvedValue({ user: { id: "user_1" } });
+    mocks.prisma.user.findUnique.mockResolvedValue({
+      memberships: [{ projectId: "project_1", role: "auditor" }],
+      role: "viewer",
+    });
+    mocks.prisma.project.findFirst.mockResolvedValue(project);
+    mocks.prisma.auditLog.findFirst.mockResolvedValue(null);
+    mocks.prisma.auditLog.findMany.mockResolvedValue([auditRow()]);
+    mocks.writeAudit.mockResolvedValue({ id: "audit_view_1" });
+    process.env.AUDIT_RETENTION_DAYS = "";
+  });
+
+  it("allows auditors to read audit entries and surfaces recorded metadata", async () => {
+    const result = await getAuditLogView(project.publicId);
+
+    expect(result.authorized).toBe(true);
+    if (!result.authorized) {
+      throw new Error("expected authorized audit view");
+    }
+    expect(result.entries[0]).toMatchObject({
+      action: "provider.test",
+      metadata: { app_version: "1.2.3", correlation_id: "[redacted]", user_agent: "Vitest" },
+      source: { ip: "203.0.113.0" },
+      status: "failed",
+      statusReason: "provider unavailable",
+    });
+  });
+
+  it("redacts raw IDs from nested audit values and unaddressable resources", async () => {
+    mocks.prisma.auditLog.findMany.mockResolvedValue([
+      {
+        ...auditRow(),
+        after: { nested: { previousAdministratorIds: [RAW_CUID, 42] } },
+        before: { legacyId: RAW_CUID },
+        correlationId: RAW_CUID,
+        targetId: RAW_CUID,
+      },
+    ]);
+
+    const result = await getAuditLogView(project.publicId);
+    if (!result.authorized) throw new Error("expected authorized audit view");
+
+    expect(result.entries[0]?.resource).toMatchObject({ id: null, name: null });
+    expect(JSON.stringify(result.entries[0])).not.toContain(RAW_CUID);
+  });
+
+  it("allowlists historical details before sending them to the client", async () => {
+    mocks.prisma.auditLog.findMany.mockResolvedValue([
+      {
+        ...auditRow(),
+        action: "provider.credential_source_changed",
+        before: { provider: "dataforseo", source: "own", password: "old-secret" },
+        after: {
+          provider: "dataforseo",
+          source: "hosted",
+          credentials: { password: "new-secret" },
+          raw: { payload: "hidden" },
+        },
+      },
+    ]);
+    const result = await getAuditLogView(project.publicId);
+    if (!result.authorized) throw new Error("expected authorized audit view");
+    expect(result.entries[0].providerSourceChange).toEqual({
+      provider: "DataForSEO",
+      source: "hosted",
+    });
+    expect(result.entries[0].diff).toEqual([{ field: "source", before: "own", after: "hosted" }]);
+    expect(JSON.stringify(result.entries)).not.toMatch(/old-secret|new-secret|hidden/);
+  });
+
+  it("preserves the raw timestamp for scoped display formatting", async () => {
+    mocks.prisma.auditLog.findMany.mockResolvedValue([
+      { ...auditRow(), createdAt: new Date("2026-06-19T14:42:08.987Z") },
+    ]);
+
+    const result = await getAuditLogView(project.publicId);
+
+    expect(result.authorized).toBe(true);
+    if (!result.authorized) {
+      throw new Error("expected authorized audit view");
+    }
+    expect(result.entries[0]?.timestamp).toBe("2026-06-19T14:42:08.987Z");
+  });
+
+  it("preserves skipped-occurrence inputs for scoped presentation", async () => {
+    mocks.prisma.auditLog.findMany.mockResolvedValue([
+      {
+        ...auditRow(),
+        action: "rank_check_run.skip",
+        after: {
+          plannedFor: "2026-09-05T06:00:00.000Z",
+          publicId: "rcr_abcdefghijklmnopqrstuvwx",
+          schedule: "Daily 06:00",
+          status: "cancelled",
+        },
+        targetId: "rcr_abcdefghijklmnopqrstuvwx",
+        targetType: "rank_check_run",
+      },
+    ]);
+
+    const result = await getAuditLogView(project.publicId);
+    if (!result.authorized) throw new Error("expected authorized audit view");
+
+    expect(result.entries[0]).toMatchObject({
+      action: "rank_check_run.skip",
+      actor: { name: "Auditor User" },
+      rankCheckRunSkip: {
+        plannedFor: "2026-09-05T06:00:00.000Z",
+        schedule: "Daily 06:00",
+      },
+      resource: { id: "rcr_abcdefghijklmnopqrstuvwx" },
+    });
+  });
+
+  it("logs repeated authorized audit-log views once per debounce window", async () => {
+    mocks.prisma.auditLog.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "audit_view_1" });
+
+    await getAuditLogView(project.publicId);
+    await getAuditLogView(project.publicId);
+
+    expect(writeAudit).toHaveBeenCalledTimes(1);
+    expect(writeAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "audit_log.view",
+        actorId: "user_1",
+        projectId: "project_1",
+        targetId: project.publicId,
+        targetType: "project",
+      }),
+    );
+    expect(mocks.prisma.auditLog.findFirst).toHaveBeenCalledTimes(2);
+    expect(mocks.prisma.auditLog.findFirst).toHaveBeenCalledWith({
+      select: { id: true },
+      where: expect.objectContaining({
+        action: "audit_log.view",
+        actorId: "user_1",
+        createdAt: { gte: expect.any(Date) },
+        projectId: "project_1",
+        targetId: project.publicId,
+      }),
+    });
+  });
+
+  it("declares and applies the cap used by client-side audit filters", async () => {
+    const result = await getAuditLogView(project.publicId, { dateRange: "90d" });
+
+    expect(result.authorized).toBe(true);
+    if (!result.authorized) {
+      throw new Error("expected authorized audit view");
+    }
+    expect(result.entryLimit).toBe(200);
+    expect(mocks.prisma.auditLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: result.entryLimit + 1 }),
+    );
+  });
+
+  it("always scopes user-facing audit rows to the resolved project", async () => {
+    await getAuditLogView(project.publicId, { dateRange: "all" });
+
+    expect(mocks.prisma.auditLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { projectId: "project_1" },
+      }),
+    );
+    expect(mocks.prisma.auditLog.findMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ projectId: null }),
+      }),
+    );
+  });
+
+  it("returns the newest 200 entries and marks larger result sets as truncated", async () => {
+    mocks.prisma.auditLog.findMany.mockResolvedValue(Array.from({ length: 201 }, () => auditRow()));
+
+    const result = await getAuditLogView(project.publicId);
+
+    expect(result.authorized).toBe(true);
+    if (!result.authorized) {
+      throw new Error("expected authorized audit view");
+    }
+    expect(result.entries).toHaveLength(200);
+    expect(result.truncated).toBe(true);
+    expect(result.retentionDays).toBe(365);
+  });
+
+  it("selects and exposes the actor's existing image URL", async () => {
+    const result = await getAuditLogView(project.publicId);
+    if (!result.authorized) throw new Error("expected authorized audit view");
+
+    expect(mocks.prisma.auditLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: { actor: { select: { email: true, image: true, name: true, publicId: true } } },
+      }),
+    );
+    expect(result.entries[0]?.actor.avatarUrl).toBe("https://example.com/auditor.png");
+  });
+
+  it("leaves avatarUrl null when the actor has no image", async () => {
+    mocks.prisma.auditLog.findMany.mockResolvedValue([
+      { ...auditRow(), actor: { ...auditRow().actor, image: null } },
+    ]);
+
+    const result = await getAuditLogView(project.publicId);
+    if (!result.authorized) throw new Error("expected authorized audit view");
+
+    expect(result.entries[0]?.actor.avatarUrl).toBeNull();
+  });
+
+  it("sets avatarUrl to null for a synthetic system actor", async () => {
+    mocks.prisma.auditLog.findMany.mockResolvedValue([{ ...auditRow(), actor: null }]);
+
+    const result = await getAuditLogView(project.publicId);
+    if (!result.authorized) throw new Error("expected authorized audit view");
+
+    expect(result.entries[0]?.actor.avatarUrl).toBeNull();
+    expect(result.entries[0]?.actor.name).toBeNull();
+  });
+});
+
+describe("diffFor", () => {
+  it("filters unchanged fields", () => {
+    expect(diffFor({ id: "key_1", name: "Production" }, { id: "key_1", name: "Renamed" })).toEqual([
+      { after: "Renamed", before: "Production", field: "name" },
+    ]);
+  });
+
+  it("renders bulk-delete arrays as one readable item list", () => {
+    expect(
+      diffFor(
+        [
+          { id: "keyword_1", publicId: "kw_abcdefghijklmnopqrstuvwx", text: "best corgi food" },
+          { id: "keyword_2", publicId: "kw_bbcdefghijklmnopqrstuvwx", text: "corgi harness" },
+        ],
+        null,
+      ),
+    ).toEqual([
+      {
+        after: null,
+        before: "best corgi food\ncorgi harness",
+        field: "items",
+      },
+    ]);
+  });
+
+  it("renders nested changes as scalar field paths", () => {
+    expect(
+      diffFor({ schedule: { frequency: "daily" } }, { schedule: { frequency: "weekly" } }),
+    ).toEqual([
+      {
+        after: "weekly",
+        before: "daily",
+        field: "schedule.frequency",
+      },
+    ]);
+  });
+
+  it("returns no diff when both snapshots are null", () => {
+    expect(diffFor(null, null)).toEqual([]);
+  });
+
+  it("returns only populated after values for creates", () => {
+    expect(diffFor(null, { id: "key_1", name: "Production" })).toEqual([
+      { after: "key_1", before: null, field: "id" },
+      { after: "Production", before: null, field: "name" },
+    ]);
+  });
+
+  it("returns only populated before values for deletes", () => {
+    expect(diffFor({ id: "key_1", name: "Production" }, null)).toEqual([
+      { after: null, before: "key_1", field: "id" },
+      { after: null, before: "Production", field: "name" },
+    ]);
+  });
+});

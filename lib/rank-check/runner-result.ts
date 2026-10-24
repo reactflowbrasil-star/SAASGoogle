@@ -1,0 +1,39 @@
+import type { Prisma } from "@/lib/generated/prisma/client";
+import type { ObservationRunInput } from "@/lib/observation/types";
+import type { ProviderRequestAttribution } from "@/lib/provider-usage/tag";
+import type { SerpDepth } from "@/lib/serp/constants";
+import type { RankNormalizationVersion } from "./normalization-version";
+import type { OrganicDomainRank } from "./organic-ranks";
+
+export type RankCheckRunResult = {
+  /** Original predecessor qualified by the same retained semantic/effective evidence. */
+  comparisonPredecessorId?: string | null;
+  /** Exact winning durable attempt, supplied by the runner, never provider JSON. */
+  definitionBindingId?: string | null;
+  recoveryContextHash?: string;
+  usageRecorded?: boolean;
+  comparisonAllowed: boolean;
+  providerCostCents?: number;
+  providerUsage?: ProviderRequestAttribution;
+  rankCheck: {
+    billingUnits: number | null;
+    checkedAt: Date;
+    costCents: number | null;
+    estimatedCostCents: number | null;
+    keywordId: string;
+    normalizationVersion: RankNormalizationVersion;
+    organicRanks: OrganicDomainRank[] | null;
+    position: number | null;
+    previousPosition: number | null;
+    provider: string;
+    rankingUrl: string | null;
+    raw: Prisma.InputJsonObject | null;
+    /** Durable observation captured by the provider adapter, when available. */
+    observation?: ObservationRunInput | null;
+    requestedDepth: SerpDepth;
+  };
+  scheduleUpdate: {
+    lastCheckedAt: Date;
+    nextCheckAt: Date | null;
+  };
+};

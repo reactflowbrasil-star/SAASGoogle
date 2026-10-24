@@ -1,0 +1,183 @@
+#!/usr/bin/env node
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { extname, join, relative } from "node:path";
+import { classifyDocsHref } from "./doc-link-helpers.mjs";
+import { expectedDocsInventory } from "./docs-inventory.mjs";
+import {
+  analyzeDocsNavigation,
+  collectNavigationPageIds,
+  docsNavigationExclusions,
+  findNavigationGroup,
+  loadPublishedDocsPages,
+} from "./doc-navigation.mjs";
+
+const ROOT = process.cwd();
+const DOCS_ROOT = join(ROOT, "docs");
+const failures = [];
+
+function walk(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    return entry.isDirectory() ? walk(path) : [path];
+  });
+}
+
+const generatedReferencePages = new Set(expectedDocsInventory({ docsRoot: DOCS_ROOT }).reference);
+
+function docsPageExists(page) {
+  if (typeof page !== "string") return false;
+  const clean = page.replace(/^\/+|\/$/g, "");
+  if (generatedReferencePages.has(clean)) return true;
+  return [
+    join(DOCS_ROOT, `${clean || "index"}.md`),
+    join(DOCS_ROOT, `${clean || "index"}.mdx`),
+    join(DOCS_ROOT, clean, "index.md"),
+    join(DOCS_ROOT, clean, "index.mdx"),
+  ].some(existsSync);
+}
+
+function checkDocsHref(source, href) {
+  const failure = classifyDocsHref({
+    source,
+    href,
+    root: ROOT,
+    docsRoot: DOCS_ROOT,
+    docsPageExists,
+    fileExists: existsSync,
+  });
+  if (failure) failures.push(failure);
+}
+
+const contentFiles = [join(ROOT, "README.md"), ...walk(DOCS_ROOT)].filter((file) =>
+  [".md", ".mdx"].includes(extname(file)),
+);
+
+for (const file of contentFiles) {
+  const content = readFileSync(file, "utf8");
+  const hrefs = [
+    ...content.matchAll(/\[[^\]]*\]\(([^)\s]+)(?:\s+[^)]*)?\)/g),
+    ...content.matchAll(/\bhref=["']([^"']+)["']/g),
+  ].map((match) => match[1]);
+  for (const href of hrefs) checkDocsHref(file, href);
+}
+
+function checkDocsRoute(route, location) {
+  if (route === "/docs" || route.startsWith("/docs/")) {
+    failures.push(`${location}: docs routes must omit the deployment prefix ${route}`);
+  }
+}
+
+const config = JSON.parse(readFileSync(join(DOCS_ROOT, "docs.json"), "utf8"));
+const publishedDocsPages = loadPublishedDocsPages(DOCS_ROOT);
+const docsNavigation = analyzeDocsNavigation(publishedDocsPages, config.navigation);
+for (const pageId of docsNavigation.orphanPageIds) {
+  failures.push(
+    `${relative(ROOT, publishedDocsPages.get(pageId).file)}: orphan documentation page is not reachable from docs/docs.json navigation`,
+  );
+}
+for (const missing of docsNavigation.missingImports) {
+  failures.push(
+    `${relative(ROOT, missing.sourceFile)}: missing imported documentation source ${missing.importPath}`,
+  );
+}
+for (const missing of docsNavigation.missingFragments) {
+  failures.push(
+    `${relative(ROOT, missing.sourceFile)}: missing fragment target ${missing.href}`,
+  );
+}
+const docsTab = config.navigation?.tabs?.find((tab) => tab.tab === "Build and automate");
+const expectedBuildGroups = {
+  "API basics": ["api/overview", "authentication", "api/discovery", "api/errors"],
+  Advanced: ["api/rank-check-runs", "api/cloud-import"],
+  "Alerts and webhooks": [
+    "api/alert-rules",
+    "api/notification-preferences",
+    "api/webhooks",
+    "api/deploy-webhooks",
+  ],
+};
+for (const [name, pages] of Object.entries(expectedBuildGroups)) {
+  const group = findNavigationGroup(docsTab, name);
+  if (JSON.stringify(group?.pages) !== JSON.stringify(pages)) {
+    failures.push(`docs/docs.json: ${name} must keep this page order: ${pages.join(", ")}`);
+  }
+}
+const apiReferenceTab = config.navigation?.tabs?.find((tab) => tab.tab === "API Reference");
+if (apiReferenceTab?.openapi !== "openapi.snapshot.json") {
+  failures.push(
+    "docs/docs.json: API Reference tab must render endpoints from openapi.snapshot.json",
+  );
+} else if (!existsSync(join(DOCS_ROOT, apiReferenceTab.openapi))) {
+  failures.push(`docs/docs.json: missing OpenAPI source ${apiReferenceTab.openapi}`);
+} else {
+  const openapi = JSON.parse(readFileSync(join(DOCS_ROOT, apiReferenceTab.openapi), "utf8"));
+  const tagLabels = new Map(
+    (openapi.tags ?? []).map((tag) => [tag.name, tag["x-group"] ?? tag.name]),
+  );
+  const expectedGroupNames = [...tagLabels.values()];
+  const actualGroupNames = (apiReferenceTab.groups ?? []).map((group) => group.group);
+  if (JSON.stringify(actualGroupNames) !== JSON.stringify(expectedGroupNames)) {
+    failures.push("docs/docs.json: API Reference group order must match OpenAPI tag order");
+  }
+
+  const endpointGroups = new Map();
+
+  for (const [path, pathItem] of Object.entries(openapi.paths ?? {})) {
+    for (const [method, operation] of Object.entries(pathItem)) {
+      if (!["delete", "get", "patch", "post", "put"].includes(method)) continue;
+      const tag = operation.tags?.[0];
+      const group = tagLabels.get(tag);
+      if (!group) {
+        failures.push(
+          `docs/${apiReferenceTab.openapi}: ${method.toUpperCase()} ${path} has no group`,
+        );
+        continue;
+      }
+      endpointGroups.set(`${method.toUpperCase()} ${path}`, group);
+    }
+  }
+
+  const configuredEndpoints = new Set();
+  for (const group of apiReferenceTab.groups ?? []) {
+    for (const page of group.pages ?? []) {
+      if (!endpointGroups.has(page)) {
+        failures.push(`docs/docs.json: unknown API Reference endpoint ${page}`);
+        continue;
+      }
+      if (configuredEndpoints.has(page)) {
+        failures.push(`docs/docs.json: duplicate API Reference endpoint ${page}`);
+      }
+      configuredEndpoints.add(page);
+      if (endpointGroups.get(page) !== group.group) {
+        failures.push(`docs/docs.json: ${page} belongs in ${endpointGroups.get(page)}`);
+      }
+    }
+  }
+  if (configuredEndpoints.size !== endpointGroups.size) {
+    failures.push(
+      `docs/docs.json: API Reference lists ${configuredEndpoints.size} of ${endpointGroups.size} endpoints`,
+    );
+  }
+}
+
+for (const page of collectNavigationPageIds(config.navigation)) {
+  if (!docsPageExists(page)) failures.push(`docs/docs.json: missing navigation page ${page}`);
+}
+
+for (const [index, redirect] of (config.redirects ?? []).entries()) {
+  const location = `docs/docs.json: redirects[${index}]`;
+  checkDocsRoute(redirect.source, location);
+  checkDocsRoute(redirect.destination, location);
+  if (redirect.destination.startsWith("/") && !docsPageExists(redirect.destination)) {
+    failures.push(`${location}: missing redirect destination ${redirect.destination}`);
+  }
+}
+
+if (failures.length) {
+  console.error(failures.join("\n"));
+  process.exit(1);
+}
+
+console.log(
+  `Documentation links valid across ${contentFiles.length} files; public pages exclude docs/${docsNavigationExclusions.join(" and docs/")}.`,
+);

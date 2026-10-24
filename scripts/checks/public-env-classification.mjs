@@ -1,0 +1,133 @@
+// Classification data model for environment variables that appear in runtime
+// source but are intentionally excluded from the public starter template and
+// the human reference. Public variables are in the public env registry or the
+// docs-only set; these allowlists cover the remaining runtime usages.
+//
+// deploymentInput is the canonical baked-key list imported directly from
+// bake-runtime-env.mjs. It is orthogonal deployment capability, not a
+// documentation exemption, so it is excluded from classifiedAllowlist() and
+// the primary classification categories.
+
+import { bakedRuntimeEnvKeys } from "../deploy/bake-runtime-env.mjs";
+
+export const envClassification = {
+  framework: [
+    "APP_REVISION",
+    "CI",
+    "NODE_ENV",
+    "NEXT_RUNTIME",
+    "NEXT_PUBLIC_APP_VERSION",
+    "NEXT_PUBLIC_APP_REVISION",
+    "NEXT_PHASE",
+    "NEXT_DIST_DIR",
+    "PATH",
+    "PORT",
+    "VERCEL",
+    "VERCEL_ENV",
+    "VERCEL_GIT_COMMIT_REF",
+    "VERCEL_GIT_COMMIT_SHA",
+  ],
+  internal: [
+    "TEMPORAL_SCHEDULE_CATCHUP_WINDOW",
+    "STALE_IMPORT_JOBS_INTERVAL",
+    "ALERT_HEALTH_INTERVAL",
+    "ALERT_DELIVERY_SWEEP_INTERVAL",
+    "REDIS_CONNECT_MAX_RETRIES",
+    "REDIS_CONNECT_TIMEOUT_MS",
+    "WORKER_LIVENESS_TIMEOUT_MS",
+    "LOCAL_MONITOR_RECURRING_ENABLED",
+  ],
+  hostedOnly: [
+    "AI_RESPONSE_ENGINES_ENABLED",
+    "AMPLIFY_HOSTING",
+    "APNS_KEY_ID",
+    "APNS_TEAM_ID",
+    "APNS_PRIVATE_KEY",
+    "APNS_TOPIC",
+    "APPLE_SIGN_IN_CLIENT_IDS",
+    "APPLE_SIGN_IN_KEY_ID",
+    "APPLE_SIGN_IN_PRIVATE_KEY",
+    "APPLE_SIGN_IN_TEAM_ID",
+    "BISIBILITY_ENV",
+    "BISIBILITY_PREVIEW_TEST_AUTH",
+    "INDEXNOW_KEY",
+    "NEXT_PUBLIC_DEMO_URL",
+    "NEXT_PUBLIC_MARKETING_URL",
+    "NEXT_PUBLIC_TURNSTILE_SITE_KEY",
+    "NOTIFICATION_TRANSPORT",
+    "POSTHOG_PERSONAL_API_KEY",
+    "POSTHOG_PROJECT_ID",
+    "RAILWAY_TEMPLATE_URL",
+    "REVIEW_LOGIN_CODE_HASH",
+    "REVIEW_LOGIN_EMAIL",
+    "REVIEW_LOGIN_EXPIRES_AT",
+    "ROADMAP_BOARD_ENABLED",
+    "ROADMAP_FEEDBACK_ENABLED",
+    "ROADMAP_FEEDBACK_NOTIFY_EMAIL",
+    "ROADMAP_NOTIFY_ENABLED",
+    "TURNSTILE_SITEVERIFY_URL",
+    "WAITLIST_NOTIFY_EMAIL",
+  ],
+  docsOnly: [
+    "ALERT_DELIVERY_FAILURE_RATE_THRESHOLD",
+    "ALERT_DELIVERY_MIN_ATTEMPTS",
+    "ALERT_DELIVERY_WINDOW_HOURS",
+    "ALERT_FIRE_SPIKE_MIN",
+    "ALERT_FIRE_SPIKE_MULTIPLIER",
+    "BISIBILITY_PROVIDER_RATE_LIMIT_PLAUSIBLE_PER_MINUTE",
+    "BISIBILITY_PROVIDER_RATE_LIMIT_PLAUSIBLE_WINDOW_SECONDS",
+  ],
+  test: [
+    "AI_TRACKING_TEST_DATABASE_URL",
+    "METERING_CRASH_PHASE",
+    "METERING_TEST_DATABASE_URL",
+    "METERING_TEST_PROVIDER_URL",
+    "METERING_TEST_SCHEMA",
+    "PROVIDER_UI_TEST_DATABASE_URL",
+    "ALLOW_INSECURE_FIXED_OTP",
+    "BISIBILITY_DEV_SERP_PROVIDER",
+    "BISIBILITY_FAKE_PROVIDER",
+    "BISIBILITY_RESPONSE_CAPTURE",
+    "BISIBILITY_SMOKE_REAL_NEXT_SERVER",
+    "RANK_CHECK_CUTOVER_ISOLATED_TEST",
+    "RANK_TRACKER_GROUPED_POSTGRES_URL",
+    "TEMPORAL_WORKER_SMOKE",
+  ],
+  migrationOnly: [
+    "MIGRATION_ALLOW_INSECURE_LOOPBACK_TARGET",
+  ],
+  deprecated: [
+    "BISIBILITY_GSC_INSPECTION_DAILY_BUDGET",
+    "SCHEDULER_MODE",
+  ],
+  deploymentInput: [...bakedRuntimeEnvKeys],
+};
+
+const primaryCategories = [
+  "framework",
+  "internal",
+  "hostedOnly",
+  "docsOnly",
+  "test",
+  "migrationOnly",
+  "deprecated",
+];
+
+export function classifiedAllowlist() {
+  return new Set(
+    primaryCategories.flatMap((cat) => envClassification[cat]),
+  );
+}
+
+export function deploymentInputKeys() {
+  return new Set(envClassification.deploymentInput);
+}
+
+export function classifyVariable(name) {
+  for (const [category, names] of Object.entries(envClassification)) {
+    if (names.includes(name)) return category;
+  }
+  return null;
+}
+
+export { primaryCategories };

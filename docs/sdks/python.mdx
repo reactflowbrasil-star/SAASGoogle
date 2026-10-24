@@ -1,0 +1,96 @@
+---
+title: "Python SDK"
+description: "Install and authenticate the Python SDK, then list projects."
+---
+
+## Install
+
+```bash
+pip install bisibility
+```
+
+The current docs-tested package is `bisibility==0.11.1`. See
+[Versioning and support](/versioning).
+
+## Authenticate
+
+Keep the API root and credential in environment variables:
+
+```bash
+export BISIBILITY_API_KEY="your-api-key"
+export BISIBILITY_BASE_URL="https://your-host.example/api/v1"
+```
+
+The client accepts project API keys and
+[personal access tokens](/api/personal-access-tokens).
+
+## List projects
+
+This copyable quickstart constructs the client and lists projects. Paste it
+into a fresh file after the install and environment steps above:
+
+{/* docs-example:start python-client-usage */}
+{/* Generated from examples/python/list_projects.py. Do not edit. */}
+```python
+import os
+
+from bisibility import BisibilityClient
+
+api_key = os.environ["BISIBILITY_API_KEY"]
+base_url = os.environ["BISIBILITY_BASE_URL"]
+
+with BisibilityClient(api_key=api_key, base_url=base_url) as client:
+    projects = client.list_projects()
+
+    for project in projects.data:
+        print(project.id, project.name)
+
+print("OK python-list-projects")
+```
+{/* docs-example:end python-client-usage */}
+
+A successful run prints each project id and name, then `OK python-list-projects`.
+
+See [`GET /projects`](/api-reference/projects/list-projects-visible-to-this-api-key)
+for the request and response contract.
+
+The [complete Python example](https://github.com/CorgiCorner/bisibility/blob/main/examples/python/quickstart.py)
+also creates a keyword, runs a rank check, and cleans up.
+
+## Use the async client
+
+`AsyncBisibilityClient` exposes the same API operations with non-blocking HTTP,
+retry delays, and cursor iteration. Use `async with` when the client owns its
+HTTP transport:
+
+```python
+import os
+
+from bisibility import AsyncBisibilityClient
+
+api_key = os.environ["BISIBILITY_API_KEY"]
+base_url = os.environ["BISIBILITY_BASE_URL"]
+
+async with AsyncBisibilityClient(api_key=api_key, base_url=base_url) as client:
+    projects = await client.list_projects()
+    async for keyword in client.iter_keywords(projects.data[0].id):
+        print(keyword.text)
+```
+
+Call `await client.aclose()` when lifecycle management cannot use a context
+manager.
+
+In `0.11.1`, `run_rank_check_and_wait` is an exception to async parity: it can return a queued
+run before completion. Use `await client.run_rank_check(...)` and explicitly poll rank history
+until the matching run is terminal. See [released-package exceptions](/sdks/behavior#released-package-exceptions).
+
+## Next steps
+
+The [SDK method reference](/sdks/methods) maps common workflows to Python
+method names.
+
+The [canonical SDK behavior contract](/sdks/behavior) defines retries, timeouts,
+cancellation, errors, headers, cursor iteration, and sync/async parity.
+
+The [Python SDK source](https://github.com/CorgiCorner/bisibility-sdk-python)
+contains the complete client surface and typed models.

@@ -1,0 +1,199 @@
+import buttonStyles from "@/components/ui/Button.module.css";
+import { renderWithTimelineMessages as render } from "@/i18n/test-support/render-with-feature-messages";
+import { canProjectAction } from "@/lib/auth/capabilities";
+import type { Role } from "@/lib/generated/prisma/client";
+import type { TimelineSignalRow } from "@/lib/queries/timeline";
+import { screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { TimelineFeed } from "./TimelineFeed";
+
+vi.mock("@/components/timeline/AddNoteForm", () => ({
+  AddNoteForm: ({ canCreate, compact }: { canCreate: boolean; compact?: boolean }) =>
+    canCreate ? (
+      <button className={compact ? "h-[34px]" : undefined} type="button">
+        Add note
+      </button>
+    ) : null,
+}));
+vi.mock("@/components/timeline/RemoveNoteAction", () => ({
+  RemoveNoteAction: ({ signalId }: { signalId: string }) => (
+    <button aria-label={`Delete ${signalId}`} type="button" />
+  ),
+}));
+
+const manualNote: TimelineSignalRow = {
+  createdAt: new Date("2026-07-15T10:30:00.000Z"),
+  createdBy: { email: "member@example.test", name: "Member" },
+  createdById: "user_1",
+  happenedAt: new Date("2026-07-15T10:30:00.000Z"),
+  id: "signal_1",
+  keyword: null,
+  keywordId: null,
+  payload: { note: "Launch annotation" },
+  projectId: "project_1",
+  publicId: "sig_1",
+  severity: "info",
+  source: "manual",
+  type: "note",
+  url: null,
+};
+
+const dateDisplay = { dateFormat: "day_first", locale: "en", timeZone: "UTC" } as const;
+
+describe("TimelineFeed empty state", () => {
+  it("uses the app header once and keeps Add note after Timeline search", () => {
+    render(
+      <TimelineFeed
+        canCreate
+        canDelete
+        dateDisplay={dateDisplay}
+        projectId="prj_1"
+        projectRef="prj_1"
+        view={{
+          filter: "all",
+          hasNextPage: false,
+          hasPreviousPage: false,
+          isFiltered: false,
+          now: new Date("2026-07-15T12:00:00.000Z"),
+          page: 1,
+          rows: [],
+          search: "",
+          timeZone: "UTC",
+        }}
+      />,
+    );
+
+    expect(screen.queryByText("Newest project signals first")).not.toBeInTheDocument();
+    const controls = screen.getByTestId("timeline-controls");
+    const search = screen.getByRole("button", { name: "Search" });
+    const addNote = screen.getByRole("button", { name: "Add note" });
+    const allFilter = screen.getByRole("link", { name: /all\s*selected/i });
+    const filterRegion = allFilter.parentElement;
+    expect(search.closest("form")).not.toContainElement(addNote);
+    expect(controls).toContainElement(search);
+    expect(controls).toContainElement(addNote);
+    expect(controls).toContainElement(allFilter);
+    expect(filterRegion).toHaveClass("border-t", "border-border", "pt-3");
+    expect(search).toHaveClass(buttonStyles.sm);
+    expect(addNote).toHaveClass("h-[34px]");
+    expect(search.compareDocumentPosition(addNote) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const timelineInput = screen.getByRole("searchbox", { name: "Search timeline" });
+    expect(timelineInput.closest("label")).toHaveClass("h-[34px]");
+    expect(timelineInput).toHaveClass(
+      "compact-text-12",
+      "text-[12px]",
+      "leading-4",
+      "placeholder:text-[12px]",
+      "placeholder:leading-4",
+    );
+    expect(timelineInput.className).not.toContain("Attempted to call");
+    const filterRow = screen.getByRole("link", { name: /all\s*selected/i }).parentElement;
+    expect(filterRow).toHaveClass("-mx-4", "px-4", "sm:-mx-5", "sm:px-5");
+  });
+
+  it("uses a module mark only for the unfiltered first-page empty state", () => {
+    const baseView = {
+      filter: "all" as const,
+      hasNextPage: false,
+      hasPreviousPage: false,
+      isFiltered: false,
+      now: new Date("2026-07-15T12:00:00.000Z"),
+      page: 1,
+      rows: [],
+      search: "",
+      timeZone: "UTC",
+    };
+    const { rerender } = render(
+      <TimelineFeed
+        canCreate
+        canDelete
+        dateDisplay={dateDisplay}
+        projectId="prj_1"
+        projectRef="prj_1"
+        view={baseView}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("heading", { name: "No timeline entries yet" })
+        .parentElement?.querySelector('[data-module-mark="soft"]'),
+    ).not.toBeNull();
+
+    rerender(
+      <TimelineFeed
+        canCreate
+        canDelete
+        dateDisplay={dateDisplay}
+        projectId="prj_1"
+        projectRef="prj_1"
+        view={{ ...baseView, isFiltered: true, search: "deploy" }}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("heading", { name: "No matching timeline entries" })
+        .parentElement?.querySelector("[data-module-mark]"),
+    ).toBeNull();
+  });
+
+  it("identifies an out-of-range page and links back to page one", () => {
+    render(
+      <TimelineFeed
+        canCreate
+        canDelete
+        dateDisplay={dateDisplay}
+        projectId="prj_1"
+        projectRef="prj_1"
+        view={{
+          filter: "all",
+          hasNextPage: false,
+          hasPreviousPage: true,
+          isFiltered: false,
+          now: new Date("2026-07-15T12:00:00.000Z"),
+          page: 999,
+          rows: [],
+          search: "",
+          timeZone: "UTC",
+        }}
+      />,
+    );
+
+    expect(screen.getByText("No timeline entries on this page")).toBeInTheDocument();
+    expect(screen.queryByText("No timeline entries yet")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to page 1" })).toHaveAttribute(
+      "href",
+      "/app/prj_1/timeline",
+    );
+  });
+
+  it.each(["viewer", "auditor", "member", "admin", "owner"] satisfies Role[])(
+    "renders timeline mutations for the %s role at the matrix thresholds",
+    (role) => {
+      const canCreate = canProjectAction(role, "create", "signal");
+      const canDelete = canProjectAction(role, "delete", "signal");
+      render(
+        <TimelineFeed
+          canCreate={canCreate}
+          canDelete={canDelete}
+          dateDisplay={dateDisplay}
+          projectId="prj_1"
+          projectRef="prj_1"
+          view={{
+            filter: "all",
+            hasNextPage: false,
+            hasPreviousPage: false,
+            isFiltered: false,
+            now: new Date("2026-07-15T12:00:00.000Z"),
+            page: 1,
+            rows: [manualNote],
+            search: "",
+            timeZone: "UTC",
+          }}
+        />,
+      );
+
+      expect(Boolean(screen.queryByRole("button", { name: "Add note" }))).toBe(canCreate);
+      expect(Boolean(screen.queryByRole("button", { name: "Delete sig_1" }))).toBe(canDelete);
+    },
+  );
+});

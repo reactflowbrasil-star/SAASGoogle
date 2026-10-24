@@ -1,0 +1,75 @@
+"use client";
+
+import { filterChipStateClassName } from "@/components/ui/filter-chip-styles";
+import { MenuSelect } from "@/components/ui/MenuSelect";
+import { competitorPositionBuckets } from "@/lib/competitors/competitor-market-model";
+import type { CompetitorFilter } from "@/lib/competitors/types";
+import { TagIcon as Tag } from "@phosphor-icons/react/dist/csr/Tag";
+import { XIcon as X } from "@phosphor-icons/react/dist/csr/X";
+import { useTranslations } from "next-intl";
+
+type CompetitorFilterControlsProps = {
+  filter: CompetitorFilter;
+  onFilterChange: (filter: CompetitorFilter) => void;
+  tags: string[];
+};
+
+const bucketButtonClass =
+  "rounded-control border px-[11px] py-[5px] text-[11.5px] font-semibold outline-none transition-colors";
+
+export function CompetitorFilterControls({
+  filter,
+  onFilterChange,
+  tags,
+}: Readonly<CompetitorFilterControlsProps>) {
+  const t = useTranslations("projectCompetitors.ui");
+  const positionLabels = {
+    all: t("positionAllKeywords"),
+    top3: t("positionTop3"),
+    top10: t("positionTop10"),
+  } satisfies Record<CompetitorFilter["position"], string>;
+  const tagOptions = [
+    { label: t("allTags"), value: "" },
+    ...tags.map((tag) => ({ label: tag, value: tag })),
+  ];
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {competitorPositionBuckets.map((bucket) => {
+        const selected = filter.position === bucket.id;
+        return (
+          <button
+            aria-pressed={selected}
+            className={`${bucketButtonClass} ${filterChipStateClassName(selected)}`}
+            key={bucket.id}
+            onClick={() => onFilterChange({ ...filter, position: bucket.id })}
+            type="button"
+          >
+            {positionLabels[bucket.id]}
+          </button>
+        );
+      })}
+      {tags.length > 0 ? (
+        <span className="inline-flex items-center gap-1">
+          <MenuSelect
+            ariaLabel={t("filterByTag")}
+            leadingIcon={<Tag weight="regular" aria-hidden size={12} />}
+            onChange={(value) => onFilterChange({ ...filter, tag: value || null })}
+            options={tagOptions}
+            value={filter.tag ?? ""}
+          />
+          {filter.tag ? (
+            <button
+              aria-label={t("removeTagFilter")}
+              className="grid h-7 w-7 place-items-center rounded-control border border-border-control bg-bg-elev text-fg-muted outline-none transition-colors hover:border-accent hover:text-accent-text focus-visible:border-accent focus-visible:text-accent-text"
+              onClick={() => onFilterChange({ ...filter, tag: null })}
+              type="button"
+            >
+              <X aria-hidden size={12} weight="regular" />
+            </button>
+          ) : null}
+        </span>
+      ) : null}
+    </div>
+  );
+}

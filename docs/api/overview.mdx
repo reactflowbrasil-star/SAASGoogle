@@ -1,0 +1,135 @@
+---
+title: "API overview"
+description: "Common request and response behavior for the bisibility REST API."
+---
+
+Use REST API v1 to complete a typical rank-tracking workflow:
+
+1. Create a project.
+2. Add tracked keywords.
+3. [Start a rank check](/api/checks).
+4. [Retrieve ranking history](/api/rank-history).
+
+This guide documents behavior shared across the HTTP API: base URLs, safe
+retries, response envelopes, pagination, and errors. Use the **API Reference**
+tab for the complete, resource-grouped endpoint inventory, request and response
+schemas, and interactive request builder.
+
+If you use an official client, start with the
+[SDK docs](/sdks/overview) for installation, language-level methods, and types.
+See [Authentication and project selection](/authentication#project-selection)
+for credential types and the PAT selector precedence contract.
+
+The REST API is served from:
+
+```text
+/api/v1
+```
+
+Use the regional API root shown by your project. The EU hosted region currently uses:
+
+```text
+https://eu.bisibility.com/api/v1
+```
+
+Call the regional host directly instead of relying on a redirect from the
+marketing domain.
+
+Self-hosted:
+
+```text
+https://your-host.example/api/v1
+```
+
+## Retry writes safely
+
+All non-`GET` routes accept an idempotency key:
+
+```text
+Idempotency-Key: unique-operation-id
+```
+
+Reuse the same key only when retrying the same operation with the same
+authenticated credential, method, and path. A completed retry returns the
+original response and includes:
+
+```text
+Idempotency-Replayed: true
+```
+
+An operation still in progress returns `409 Conflict` with `Retry-After: 1`.
+Completed responses remain replayable for 24 hours. With Valkey or another Redis-compatible
+configured, replay works across app instances and restarts.
+
+## Response shapes
+
+Cursor-paginated list routes return:
+
+```json
+{
+  "data": [],
+  "meta": { "next_cursor": null }
+}
+```
+
+Response envelopes are endpoint-specific; consult the operation response schema.
+
+Discovery routes are mixed:
+
+| Route | Shape |
+| - | - |
+| `/health`, `/readiness` | `{ "status": "ok" \| "degraded" }` |
+| `/liveness` | `{ "status": "ok" }` |
+| `/openapi.json` | Raw OpenAPI document |
+| `/capabilities` | `{ "apiVersions": ["v1"], "scheduler_driver": "temporal", "data": [...] }` |
+| `/llms.txt` | Plain text |
+
+## API version declarations
+
+`GET /capabilities` advertises the API contracts the server serves in
+`apiVersions`. Clients may declare one of those values with
+`Bisibility-API-Version: v1`. The header is optional: an undeclared request
+continues through the same authentication, validation, and routing path used
+before version negotiation was added. Application releases, this API version,
+and client package versions are independent; see
+[Versioning and support](/versioning).
+
+An unsupported declared version returns `409 Conflict` with problem type
+`https://bisibility.com/problems/unsupported_api_version`. See
+[API errors](/api/errors) for the response shape.
+
+## Pagination
+
+Cursor-paginated list routes accept:
+
+| Query | Description |
+| - | - |
+| `limit` | Page size. Defaults to `50`, maximum `200`. |
+| `cursor` | Cursor from the previous response's `meta.next_cursor`. |
+
+The cursor is an opaque base64url value. Do not parse it in clients.
+
+## Errors
+
+Errors use `application/problem+json`.
+
+```json
+{
+  "type": "https://bisibility.com/problems/not_found",
+  "title": "Not found",
+  "status": 404,
+  "detail": "Keyword not found.",
+  "instance": "urn:bisibility:api:v1:/api/v1/keywords/kw_z00000000000000000000000",
+  "docs_url": "https://bisibility.com/docs/api/errors"
+}
+```
+
+See [API errors](/api/errors).
+
+## Integration workflows
+
+- [Run rank checks](/api/checks)
+- [Retrieve rank history](/api/rank-history)
+- [Receive API webhooks](/api/webhooks)
+- [Ingest deployment webhooks](/api/deploy-webhooks)
+- [Import instance data](/api/cloud-import)

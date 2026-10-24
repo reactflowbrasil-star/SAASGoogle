@@ -1,0 +1,318 @@
+# Contributing
+
+Thanks for helping improve bisibility. Public issues are welcome, and code is
+not the only contribution that counts - often it is not even the fastest one.
+This repository does not accept pull requests; see
+[Pull Requests](#pull-requests) for why and for what works instead.
+
+## Ways to Contribute
+
+bisibility is developed with substantial AI-agent assistance.
+
+In rough order of leverage:
+
+1. **Feature requests.** From a quick idea to an implementation-ready
+   proposal, through the [feature request form][request-form]. Accepted
+   requests are labeled `feature:accepted`, are usually implemented by the
+   core team, and may receive changelog credit when they materially shape what
+   ships (see [Credits](#credits)). See [Feature Requests](#feature-requests).
+2. **Bug reports.** A minimal reproduction through the
+   [bug report form][bug-form] is the fastest path to a fix.
+3. **Ideas and feedback.** Use [GitHub Discussions][discussions] when a
+   proposal is not fully formed yet; good discussions graduate into feature
+   requests.
+4. **Docs, examples, and provider know-how.** Corrections, self-hosting notes,
+   example configurations, and real-world provider behavior (quotas, SERP
+   quirks, locale edge cases) that only operators run into.
+
+Pull requests are not on this list because this repository does not accept
+them. See [Pull Requests](#pull-requests) for why, and for where the same
+work lands instead.
+
+The [roadmap](../ROADMAP.md) explains how all of this feeds into what gets built
+next, including how reactions and engagement on existing issues are weighed
+during triage.
+
+Issues are triaged at least every two weeks. Quiet stretches between rounds
+mean the queue has not been read yet, not that a report was dismissed.
+
+### One Front Door
+
+File feature requests and ideas in this repository for every part of
+bisibility: the app, the public REST API, the MCP server and agent skills,
+the client libraries, and the CLI. Bug reports belong in the repository whose
+code misbehaves, for example [bisibility-sdk-ts][sdk-ts] or
+[bisibility-cli][cli]; when in doubt, file here and triage will route it.
+
+[request-form]: https://github.com/CorgiCorner/bisibility/issues/new?template=feature_request.yml
+[bug-form]: https://github.com/CorgiCorner/bisibility/issues/new?template=bug_report.yml
+[discussions]: https://github.com/CorgiCorner/bisibility/discussions
+[sdk-ts]: https://github.com/CorgiCorner/bisibility-sdk-ts
+[cli]: https://github.com/CorgiCorner/bisibility-cli
+
+## Documentation reports
+
+Author-facing page conventions live in the
+[docs style guide](https://bisibility.com/docs/style-guide). That page is for
+contributors, not product users.
+
+This repository does not accept documentation pull requests. Report the
+discrepancy; the maintained source example or page should be fixed instead of
+copied into an issue.
+
+Before reporting a docs issue:
+
+1. Give the affected docs URL.
+2. State the observed behavior or incorrect claim.
+3. Link the source-of-truth code or schema when known.
+4. Include the command or request needed to reproduce it.
+5. Say whether the issue affects:
+   - product docs
+   - API reference
+   - SDK, CLI, or MCP
+   - self-hosting
+   - security or versioning
+
+Do not paste a new implementation of an existing canonical snippet. If a
+documented example disagrees with runnable code in `examples/`, report that
+gap so the source example can be fixed.
+
+## Feature Requests
+
+A feature request describes observable behavior, not implementation; the core
+team takes it from there. Only the problem and the proposed behavior are
+required - a quick idea is a valid request. A request is implementation-ready
+when it answers four questions:
+
+- **Problem.** What are you trying to do that bisibility makes hard today, and
+  who hits it?
+- **Proposed behavior.** What should a user see and be able to do? Web UI,
+  REST API, webhooks, imports, MCP - whichever surfaces apply.
+- **Acceptance criteria.** A short checklist a reviewer, or a coding agent,
+  can verify one item at a time.
+- **Boundaries.** What is explicitly out of scope, plus known constraints and
+  edge cases (providers, quotas, large keyword sets, self-host vs cloud).
+
+Implementation-ready requests ship fastest, so filling in the optional fields
+is worth the extra minutes. Drafting a request together with your own AI
+assistant is welcome and encouraged. What matters is that the problem is real
+for you and that you sanity-check the result. Requests move through a simple
+lifecycle: submitted, discussed in the issue, then `feature:accepted` (or
+declined with a reason), implemented, and finally released.
+
+## Credits
+
+This repository receives releases as snapshots (see
+[Snapshot Releases](#snapshot-releases)), so contributor commit authorship
+does not appear in the public git history. The changelog is where public
+credit happens.
+
+- Feature requests that materially shape a shipped change may be credited by
+  GitHub handle in the changelog entry for that release, for example
+  `Added keyword group exports (#123, thanks @handle).`
+- Substantial docs, examples, provider know-how, and triage help are credited
+  the same way.
+- In the rare case where the project asks to include code or other material
+  you submitted (see [License](#license)), it is credited the same way. Git
+  authorship is additionally preserved in the development history when
+  maintainers port the material, and may surface through co-author metadata
+  on the public release - that part is best-effort, not guaranteed.
+
+The credit checkbox on the request records your preference; attribution is
+added when the request materially shaped the result. Say so in the issue if
+you prefer not to be credited, or if you would like a different name used.
+
+## Development Setup
+
+Prerequisites:
+
+- Node.js 22
+- Docker with Docker Compose
+
+For the fastest full-stack start, follow the
+[local demo quickstart](https://bisibility.com/docs/quickstart). It walks
+through `scripts/dev/bootstrap-local.sh`, which creates a local `.env` with
+development secrets and prints the startup commands. The core stack is:
+
+```bash
+docker compose -f compose.yaml up -d
+```
+
+To build the web image from your checkout instead of pulling the published one,
+add the build overlay and name the service, so that only the web stack starts:
+
+```bash
+docker compose -f compose.yaml -f compose.build.yaml up -d --build app
+```
+
+`compose.build.yaml` also defines the worker image, so without the `app`
+argument it would start a worker that has none of its configuration; the full
+stack below is the place for a worker build.
+
+Open [http://localhost:3000](http://localhost:3000) after the stack is ready.
+
+For local application development from your checkout:
+
+```bash
+npm ci
+npx prisma generate
+npm run dev
+```
+
+Keep your `.env`, PostgreSQL, Redis or Valkey, and any provider credentials
+configured for the feature you are testing.
+
+### Temporal Worker
+
+The core Compose stack runs manual rank checks without the scheduler. To run
+scheduled checks in Docker, add the worker and Temporal overlays:
+
+```bash
+docker compose -f compose.yaml -f compose.worker.yaml -f compose.temporal.yaml --profile temporal-ui up -d
+```
+
+That command starts Temporal, the worker container, and the Temporal Web UI at
+`http://localhost:8233`. Add `-f compose.build.yaml --build` to it to build both
+the web and worker images from your checkout.
+
+To run the worker from your checkout while using Docker only for Temporal, start
+the Temporal fallback stack:
+
+```bash
+docker compose -f docker-compose.temporal.yml up
+```
+
+The fallback stack serves the Temporal Web UI at `http://localhost:8233`.
+
+Then, in another shell:
+
+```bash
+npm run temporal:worker
+```
+
+## Tests
+
+Vitest helpers and optional test configurations live in `tests/config/`.
+The root `vitest.config.ts` remains the default entry point.
+
+To refresh the README image, install `agent-browser` and Chromium, then run
+`npm run screenshot:dashboard` with `DATABASE_URL` pointing at a disposable
+PostgreSQL database. The generator creates an isolated schema, seeds synthetic
+developer-focused data, builds the real application, and removes the schema
+after capture. It never calls a live SEO provider.
+
+Useful focused checks:
+
+- `npm run test:unit`, runs the Vitest unit project.
+- `npm run test:storybook`, runs the Storybook test script.
+- `npm run test:e2e`, runs the end-to-end test script.
+- `npm run smoke:worker`, smoke-tests the worker entrypoint.
+
+The aggregate test command is:
+
+```bash
+npm run test
+```
+
+It chains `npm run typecheck`, `npm run lint`, and `npm run test:unit`.
+
+Run `npm run verify:build` before larger changes, dependency changes,
+build configuration changes, or changes that affect Storybook or production
+bundling. It checks the Node version, linting, typechecking, unit tests, the Next
+build, and the Storybook build.
+
+### Local SonarQube analysis
+
+The repository includes a local SonarQube Community Build for release-readiness
+checks. Start it with:
+
+```bash
+npm run sonar:up
+```
+
+Open [http://localhost:9000](http://localhost:9000), sign in with the initial
+`admin` / `admin` credentials, change the password, and create a user token under
+**My Account → Security**. Load the token into the current terminal without
+placing it in shell history:
+
+```bash
+read -s SONAR_TOKEN
+export SONAR_TOKEN
+```
+
+Generate LCOV coverage and run the scanner:
+
+```bash
+npm run sonar:check
+```
+
+The scan uses the built-in **Sonar way** profiles and quality gate: no new issues,
+all new security hotspots reviewed, at least 80% coverage on new code, and no
+more than 3% duplication on new code. Tests and Storybook stories are analyzed
+as test code. Only generated files, dependencies, build output, immutable Prisma
+migrations for duplication, and private process material are excluded.
+
+Stop the server without deleting its named volumes:
+
+```bash
+npm run sonar:down
+```
+
+## Code Conventions
+
+- Use the `@/` alias for cross-directory imports.
+- Use `./` only for same-directory imports.
+- `lib/temporal` keeps relative imports for the worker runtime.
+- `lib/` must not import from `components/`.
+- Keep Prisma client access behind `lib/queries`; `app/` must not import
+  `@/lib/db/prisma` directly.
+- App code reads through `lib/queries/*` and mutates through `lib/actions/*`
+  or `lib/api/*`; domain modules live under `lib/`.
+- Import `components/ui` through its barrel, for example
+  `import { Button } from "@/components/ui";`.
+- Import layering is enforced in `eslint.config.mjs` through
+  `no-restricted-imports`, `import/no-cycle`, and `max-lines`.
+- Keep source files at 300 effective lines or fewer.
+- Use Biome formatting. The lint-staged hook formats staged `ts`, `tsx`, `js`,
+  `jsx`, `mjs`, `cjs`, `json`, and `md` files on commit.
+
+## Snapshot Releases
+
+This repository receives released snapshots of the application. Each release
+arrives as one commit per version, so this history is a release history rather
+than a development history, and there is no branch here to merge into.
+
+## Pull Requests
+
+bisibility does not accept pull requests.
+
+Because releases arrive as snapshots, a pull request opened here cannot be
+reviewed or merged even when the change is good. One opened anyway is closed
+automatically with a pointer to the right form.
+
+This is a capacity decision, and it is easier to state plainly than to dress
+up: a small team cannot run a public review process and ship at the same time,
+so review time goes to feature requests and bug reports, which turn into
+shipped code faster. Everything the application does is in this repository
+either way.
+
+Describe the problem rather than sending a patch. A bug report with a minimal
+reproduction is enough to get a fix written, including for typos, dead links,
+and wrong commands. We do not use pasted code; if we ever want to, we will ask
+you to agree to the CLA first.
+
+## License
+
+Before a contribution can be accepted, you must agree to the
+[Contributor Licence Agreement](CLA.md). You keep your copyright. The CLA
+gives the project a non-exclusive licence that includes the right to
+sublicense and relicense your contribution under any terms, including terms
+other than `AGPL-3.0-only`.
+
+This rarely comes up, because the project asks for problem reports rather than
+patches. Problem reports, feature descriptions, and ideas in issues are not
+covered and need no agreement; the CLA applies only when the project asks to
+include material you submitted. When it does, record your agreement in the
+issue where you submit the material and name the version:
+`I agree to CLA version 1.0.` The agreement covers the material submitted in
+that issue; there is no signing bot and no blanket sign-up.

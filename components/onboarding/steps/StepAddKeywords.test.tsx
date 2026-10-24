@@ -1,0 +1,527 @@
+import {
+  confirmDefaultsFixture,
+  previewDefaultsFixture,
+} from "@/components/onboarding/reviewed-defaults-test-fixture";
+import { DeploymentModeProvider } from "@/components/shell/DeploymentModeProvider";
+import { mergeMessageCatalogs } from "@/i18n/catalog-contract";
+import {
+  renderWithOnboardingMessages as render,
+  renderWithFeatureMessages,
+} from "@/i18n/test-support/render-with-feature-messages";
+import type { NewMarketCreateInput } from "@/lib/markets/create-input";
+import { KEYWORD_IMPORT_LIMIT_MESSAGE } from "@/lib/schemas/keyword";
+import onboardingMessages from "@/messages/core/en/onboarding.json";
+import sharedMessages from "@/messages/core/en/shared.json";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ComponentProps } from "react";
+import { describe, expect, it, vi } from "vitest";
+import type { AddKeywordsForm, AddKeywordsInput } from "./StepAddKeywords";
+import { StepAddKeywords } from "./StepAddKeywords";
+
+const polishKeywordMessages = mergeMessageCatalogs(sharedMessages, {
+  onboarding: {
+    ...onboardingMessages.onboarding,
+    keywords: {
+      ...onboardingMessages.onboarding.keywords,
+      empty: "Dodaj co najmniej jedno slowo kluczowe.",
+      limit: "Dodaj najwyzej {maximum, number} slow kluczowych na import.",
+      marketRequired: "Dodaj co najmniej jeden rynek, aby kontynuowac.",
+      tooLong:
+        "{count, plural, one {# wiersz przekracza} other {# wiersze przekraczaja}} limit {maximum, number} znakow.",
+    },
+  },
+});
+
+function keywordBox() {
+  return screen.getByPlaceholderText("One keyword per line");
+}
+
+function keywordDefaults(keywords = ""): AddKeywordsForm {
+  return {
+    device: "desktop",
+    devices: ["desktop"],
+    keywords,
+    locations: ["US"],
+    projectId: "prj_1",
+  };
+}
+
+function renderStep(
+  props: Partial<ComponentProps<typeof StepAddKeywords>> = {},
+  { withContinue = false } = {},
+) {
+  return render(
+    <>
+      <StepAddKeywords
+        previewProjectDefaultsAction={previewDefaultsFixture}
+        updateProjectDefaultsAction={async () => ({ kind: "saved" })}
+        {...props}
+      />
+      {withContinue ? (
+        <button form="onboarding-step-form" type="submit">
+          Continue
+        </button>
+      ) : null}
+    </>,
+  );
+}
+
+describe("StepAddKeywords", () => {
+  it("discards a cancelled market draft without changing the keywords", async () => {
+    const user = userEvent.setup();
+    const projectId = `prj_${"a".repeat(24)}`;
+    const createMarketAction = vi.fn();
+    renderStep({
+      createMarketAction,
+      defaultValues: { ...keywordDefaults("rank tracker"), projectId },
+      flowState: { projectId },
+    });
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Another market" }));
+    const customName = screen.getByLabelText("Custom name (optional)");
+    await user.click(customName);
+    await user.paste("Discarded draft");
+    expect(customName).toHaveValue("Discarded draft");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(keywordBox()).toHaveValue("rank tracker");
+    expect(createMarketAction).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Another market" }));
+    expect(screen.getByLabelText("Custom name (optional)")).toHaveValue("");
+  });
+
+  it("creates a market through the shared drawer and the create action, then submits it with the keywords", async () => {
+    const user = userEvent.setup();
+    const projectId = `prj_${"a".repeat(24)}`;
+    const createMarketAction = vi.fn(async (input: NewMarketCreateInput) => ({
+      canonicalKey: input.canonicalKey,
+      countryCode: input.countryCode,
+      displayName: "Spain",
+      keywordCount: 0,
+      kind: input.kind,
+      languageCode: input.languageCode,
+      languageLabel: "Spanish",
+      publicId: `pmkt_${"a".repeat(24)}`,
+    }));
+    const addKeywordsAction = vi.fn(async (_input: AddKeywordsInput) => ({
+      created: 1,
+      persistedKeywordCount: 1,
+      keywords: [{ id: "keyword_1", publicId: "kw_1" }],
+      skippedDuplicates: 0,
+    }));
+    const saveMarketsAction = vi.fn(async (input: { marketKeys: string[] }) => ({
+      marketKeys: input.marketKeys,
+    }));
+    const onMarketsChange = vi.fn();
+    renderStep(
+      {
+        addKeywordsAction,
+        createMarketAction,
+        defaultValues: { ...keywordDefaults("rank tracker"), projectId },
+        flowState: { projectId },
+        onMarketsChange,
+        saveMarketsAction,
+      },
+      { withContinue: true },
+    );
+
+    await user.click(screen.getByRole("button", { name: "Another market" }));
+    await user.click(screen.getByRole("button", { name: "Country" }));
+    await user.click(screen.getByRole("textbox", { name: "Search countries" }));
+    await user.paste("Spain");
+    await user.click(await screen.findByRole("menuitem", { name: "Spain" }));
+    await user.click(screen.getByRole("button", { name: "Language" }));
+    await user.click(screen.getByRole("menuitem", { name: "Spanish" }));
+    await user.click(screen.getByRole("button", { name: "Location" }));
+    await user.click(screen.getByRole("menuitem", { name: "Spain (Country)" }));
+    expect(screen.queryByRole("button", { name: /devices/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Paste keywords" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Create market" }));
+
+    await waitFor(() =>
+      expect(createMarketAction).toHaveBeenCalledWith({
+        canonicalKey: "ES",
+        countryCode: "ES",
+        devices: ["desktop"],
+        kind: "country",
+        languageCode: "es",
+        method: { kind: "empty" },
+        name: "",
+        projectId,
+        schedule: null,
+      }),
+    );
+    expect(await screen.findByRole("button", { name: "Remove Spain / Spanish" })).toBeVisible();
+    expect(addKeywordsAction).not.toHaveBeenCalled();
+    expect(saveMarketsAction).not.toHaveBeenCalled();
+    expect(keywordBox()).toHaveValue("rank tracker");
+    expect(onMarketsChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ canonicalKey: "US" }),
+      expect.objectContaining({
+        canonicalKey: "ES",
+        displayName: "Spain",
+        kind: "country",
+        languageLabel: "Spanish",
+      }),
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await confirmDefaultsFixture();
+
+    await waitFor(() =>
+      expect(saveMarketsAction).toHaveBeenCalledWith({
+        marketKeys: ["US", "ES"],
+        projectId,
+      }),
+    );
+    expect(addKeywordsAction).toHaveBeenCalledWith(
+      expect.objectContaining({ locations: [{ locationKey: "US" }, { locationKey: "ES" }] }),
+    );
+  });
+
+  it("keeps a draft market's server display name instead of rebuilding it from its key", () => {
+    renderStep({
+      defaultValues: { ...keywordDefaults(), locations: ["ES/Andalusia/Malaga@en"] },
+      flowState: { projectId: "prj_1" },
+      trackingDefaults: {
+        frequency: "daily",
+        locationSelections: [
+          {
+            canonicalKey: "ES/Andalusia/Malaga@en",
+            countryCode: "ES",
+            displayName: "Malaga, Andalusia, Spain",
+            kind: "city",
+            languageCode: "en",
+            languageLabel: "English",
+          },
+        ],
+        locations: ["ES/Andalusia/Malaga@en"],
+      } as unknown as ComponentProps<typeof StepAddKeywords>["trackingDefaults"],
+    });
+
+    expect(
+      screen.getByRole("button", { name: "Remove Malaga, Andalusia, Spain / English" }),
+    ).toBeVisible();
+  });
+
+  it("keeps placeholder and entered text on the same typography geometry", () => {
+    renderStep({ defaultValues: keywordDefaults() });
+
+    const textarea = keywordBox();
+    expect(textarea).toHaveClass(
+      "text-[13px]",
+      "font-normal",
+      "leading-[1.7]",
+      "placeholder:font-normal",
+    );
+    expect(textarea).not.toHaveClass(
+      "font-mono",
+      "placeholder:text-[12px]",
+      "placeholder:leading-4",
+    );
+  });
+
+  it("keeps exactly one device owner in the step", () => {
+    renderStep({ defaultValues: keywordDefaults() });
+
+    expect(screen.getAllByRole("button", { name: /devices/i })).toHaveLength(1);
+  });
+
+  it("previews trimmed unique keywords and ignored duplicate lines", () => {
+    renderStep({ defaultValues: keywordDefaults() });
+
+    fireEvent.change(keywordBox(), {
+      target: { value: " rank tracker \nRank Tracker\nseo api\n" },
+    });
+
+    expect(screen.getByText("2 unique keywords · 1 duplicate line ignored")).toBeInTheDocument();
+  });
+
+  it("blocks continue on an empty keyword list and focuses the field", async () => {
+    const addKeywordsAction = vi.fn();
+    const onComplete = vi.fn();
+    renderStep(
+      { addKeywordsAction, defaultValues: keywordDefaults(), onComplete },
+      { withContinue: true },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(await screen.findByText("Add at least one keyword.")).toBeInTheDocument();
+    expect(keywordBox()).toHaveFocus();
+    expect(keywordBox()).toHaveAttribute("required");
+    expect(addKeywordsAction).not.toHaveBeenCalled();
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it("uses the feature locale for keyword and market validation", async () => {
+    renderWithFeatureMessages(
+      <>
+        <StepAddKeywords flowState={{ projectId: "prj_1" }} />
+        <button form="onboarding-step-form" type="submit">
+          Continue
+        </button>
+      </>,
+      { locale: "pl", messages: polishKeywordMessages },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText("Dodaj co najmniej jedno slowo kluczowe.")).toBeInTheDocument();
+    expect(screen.queryByText("Add at least one keyword.")).not.toBeInTheDocument();
+
+    fireEvent.change(keywordBox(), { target: { value: "rank tracker" } });
+    fireEvent.click(screen.getByRole("button", { name: "Remove United States / English" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(
+      await screen.findByText("Dodaj co najmniej jeden rynek, aby kontynuowac."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Add at least one market to continue.")).not.toBeInTheDocument();
+  });
+
+  it("shows the long-line limit warning exactly once, before and after submit", () => {
+    const message = "1 line exceeds the 180-character keyword limit.";
+    renderStep({ defaultValues: keywordDefaults("a".repeat(181)) }, { withContinue: true });
+
+    expect(screen.getAllByText(message)).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(screen.getAllByText(message)).toHaveLength(1);
+  });
+
+  it("omits Search Console when no source is connected", () => {
+    renderStep({ defaultValues: keywordDefaults() });
+
+    expect(screen.queryByText(/Search Console/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Import top queries from Search Console/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render a Search Console import link before a project exists", () => {
+    renderStep({ hasAnalyticsSource: true, importTopQueriesAction: vi.fn() });
+
+    expect(
+      screen.queryByRole("button", { name: /Import top queries from Search Console/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Reconnect your Google account" })).toBeNull();
+  });
+
+  it("renders the import button when an analytics source is connected", () => {
+    renderStep({
+      defaultValues: keywordDefaults(),
+      hasAnalyticsSource: true,
+      importTopQueriesAction: vi.fn(async () => ({ queries: [] })),
+    });
+
+    expect(
+      screen.getByRole("button", { name: /Import top queries from Search Console/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the suggestion picker and appends the confirmed queries", async () => {
+    const importTopQueriesAction = vi.fn(async () => ({
+      hidden: [],
+      hiddenCount: 0,
+      queries: ["seo api", "local seo"],
+      suggestions: [
+        { clicks: 9, impressions: 90, query: "seo api" },
+        { clicks: 3, impressions: 40, query: "local seo" },
+      ],
+    }));
+    const onKeywordsChange = vi.fn();
+    renderStep({
+      defaultValues: keywordDefaults("rank tracker\ncontent audit"),
+      hasAnalyticsSource: true,
+      importTopQueriesAction,
+      onKeywordsChange,
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Import top queries from Search Console/i }),
+    );
+
+    await waitFor(() =>
+      expect(importTopQueriesAction).toHaveBeenCalledWith({ limit: 50, projectId: "prj_1" }),
+    );
+    const confirm = await screen.findByRole("button", { name: /Add 2 keywords/i });
+    fireEvent.click(confirm);
+
+    await waitFor(() =>
+      expect(keywordBox()).toHaveValue("rank tracker\ncontent audit\nseo api\nlocal seo"),
+    );
+    expect(onKeywordsChange).toHaveBeenLastCalledWith(
+      "rank tracker\ncontent audit\nseo api\nlocal seo",
+    );
+  });
+
+  it("links to Integrations when Search Console authorization needs reconnecting", async () => {
+    renderStep({
+      defaultValues: keywordDefaults(),
+      hasAnalyticsSource: true,
+      importTopQueriesAction: vi.fn(async () => ({
+        queries: [],
+        reason: "needs_reauth" as const,
+      })),
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Import top queries from Search Console/i }),
+    );
+
+    expect(await screen.findByText("Google authorization has expired.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Reconnect your Google account" })).toHaveAttribute(
+      "href",
+      "/app/prj_1/integrations",
+    );
+  });
+
+  it("blocks over-long keywords and imports above the keyword limit", async () => {
+    const addKeywordsAction = vi.fn();
+    renderStep({ addKeywordsAction }, { withContinue: true });
+    const longKeyword = "x".repeat(181);
+
+    fireEvent.change(keywordBox(), { target: { value: longKeyword } });
+    expect(screen.getByText("1 line exceeds the 180-character keyword limit.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(addKeywordsAction).not.toHaveBeenCalled());
+
+    fireEvent.change(keywordBox(), {
+      target: { value: Array.from({ length: 501 }, (_, index) => `keyword ${index}`).join("\n") },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => expect(screen.getByText(KEYWORD_IMPORT_LIMIT_MESSAGE)).toBeInTheDocument());
+    expect(addKeywordsAction).not.toHaveBeenCalled();
+  });
+
+  it("does not infer provider cost or offer an estimate for manual defaults", () => {
+    renderStep({
+      costPerCheckCents: 5,
+      flowState: { projectId: "prj_1", providerId: "serpapi" },
+      monthlyCapCents: 500,
+    });
+    fireEvent.change(keywordBox(), { target: { value: "rank tracker\nseo api" } });
+
+    expect(screen.getByText("Manual checks at Top 20")).toBeInTheDocument();
+    expect(screen.queryByText(/\$|monthly cost cap/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Estimate provider cost" })).toBeNull();
+  });
+
+  it("keeps new targets manual despite a legacy daily project default", () => {
+    renderStep({
+      flowState: { projectId: "prj_1", providerId: "serpapi" },
+      trackingDefaults: { frequency: "daily" } as ComponentProps<
+        typeof StepAddKeywords
+      >["trackingDefaults"],
+    });
+    fireEvent.change(keywordBox(), { target: { value: "rank tracker\nseo api" } });
+    expect(screen.getByText("Manual checks at Top 20")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Frequency" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Estimate provider cost" })).not.toBeInTheDocument();
+  });
+
+  it("shows the selected depth without presenting a provider cost", () => {
+    renderStep({ costPerCheckCents: 5, flowState: { projectId: "prj_1", serpDepth: 10 } });
+
+    fireEvent.change(keywordBox(), { target: { value: "rank tracker\nseo api" } });
+
+    expect(screen.getByText("Manual checks at Top 10")).toBeInTheDocument();
+  });
+
+  it("hides the hosted calculator link on self-hosted instances", () => {
+    render(
+      <DeploymentModeProvider deploymentMode="self-host">
+        <StepAddKeywords flowState={{ projectId: "prj_1" }} />
+      </DeploymentModeProvider>,
+    );
+    fireEvent.change(keywordBox(), { target: { value: "rank tracker" } });
+
+    expect(screen.queryByRole("link", { name: "Estimate provider cost" })).toBeNull();
+  });
+
+  it("submits one matrix action and proceeds without intermediate success feedback", async () => {
+    const onComplete = vi.fn();
+    const addKeywordsAction = vi.fn(async (_input: AddKeywordsInput) => ({
+      created: 2,
+      persistedKeywordCount: 1,
+      keywords: [
+        { id: "keyword_1", publicId: "kw_1" },
+        { id: "keyword_2", publicId: "kw_2" },
+      ],
+      skippedDuplicates: 6,
+    }));
+    renderStep(
+      {
+        addKeywordsAction,
+        flowState: {
+          devices: ["desktop", "mobile"],
+          locations: ["US", "PL"],
+          projectId: "prj_1",
+          providerId: "serpapi",
+        },
+        onComplete,
+      },
+      { withContinue: true },
+    );
+
+    fireEvent.change(keywordBox(), { target: { value: " rank tracker \nRank Tracker\nseo api" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await confirmDefaultsFixture();
+
+    await waitFor(() => expect(addKeywordsAction).toHaveBeenCalledTimes(1));
+    expect(addKeywordsAction).toHaveBeenCalledWith({
+      devices: ["desktop", "mobile"],
+      keywords: ["rank tracker", "seo api"],
+      locations: [{ locationKey: "US" }, { locationKey: "PL" }],
+      projectId: "prj_1",
+      schedule: undefined,
+      tags: [],
+      targetUrl: null,
+    });
+    await waitFor(() =>
+      expect(onComplete).toHaveBeenCalledWith(expect.any(Object), expect.any(Object), 1, null),
+    );
+    expect(screen.queryByText(/added, .*already tracked/)).not.toBeInTheDocument();
+  });
+
+  it("surfaces matrix location degrade warnings", async () => {
+    const onComplete = vi.fn();
+    const addKeywordsAction = vi.fn(async (_input: AddKeywordsInput) => ({
+      created: 1,
+      persistedKeywordCount: 1,
+      keywords: [{ id: "keyword_1", publicId: "kw_1" }],
+      skippedDuplicates: 0,
+      warnings: ["Austin was not found; tracking United States instead."],
+    }));
+    renderStep(
+      {
+        addKeywordsAction,
+        flowState: { locations: ["US/Texas/Austin"], projectId: "prj_1" },
+        onComplete,
+      },
+      { withContinue: true },
+    );
+
+    fireEvent.change(keywordBox(), { target: { value: "rank tracker" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await confirmDefaultsFixture();
+
+    expect(
+      await screen.findByText("Austin was not found; tracking United States instead."),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(onComplete).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.any(Object),
+        1,
+        "Austin was not found; tracking United States instead.",
+      ),
+    );
+  });
+});
+
+vi.mock("@/components/cost-estimate/useCostEstimate", () => import("@/tests/cost-estimate"));

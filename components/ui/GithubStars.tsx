@@ -1,0 +1,107 @@
+"use client";
+
+import { GITHUB_URL } from "@/lib/site/site";
+import { cn } from "@/lib/ui/cn";
+import { GithubLogoIcon as GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
+import { cva } from "class-variance-authority";
+import { useFormatter, useTranslations } from "next-intl";
+
+export type GithubStarsSize = "lg" | "md" | "sm";
+/** `chip` stands alone on a surface; `nav` sits among nav links and borrows their shape. */
+export type GithubStarsVariant = "chip" | "nav";
+
+export type GithubStarsProps = {
+  /** Server-fetched count. Null or undefined keeps the repository link without showing a count. */
+  className?: string;
+  count?: string | null;
+  href?: string;
+  size?: GithubStarsSize;
+  variant?: GithubStarsVariant;
+};
+
+const starsVariants = cva(
+  "group inline-flex items-center whitespace-nowrap tabular-nums no-underline transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-solid",
+  {
+    variants: {
+      size: {
+        sm: "gap-1.5 text-[11px]",
+        md: "gap-2 text-[12px]",
+        lg: "gap-2 text-[13px]",
+      },
+      variant: {
+        // Its own control: an edge, an elevated fill, and a hover that darkens it.
+        chip: "rounded-full border border-border-control bg-bg-elev font-semibold text-fg-muted hover:bg-bg-sunken hover:text-fg",
+        // One of the nav links: no edge, no fill, and the same pill on hover they use.
+        nav: "rounded-control font-normal text-fg-muted hover:bg-bg-sunken hover:text-fg",
+      },
+    },
+    compoundVariants: [
+      { class: "h-7 px-2.5", size: "sm", variant: "chip" },
+      { class: "h-8 px-3", size: "md", variant: "chip" },
+      { class: "h-9 px-3.5", size: "lg", variant: "chip" },
+      { class: "px-2 py-[5px]", size: "sm", variant: "nav" },
+      { class: "px-[11px] py-[7px]", size: "md", variant: "nav" },
+      { class: "px-3 py-2", size: "lg", variant: "nav" },
+    ],
+    defaultVariants: { size: "md", variant: "chip" },
+  },
+);
+
+const glyphSize = { lg: 16, md: 15, sm: 14 } as const;
+
+/**
+ * Star count is a claim about the repository, so it reads better as a number than as a word.
+ * Four figures and up collapse to one decimal - "1.2k" stays the same width as the repo grows,
+ * which matters in a header row that must not reflow.
+ */
+function finiteStarCount(count: string | null | undefined) {
+  if (!count) return null;
+  const value = Number(count);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+export function formatGithubStarCount(
+  count: string | null | undefined,
+  format: ReturnType<typeof useFormatter>,
+) {
+  const starCount = finiteStarCount(count);
+  return starCount === null
+    ? null
+    : format.number(starCount, {
+        maximumFractionDigits: 1,
+        notation: starCount >= 1_000 ? "compact" : "standard",
+      });
+}
+
+export function GithubStars({
+  className,
+  count,
+  href = GITHUB_URL,
+  size = "md",
+  variant = "chip",
+}: Readonly<GithubStarsProps>) {
+  const format = useFormatter();
+  const t = useTranslations("shared.tokens");
+  const starCount = finiteStarCount(count);
+  const formattedCount = formatGithubStarCount(count, format);
+
+  return (
+    <a
+      aria-label={
+        starCount === null ? t("githubRepository") : t("githubStars", { count: starCount })
+      }
+      className={cn(starsVariants({ size, variant }), className)}
+      href={href}
+      rel="noreferrer noopener"
+      target="_blank"
+    >
+      <GithubLogo aria-hidden size={glyphSize[size]} weight="regular" />
+      <span aria-hidden>GitHub</span>
+      {formattedCount ? (
+        <span aria-hidden className="opacity-70 font-semibold">
+          {formattedCount}
+        </span>
+      ) : null}
+    </a>
+  );
+}

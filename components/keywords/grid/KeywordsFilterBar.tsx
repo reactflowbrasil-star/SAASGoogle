@@ -1,0 +1,178 @@
+"use client";
+
+import type { LocalizedKeywordFilterChip } from "@/components/keywords/filters/keyword-filter-presentation";
+import { Button } from "@/components/ui/Button";
+import type {
+  DataTableColumn,
+  DataTableDensity,
+} from "@/components/ui/data-table/data-table-types";
+import { Pill } from "@/components/ui/Pill";
+import { ToolbarSearch } from "@/components/ui/ToolbarSearch";
+import type { KeywordRow } from "@/lib/queries/keywords";
+import { ArrowClockwiseIcon as ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
+import { XIcon as X } from "@phosphor-icons/react/dist/csr/X";
+import { useTranslations } from "next-intl";
+import type { ReactNode } from "react";
+import { KeywordsToolbarActions } from "./KeywordsToolbarActions";
+import { KeywordsToolbarButton, toolbarSecondaryIconClassName } from "./KeywordsToolbarButton";
+
+type KeywordsFilterBarProps = {
+  columnOrderControl?: ReactNode;
+  columnSizing: Record<string, number>;
+  columns: readonly DataTableColumn<KeywordRow>[];
+  columnVisibility: Record<string, boolean>;
+  density: DataTableDensity;
+  filterChips: LocalizedKeywordFilterChip[];
+  filterCount: number;
+  id: string;
+  onAddKeyword?: () => void;
+  onClearFilters: () => void;
+  onColumnSizingChange: (next: Record<string, number>) => void;
+  onColumnVisibilityChange: (next: Record<string, boolean>) => void;
+  onDensityChange: (density: DataTableDensity) => void;
+  onImportCsv?: () => void;
+  exportDisabled?: boolean;
+  onOpenExport: () => void;
+  onOpenFilters: () => void;
+  onRefresh: () => void;
+  onRemoveFilter: (key: string) => void;
+  onSearchChange: (value: string) => void;
+  onSearchCommit?: () => void;
+  savedViewControl?: ReactNode;
+  searchValue: string;
+  scopeChip?: ReactNode;
+  scopeControl?: ReactNode;
+};
+
+export function KeywordsFilterBar({
+  columnOrderControl,
+  columnSizing,
+  columns,
+  columnVisibility,
+  density,
+  filterChips,
+  filterCount,
+  id,
+  onAddKeyword,
+  onClearFilters,
+  onColumnSizingChange,
+  onColumnVisibilityChange,
+  onDensityChange,
+  onImportCsv,
+  exportDisabled,
+  onOpenExport,
+  onOpenFilters,
+  onRefresh,
+  onRemoveFilter,
+  onSearchChange,
+  onSearchCommit,
+  savedViewControl,
+  searchValue,
+  scopeChip,
+  scopeControl,
+}: Readonly<KeywordsFilterBarProps>) {
+  const t = useTranslations("projectRankTracker.list.filterBar");
+  const hasFilters = filterCount > 0 || Boolean(searchValue.trim());
+  const hasContextControls = Boolean(scopeControl || savedViewControl);
+
+  return (
+    <div className="px-4 py-3" data-keywords-toolbar="">
+      <div className="grid gap-2">
+        {hasContextControls ? (
+          <div
+            // `contents` would leak these into the parent grid as separate rows below xl.
+            className="order-2 flex min-w-0 flex-row flex-wrap items-center gap-x-2 gap-y-2 lg:order-1"
+            data-keywords-toolbar-context=""
+          >
+            {scopeControl ? (
+              <div className="flex min-w-0 flex-wrap items-center gap-2">{scopeControl}</div>
+            ) : null}
+            {savedViewControl ? (
+              <span className="hidden flex-none sm:inline-flex">{savedViewControl}</span>
+            ) : null}
+            <KeywordsToolbarButton
+              label={t("refreshTable")}
+              labelFrom="lg"
+              onClick={onRefresh}
+              showTooltip
+              startIcon={
+                <ArrowClockwise
+                  weight="regular"
+                  aria-hidden
+                  size={15}
+                  className={toolbarSecondaryIconClassName}
+                />
+              }
+              variant="secondary"
+            />
+          </div>
+        ) : null}
+        <div className="order-1 grid min-w-0 grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_auto] lg:order-2 lg:grid-cols-[minmax(220px,1fr)_auto] xl:grid-cols-[minmax(320px,1fr)_auto]">
+          <ToolbarSearch
+            variant="outlined"
+            className="min-w-0"
+            id="keywords-filter"
+            label={t("searchKeywords")}
+            onChange={onSearchChange}
+            onSubmit={onSearchCommit}
+            placeholder={t("searchPlaceholder")}
+            value={searchValue}
+          />
+          <KeywordsToolbarActions
+            columnOrderControl={columnOrderControl}
+            columnSizing={columnSizing}
+            columns={columns}
+            columnVisibility={columnVisibility}
+            density={density}
+            filterCount={filterCount}
+            id={id}
+            onAddKeyword={onAddKeyword}
+            onColumnSizingChange={onColumnSizingChange}
+            onColumnVisibilityChange={onColumnVisibilityChange}
+            onDensityChange={onDensityChange}
+            onImportCsv={onImportCsv}
+            exportDisabled={exportDisabled}
+            onOpenExport={onOpenExport}
+            onOpenFilters={onOpenFilters}
+          />
+        </div>
+      </div>
+      {hasFilters || scopeChip ? (
+        <div
+          className={`mt-3 min-h-7 min-w-0 items-center gap-2 overflow-x-auto px-1 [&>*]:shrink-0 ${hasFilters ? "flex" : "flex lg:hidden"}`}
+          data-keywords-filter-chips=""
+        >
+          {hasFilters ? (
+            <span className="mr-1 font-sans tabular-nums text-[10px] font-semibold uppercase tracking-[0.6px] text-fg-muted">
+              {t("activeFilters")}
+            </span>
+          ) : null}
+          {scopeChip}
+          {filterChips.map((chip) => (
+            <Pill
+              active
+              aria-label={t("removeFilter", { filter: chip.label })}
+              key={chip.key}
+              onClick={() => onRemoveFilter(chip.key)}
+              size="sm"
+            >
+              {chip.label}
+              <X aria-hidden size={11} weight="regular" />
+            </Pill>
+          ))}
+          {hasFilters ? (
+            <Button
+              variant="ghost"
+              size="xs"
+              aria-label={t("clearAllAriaLabel")}
+              onClick={onClearFilters}
+              type="button"
+            >
+              {t("clearAll")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}

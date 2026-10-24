@@ -1,0 +1,19 @@
+import { LocationActionWarning } from "@/components/keywords/LocationActionWarning";
+import { XIcon as X } from "@phosphor-icons/react/dist/csr/X";
+
+export function AddKeywordDrawerFeedback({
+  error,
+  warning,
+}: Readonly<{ error: string | null; warning: string | null }>) {
+  return (
+    <>
+      {error ? (
+        <p className="flex items-center gap-1.5 font-sans tabular-nums text-[11.5px] text-red-text">
+          <X size={12} weight="regular" />
+          {error}
+        </p>
+      ) : null}
+      <LocationActionWarning message={warning} />
+    </>
+  );
+}

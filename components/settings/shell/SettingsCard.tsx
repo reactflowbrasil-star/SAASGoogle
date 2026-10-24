@@ -1,0 +1,122 @@
+"use client";
+
+import { settingsCardFrameClassName } from "@/components/settings/shell/settings-layout";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { SectionTitle } from "@/components/ui/SectionTitle";
+import { cn } from "@/lib/ui/cn";
+import { useTranslations } from "next-intl";
+import { type ReactNode, useRef, useState } from "react";
+
+export type SettingsCardState = {
+  dirty: boolean;
+  markDirty: () => void;
+};
+
+type SettingsCardProps = {
+  action?: ReactNode;
+  children: ReactNode | ((state: SettingsCardState) => ReactNode);
+  className?: string;
+  contentClassName?: string;
+  description?: string;
+  onSave?: () => void | Promise<void>;
+  saveLabel?: string;
+  savedLabel?: string;
+  showSave?: boolean;
+  title: string;
+};
+
+function cardContents(
+  children: SettingsCardProps["children"],
+  state: SettingsCardState,
+): ReactNode {
+  return typeof children === "function" ? children(state) : children;
+}
+
+export function SettingsCard({
+  action,
+  children,
+  className,
+  contentClassName,
+  description,
+  onSave,
+  saveLabel,
+  savedLabel,
+  showSave = true,
+  title,
+}: Readonly<SettingsCardProps>) {
+  const t = useTranslations("projectSettingsShell.card");
+  const [dirty, setDirty] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const savedTimer = useRef<number | null>(null);
+
+  function markDirty() {
+    if (savedTimer.current) window.clearTimeout(savedTimer.current);
+    setDirty(true);
+    setSaved(false);
+  }
+
+  async function save() {
+    if (!dirty || saving) return;
+
+    setSaving(true);
+    try {
+      await onSave?.();
+      setDirty(false);
+      setSaved(true);
+      savedTimer.current = window.setTimeout(() => setSaved(false), 2_500);
+    } catch {
+      // The owning card renders the actionable validation or server error.
+      // Keep the card dirty and avoid leaking an unhandled event-handler promise.
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const state = { dirty, markDirty };
+  const resolvedSaveLabel = saveLabel ?? t("save");
+  const resolvedSavedLabel = savedLabel ?? t("saved");
+
+  return (
+    <Card
+      className={cn(settingsCardFrameClassName, className)}
+      data-settings-card=""
+      data-settings-card-frame="settled"
+      onChangeCapture={markDirty}
+      size="lg"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 w-full sm:w-auto sm:flex-1">
+          <SectionTitle>{title}</SectionTitle>
+          {description ? (
+            <p className="m-0 mt-1 text-[12.5px] leading-[1.55] text-fg-muted">{description}</p>
+          ) : null}
+        </div>
+        {showSave || action ? (
+          <div
+            className="ml-auto flex min-h-9 shrink-0 items-center gap-3"
+            data-settings-card-actions=""
+          >
+            <span aria-live="polite" className="text-[12px] font-medium text-green-text">
+              {saved ? <span data-settings-card-saved="">{resolvedSavedLabel}</span> : null}
+            </span>
+            {action}
+            {showSave ? (
+              <Button
+                data-settings-card-save=""
+                disabled={!dirty}
+                loading={saving}
+                onClick={save}
+                size="sm"
+              >
+                {resolvedSaveLabel}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      <div className={cn("mt-5", contentClassName)}>{cardContents(children, state)}</div>
+    </Card>
+  );
+}

@@ -1,0 +1,88 @@
+---
+title: "Self-hosting"
+description: "Choose and prepare a bisibility self-hosting deployment."
+---
+
+bisibility is a Next.js app backed by PostgreSQL and Valkey (or any
+Redis-compatible endpoint). This page is the operator landing: choose a
+deployment, understand the required services, and see what you own. Detailed
+procedures live on the linked pages.
+
+## Choose your deployment
+
+| Goal | Use | Temporal | Learn more |
+| - | - | :-: | - |
+| Evaluate locally | Local seeded demo | No | [Local demo](/self-hosting/docker#local-demo) |
+| Production, manual checks only | `compose.yaml` | No | [Production Compose](/self-hosting/docker#production-compose) |
+| Production, scheduled checks | `compose.yaml` + `compose.worker.yaml` (+ optional `compose.temporal.yaml`) | Yes | [Temporal](/self-hosting/temporal) |
+| Split or custom deployment | Individual images | Depends | [Docker self-hosting](/self-hosting/docker) |
+
+The local demo is a throwaway evaluation with seeded synthetic data and a fixed
+sign-in code. It is insecure by design: anyone who can reach the app can sign
+in. Do not convert a demo install to production. For production, start with a
+fresh environment and database; the empty database redirects the first visit to
+`/setup`.
+
+## Production topology
+
+Web/API, the migration job, PostgreSQL, and Valkey or a compatible Redis
+endpoint are always required. The worker and Temporal are required only for
+scheduled checks; manual checks work without them.
+
+| Service | Process or image | Always required |
+| - | - | :-: |
+| Web/API | Repository `Dockerfile` | Yes |
+| Migration job | Prisma and data migration runner using the web image | Yes |
+| PostgreSQL | Managed database | Yes |
+| Valkey | Managed service or compatible Redis endpoint | Yes |
+| Temporal worker | Repository `Dockerfile.worker` | For scheduled checks |
+| Temporal Server | Self-hosted Temporal services or Temporal Cloud | For scheduled checks |
+
+The canonical Compose family is:
+
+- `compose.yaml` is the core production topology: web/API, migrations,
+  PostgreSQL, and Valkey or a compatible Redis endpoint. Manual checks only.
+- `compose.worker.yaml` adds the worker and uses an external Temporal endpoint
+  from your environment.
+- `compose.temporal.yaml` adds the bundled Temporal Server and is combined with
+  the worker overlay.
+- Web and worker remain on the same immutable release.
+
+For the commands, see
+[Compose topology commands](/self-hosting/docker#compose-topology-commands).
+
+bisibility ships without a rank data source. The operator connects a SERP
+provider, stores its credentials, and pays the provider directly. See
+[Integrations](/integrations).
+
+## What the operator owns
+
+| Responsibility | Where to learn more |
+| - | - |
+| Security guidance and production preflight | [Security](/self-hosting/security) |
+| Environment variables and public-origin values | [Configuration](/self-hosting/configuration) |
+| Provider credentials and provider charges | [Integrations](/integrations) |
+| PostgreSQL backups and tested restores | [Backup and restore](/self-hosting/backup-restore) |
+| Upgrades | [Upgrades](/self-hosting/upgrades) |
+| Proposed closeout policy for irrecoverable known-cost imports | [Historical financial closeout](/self-hosting/historical-financial-closeout) |
+| Monitoring | [Operator observability](/self-hosting/operations#operator-observability-optional) |
+| Startup troubleshooting | [Troubleshooting](/self-hosting/troubleshooting) |
+| Worker and Temporal operations (when scheduling is enabled) | [Temporal](/self-hosting/temporal) |
+
+## Production checklist
+
+Complete this checklist before the instance serves anyone other than you.
+
+| Check | Why it matters | Details |
+| - | - | - |
+| `BETTER_AUTH_SECRET` and `BISIBILITY_SECRETS_KEY` generated and backed up | Replacing them later signs out every user and leaves stored provider credentials undecryptable | [Application secrets](/self-hosting/security#application-secrets) |
+| `SITE_URL` and `BETTER_AUTH_URL` point at the public origin | Both are blank and fail before Compose starts; incorrect origins break OAuth redirects and auth callbacks | [Required environment variables](/self-hosting/configuration#required-environment-variables) |
+| `DEPLOYMENT_ENV` set to `production` | The public template ships the production value and has no development fallback | [Operations](/guides/operations) |
+| `DEMO_FIXED_OTP` and `DEMO_INSTANCE_INSECURE_AUTH_ACK` unset | Together they accept a fixed sign-in code from anyone who reaches the app | [Fixed OTP](/self-hosting/security#fixed-otp) |
+| Email provider configured | Without one, nobody can receive a sign-in code | [Email delivery](/self-hosting/email) |
+| `BISIBILITY_CLIENT_IP_HEADER` set when a proxy or CDN is in front | Without it, anonymous API callers share one rate-limit bucket and audit entries record no source IP | [Trusted client IP](/self-hosting/security#trusted-client-ip) |
+| `SELF_HOSTED_ALLOW_INDEXING` reviewed | Fails closed to a restrictive policy; set `true` only if the instance should appear in search results | [Optional environment variables](/self-hosting/configuration#optional-environment-variables) |
+| SERP provider connected and its monthly budget capped | No provider means no real rank data, and no cap means no spend ceiling | [Integrations](/integrations) |
+| PostgreSQL backups running and a restore tested | Every upgrade and migration path assumes you can roll back | [Upgrade with a distribution manifest](/self-hosting/upgrades#upgrade-with-a-distribution-manifest) |
+| Web app and worker pinned to the same release | Version skew fails the worker schema guard and can corrupt a cutover | [Production topology](/self-hosting#production-topology) |
+| `LEGAL_TERMS_URL` and `LEGAL_PRIVACY_URL` set if you need a consent line | The sign-in consent line stays hidden until at least one of them points at your document | [Required environment variables](/self-hosting/configuration#required-environment-variables) |

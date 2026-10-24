@@ -1,0 +1,66 @@
+---
+title: "Ranked keyword suggestions"
+description: "Discover queries a project domain already ranks for through its DataForSEO account."
+---
+
+`max_cost_cents=0` returns the cached page for free. A missing page returns
+`cost_limit_exceeded` with `estimated_cost_cents` before provider calls, holds or
+attempts. `fresh=true` bypasses cache and is refused at zero.
+
+
+## List ranked keyword suggestions
+
+```http
+GET /api/v1/projects/{project_id}/ranked-keyword-suggestions
+Authorization: Bearer <api_key>
+```
+
+The endpoint uses an eligible SERP connection owned by the project. A cache
+miss is a paid DataForSEO Labs lookup. The app shows the current estimate from
+its provider rates table before the request. Results, including empty pages,
+are cached for 12 hours and shared with onboarding and MCP. Set `fresh=true` to
+skip the cache read and replace the cached page. Because a miss can spend the
+project's provider budget, the bearer token must include write scope. The MCP
+tool is `list_ranked_keyword_suggestions`. See
+[Paid MCP tools](/agents/paid-tools).
+
+| Query | Description |
+| - | - |
+| `connection_id` | Optional eligible DataForSEO connection. The project primary connection is preferred when omitted. |
+| `offset` | Defaults to `0`. Must be a multiple of `100`, maximum `900`. |
+| `limit` | Defaults to `100`, maximum `100`. |
+| `fresh` | Defaults to `false`. Fetch and cache a new provider result. |
+| `max_cost_cents` | Optional best-effort pre-estimate provider cost gate, in cents. On a cache miss, when the estimated cost of the page exceeds it, the endpoint returns `422 cost_limit_exceeded` instead of calling the provider. |
+
+```json
+{
+  "rows": [
+    {
+      "keyword": "rank tracker api",
+      "position": 4,
+      "search_volume": 720,
+      "estimated_traffic": 61.2,
+      "already_tracked": true
+    }
+  ],
+  "total_count": 184,
+  "offset": 0,
+  "cost_cents": 2,
+  "cached": false,
+  "fetched_at": "2026-07-22T10:00:00.000Z",
+  "connections": [
+    { "id": "conn_a00000000000000000000000", "label": "DataForSEO", "provider": "dataforseo" }
+  ]
+}
+```
+
+`already_tracked` is true when the normalized suggestion matches a keyword the
+project already tracks. Budget exhaustion, provider throttling, reauthorization,
+unsupported locations, missing sources, and missing domains use the standard
+problem response format.
+
+## Related operations
+
+- [`GET /projects/{project_id}/ranked-keyword-suggestions`](/api-reference/keyword-research/list-ranked-keyword-suggestions) (`listRankedKeywordSuggestions`)
+
+Exact request and response schemas live in the generated API Reference.

@@ -1,0 +1,73 @@
+"use client";
+
+import type {
+  ResearchKeywordsAction,
+  ResearchKeywordsActionInput,
+} from "@/lib/actions/keyword-research";
+import {
+  isKeywordResearchEstimate,
+  type KeywordResearchEstimate,
+} from "@/lib/keyword-research/types";
+import { useRef, useState } from "react";
+import { uniqueResearchSeeds } from "./research-tab-identity";
+import { EMPTY_RESEARCH_ESTIMATE } from "./research-workspace-model";
+
+// Debounced server-side estimate for the research button. Estimate-only calls are
+// free; the 320ms debounce keeps typing from spamming the action.
+export function useResearchEstimate(
+  researchAction: ResearchKeywordsAction,
+  requestInput: (
+    seed: string,
+    overrides?: Partial<ResearchKeywordsActionInput>,
+  ) => ResearchKeywordsActionInput,
+) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestSequence = useRef(0);
+  const [estimate, setEstimate] = useState(EMPTY_RESEARCH_ESTIMATE);
+
+  function scheduleEstimate(
+    nextSeeds: string[],
+    overrides: Partial<ResearchKeywordsActionInput> = {},
+  ) {
+    requestSequence.current += 1;
+    const sequence = requestSequence.current;
+    if (timer.current) clearTimeout(timer.current);
+    const seeds = uniqueResearchSeeds(nextSeeds);
+    if (seeds.length === 0) {
+      setEstimate(EMPTY_RESEARCH_ESTIMATE);
+      return;
+    }
+    setEstimate({ ...EMPTY_RESEARCH_ESTIMATE, loading: true });
+    timer.current = setTimeout(async () => {
+      try {
+        const outcomes = await Promise.all(
+          seeds.map((seed) =>
+            researchAction(requestInput(seed, { ...overrides, estimateOnly: true })),
+          ),
+        );
+        const successful = outcomes.filter(
+          (item): item is KeywordResearchEstimate => item.ok && isKeywordResearchEstimate(item),
+        );
+        if (sequence !== requestSequence.current) return;
+        setEstimate({
+          cached: successful.length === outcomes.length && successful.every((item) => item.cached),
+          costCents:
+            successful.length === outcomes.length
+              ? successful.reduce((sum, item) => sum + item.costCents, 0)
+              : null,
+          payments:
+            successful.length === outcomes.length
+              ? successful.flatMap((item) => (item.payment ? [item.payment] : []))
+              : [],
+          paymentOptions: successful[0]?.paymentOptions ?? [],
+          loading: false,
+        });
+      } catch {
+        if (sequence !== requestSequence.current) return;
+        setEstimate(EMPTY_RESEARCH_ESTIMATE);
+      }
+    }, 320);
+  }
+
+  return { estimate, scheduleEstimate };
+}

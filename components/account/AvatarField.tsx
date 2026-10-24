@@ -1,0 +1,32 @@
+import { Avatar } from "@/components/ui/Avatar";
+import { initials as avatarInitials } from "@/lib/avatar/initials";
+
+export type AvatarFieldProps = {
+  email: string;
+  /** Server-derived Gravatar URL. Displayed by the shared Avatar with an initials fallback. */
+  image: string | null;
+  name: string;
+};
+
+export function AvatarField({ email, image, name }: Readonly<AvatarFieldProps>) {
+  // No name yet: lead with the email once instead of an "Unnamed" placeholder.
+  const displayName = name.trim() || email;
+  const showEmail = Boolean(email) && email !== displayName;
+
+  return (
+    <div>
+      <div className="flex items-center gap-3.5">
+        <Avatar
+          alt=""
+          className="grid h-[54px] w-[54px] flex-none place-items-center rounded-card bg-accent-solid font-sans tabular-nums text-lg font-semibold text-accent-on-solid"
+          initials={avatarInitials(name, email)}
+          src={image}
+        />
+        <div className="min-w-0">
+          <div className="truncate text-[15px] font-semibold text-fg">{displayName}</div>
+          {showEmail ? <span className="truncate">{email}</span> : null}
+        </div>
+      </div>
+    </div>
+  );
+}

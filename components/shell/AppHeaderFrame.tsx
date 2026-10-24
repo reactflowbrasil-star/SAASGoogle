@@ -1,0 +1,105 @@
+import { AppHeaderTitle } from "@/components/shell/AppHeaderTitle";
+import { CommandPaletteTrigger } from "@/components/shell/CommandPalette";
+import { MobileNav } from "@/components/shell/MobileNav";
+import { OperationsTray } from "@/components/shell/OperationsTray";
+import type { PlanStatus } from "@/components/shell/plan-status";
+import type { ShellUser } from "@/components/shell/SidebarFooter";
+import { SidebarUserButton } from "@/components/shell/SidebarUserButton";
+import type { WorkspaceSummary } from "@/lib/queries/workspaces";
+import type { ExperimentalModuleKey } from "@/lib/settings/experimental-modules";
+import type { ReactNode } from "react";
+
+export type AppHeaderFrameProps = {
+  actions?: ReactNode;
+  accountActions?: ReactNode;
+  activeProjectId: string;
+  canCreateWorkspace: boolean;
+  canSetDefault?: boolean;
+  /**
+   * The context slot, already rendered by the route that knows there is one. It is the market
+   * axis today; an engine axis is coming, which is why neither this prop nor the slot names one.
+   * Absent means no slot, which is what the account routes mount.
+   */
+  context?: ReactNode;
+  enabledExperimentalModules?: readonly ExperimentalModuleKey[];
+  notificationControl: ReactNode;
+  operationsTrayDefaultOpen?: boolean;
+  planStatus?: PlanStatus | null;
+  projectRef: string;
+  setupCompleted?: boolean;
+  setupDoneCount?: number;
+  setupSettledCount?: number;
+  setupTotalCount?: number;
+  showGettingStarted?: boolean;
+  showHostedLinks?: boolean;
+  user?: ShellUser;
+  version?: string;
+  workspaces: WorkspaceSummary[];
+};
+
+export function AppHeaderFrame({
+  actions,
+  accountActions,
+  activeProjectId,
+  canCreateWorkspace,
+  canSetDefault,
+  context,
+  enabledExperimentalModules = [],
+  notificationControl,
+  operationsTrayDefaultOpen = false,
+  planStatus = null,
+  projectRef,
+  setupCompleted = false,
+  setupDoneCount = 0,
+  setupSettledCount = 0,
+  setupTotalCount = 4,
+  showGettingStarted = false,
+  showHostedLinks = false,
+  user,
+  version,
+  workspaces,
+}: Readonly<AppHeaderFrameProps>) {
+  return (
+    <header className="relative z-40 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center justify-between gap-2.5 sm:flex sm:flex-nowrap border-b border-border bg-bg-sidebar px-4 py-3 sm:gap-4 sm:px-5 lg:px-7 lg:py-3.5">
+      <div className="contents sm:flex sm:min-w-0 sm:flex-1 sm:items-center sm:gap-3 sm:overflow-hidden">
+        <MobileNav
+          activeProjectId={activeProjectId}
+          canCreateWorkspace={canCreateWorkspace}
+          canSetDefault={canSetDefault}
+          enabledExperimentalModules={enabledExperimentalModules}
+          planStatus={planStatus}
+          projectRef={projectRef}
+          setupCompleted={setupCompleted}
+          setupDoneCount={setupDoneCount}
+          setupSettledCount={setupSettledCount}
+          setupTotalCount={setupTotalCount}
+          showGettingStarted={showGettingStarted}
+          showHostedLinks={showHostedLinks}
+          user={user}
+          version={version}
+          workspaces={workspaces}
+        />
+        <div className="col-span-3 col-start-1 row-start-2 flex min-w-0 flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
+          <AppHeaderTitle setupCompleted={setupCompleted} setupTotalCount={setupTotalCount} />
+          {/* The context group must be allowed to shrink: `flex-none` held the market and device
+            selectors at their intrinsic width, so a locale with longer labels (es-ES at 390px)
+            pushed the row past the viewport instead of truncating. */}
+          <div className="min-w-0 shrink empty:hidden">{context}</div>
+        </div>
+      </div>
+      {/* Right cluster: spend pill and account utilities share one rhythm. */}
+      <div className="col-start-3 row-start-1 flex flex-none items-center gap-2.5">
+        {actions}
+        <OperationsTray defaultOpen={operationsTrayDefaultOpen} projectRef={projectRef} />
+        <div className="lg:hidden">
+          <CommandPaletteTrigger variant="header" />
+        </div>
+        {notificationControl}
+        {accountActions}
+        {user ? (
+          <SidebarUserButton collapsed showHostedLinks={showHostedLinks} user={user} />
+        ) : null}
+      </div>
+    </header>
+  );
+}

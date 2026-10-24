@@ -1,0 +1,135 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  cacheEntries: new Map<unknown, Map<string, unknown>>(),
+  prisma: {
+    keyword: { groupBy: vi.fn(), findMany: vi.fn() },
+    projectDefaults: { findUnique: vi.fn() },
+    providerConnection: { findFirst: vi.fn(), findMany: vi.fn() },
+    $queryRaw: vi.fn(),
+    rankCheck: { aggregate: vi.fn() },
+  },
+}));
+
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/db/prisma", () => ({ prisma: mocks.prisma }));
+vi.mock("react", () => ({
+  cache:
+    (fn: (...args: unknown[]) => unknown) =>
+    (...args: unknown[]) => {
+      let entries = mocks.cacheEntries.get(fn);
+      if (!entries) {
+        entries = new Map();
+        mocks.cacheEntries.set(fn, entries);
+      }
+      const key = JSON.stringify(args);
+      if (!entries.has(key)) entries.set(key, fn(...args));
+      return entries.get(key);
+    },
+}));
+
+import {
+  getRequestKeywordCadences,
+  getRequestKeywordDimensions,
+  getRequestMonthlySpendCents,
+  getRequestPrimarySerpProvider,
+  getRequestProjectDefaults,
+  getRequestSerpProviderChain,
+} from "./workspace-request-data";
+
+describe("workspace request data", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.cacheEntries.clear();
+    mocks.prisma.keyword.groupBy.mockResolvedValue([]);
+    mocks.prisma.keyword.findMany.mockResolvedValue([]);
+    mocks.prisma.projectDefaults.findUnique.mockResolvedValue(null);
+    mocks.prisma.providerConnection.findFirst.mockResolvedValue(null);
+    mocks.prisma.providerConnection.findMany.mockResolvedValue([]);
+    mocks.prisma.$queryRaw.mockResolvedValue([{ total: 0 }]);
+    mocks.prisma.rankCheck.aggregate.mockResolvedValue({
+      _sum: { costCents: 0, estimatedCostCents: 0 },
+    });
+  });
+
+  it("deduplicates overlapping dashboard reads within one request", async () => {
+    await Promise.all([
+      getRequestProjectDefaults("project_1"),
+      getRequestProjectDefaults("project_1"),
+      getRequestPrimarySerpProvider("project_1"),
+      getRequestPrimarySerpProvider("project_1"),
+      getRequestSerpProviderChain("project_1"),
+      getRequestSerpProviderChain("project_1"),
+      getRequestKeywordDimensions("project_1"),
+      getRequestKeywordDimensions("project_1"),
+      getRequestMonthlySpendCents("project_1", new Date("2026-07-01T00:00:00.000Z")),
+      getRequestMonthlySpendCents("project_1", new Date("2026-07-31T23:59:59.000Z")),
+    ]);
+
+    expect(mocks.prisma.projectDefaults.findUnique).toHaveBeenCalledOnce();
+    expect(mocks.prisma.providerConnection.findFirst).toHaveBeenCalledOnce();
+    expect(mocks.prisma.providerConnection.findMany).toHaveBeenCalledOnce();
+    expect(mocks.prisma.providerConnection.findMany).toHaveBeenCalledWith({
+      orderBy: [{ priority: "asc" }, { provider: "asc" }],
+      select: {
+        credentialSource: true,
+        rates: { where: { feature: "rank_check" }, select: { amountCents: true, feature: true } },
+        id: true,
+        priority: true,
+        provider: true,
+      },
+      where: {
+        enabled: true,
+        kind: "serp",
+        projectId: "project_1",
+        status: "connected",
+      },
+    });
+    expect(mocks.prisma.keyword.groupBy).toHaveBeenCalledOnce();
+    expect(mocks.prisma.rankCheck.aggregate).not.toHaveBeenCalled();
+    expect(mocks.prisma.$queryRaw).toHaveBeenCalledOnce();
+  });
+
+  it("returns the stored project timezone without a narrowing select", async () => {
+    mocks.prisma.projectDefaults.findUnique.mockResolvedValue({ timezone: "Europe/Warsaw" });
+
+    await expect(getRequestProjectDefaults("project_1")).resolves.toMatchObject({
+      timezone: "Europe/Warsaw",
+    });
+    expect(mocks.prisma.projectDefaults.findUnique).toHaveBeenCalledWith({
+      where: { projectId: "project_1" },
+    });
+  });
+
+  it("caches active membership cadence without falling through project defaults", async () => {
+    await Promise.all([
+      getRequestKeywordCadences("project_1"),
+      getRequestKeywordCadences("project_1"),
+    ]);
+    expect(mocks.prisma.keyword.findMany).toHaveBeenCalledOnce();
+    expect(mocks.prisma.keyword.findMany).toHaveBeenCalledWith({
+      where: { projectId: "project_1", archivedAt: null },
+      select: { checkSchedule: { select: { frequency: true, enabled: true, archivedAt: true } } },
+    });
+  });
+
+  it("uses the rate-table zero instead of a conflicting legacy value, and hides hosted overrides", async () => {
+    const own = {
+      id: "own",
+      provider: "dataforseo",
+      credentialSource: "own",
+      costPerCheckCents: 99,
+      rates: [{ feature: "rank_check", amountCents: "0" }],
+    };
+    const hosted = { ...own, id: "hosted", credentialSource: "hosted" };
+    mocks.prisma.providerConnection.findFirst.mockResolvedValue(own);
+    mocks.prisma.providerConnection.findMany.mockResolvedValue([own, hosted]);
+    await expect(getRequestPrimarySerpProvider("project_1")).resolves.toMatchObject({
+      costPerCheckCents: "0",
+    });
+    await expect(getRequestSerpProviderChain("project_1")).resolves.toMatchObject([
+      { costPerCheckCents: "0" },
+      { costPerCheckCents: null },
+    ]);
+  });
+});

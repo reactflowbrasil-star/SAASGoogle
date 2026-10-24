@@ -1,0 +1,160 @@
+import { fixtureScope } from "@/lib/rank-measurements/fixtures";
+import { recordedFixture } from "@/lib/rank-measurements/recorded-fixtures";
+import { describe, expect, it } from "vitest";
+import {
+  buildOverviewMarkets,
+  type OverviewMarketKeyword,
+  overviewMarketHistoryStart,
+} from "./overview-markets";
+
+const now = new Date("2026-06-28T12:00:00.000Z");
+
+function target(
+  id: string,
+  locationId: string,
+  displayName: string,
+  languageLabel: string,
+  current: number | null,
+  previous: number | null,
+  frequency = "daily",
+): OverviewMarketKeyword {
+  const languageCode = new Map([
+    ["Spanish", "es"],
+    ["English", "en"],
+    ["Arabic", "ar"],
+    ["Dutch", "nl"],
+    ["Polish", "pl"],
+  ]).get(languageLabel);
+  if (!languageCode) throw new Error("Explicit market fixture language required");
+  const scope = { ...fixtureScope, targetId: id, location: displayName, language: languageCode };
+  const check = (position: number | null, at: string) =>
+    recordedFixture(position, {
+      id: `${id}:${at}`,
+      configuredScope: scope,
+      effectiveScope: scope,
+      observedAt: new Date(at),
+      recordedAt: new Date(at),
+    });
+  return {
+    id,
+    projectId: scope.projectId,
+    locationId,
+    locationRef: { displayName, languageCode, languageLabel },
+    rankChecks: [
+      check(current, "2026-06-27T12:00:00.000Z"),
+      check(previous, "2026-05-20T12:00:00.000Z"),
+    ],
+    schedule: { frequency },
+  };
+}
+
+describe("overview markets", () => {
+  it("keeps location-language rows distinct and reconciles their active targets", () => {
+    const rows = buildOverviewMarkets(
+      [
+        target("es-es-1", "loc_es_es", "Spain", "Spanish", 3, 18),
+        target("es-es-2", "loc_es_es", "Spain", "Spanish", 14, 20),
+        target("es-en-1", "loc_es_en", "Spain", "English", 16, 7),
+        target("be-ar-1", "loc_be_ar", "Belgium", "Arabic", 22, 24),
+        target("be-nl-1", "loc_be_nl", "Belgium", "Dutch", 2, 2, "paused"),
+      ],
+      { now, range: "28d" },
+    );
+
+    expect(rows).toHaveLength(4);
+    expect(rows.map((row) => `${row.locationLabel} / ${row.languageLabel}`)).toEqual([
+      "Spain / Spanish",
+      "Spain / English",
+      "Belgium / Arabic",
+      "Belgium / Dutch",
+    ]);
+    expect(rows.reduce((sum, row) => sum + row.targetCount, 0)).toBe(5);
+    expect(rows[0]).toMatchObject({
+      deltaPoints: 50,
+      targetCount: 2,
+      top10Count: 1,
+      top10Share: 50,
+    });
+    expect(rows[1]).toMatchObject({ deltaPoints: -100, targetCount: 1, top10Count: 0 });
+  });
+
+  it("retains measured targets while execution is paused and emits aggregate metadata", () => {
+    const inherited = target("paused", "loc_pl_pl", "Poland", "Polish", 2, 12);
+    inherited.schedule = null;
+    expect(
+      buildOverviewMarkets([inherited], { defaultFrequency: "paused", now, range: "28d" }),
+    ).toEqual(buildOverviewMarkets([inherited], { defaultFrequency: "daily", now, range: "28d" }));
+
+    const [row] = buildOverviewMarkets([inherited], {
+      defaultFrequency: "daily",
+      now,
+      range: "28d",
+    });
+    expect(row?.trend).toHaveLength(8);
+    expect(row?.previousPeriod).toEqual({ end: "2026-05-31", start: "2026-05-04" });
+    expect(row?.deltaPoints).toBe(100);
+    expect(row?.rangeDays).toBe(28);
+  });
+
+  it("loads an equal preceding period for every supported range", () => {
+    expect(overviewMarketHistoryStart(now, "7d")).toEqual(new Date("2026-06-15T00:00:00.000Z"));
+    expect(overviewMarketHistoryStart(now, "28d")).toEqual(new Date("2026-05-04T00:00:00.000Z"));
+    expect(overviewMarketHistoryStart(now, "90d")).toEqual(new Date("2025-12-31T00:00:00.000Z"));
+  });
+
+  it("keeps enabled registry markets visible before their first target is added", () => {
+    const rows = buildOverviewMarkets(
+      [],
+      [
+        {
+          location: { displayName: "Spain", languageLabel: "Spanish" },
+          locationId: "loc_es_es",
+        },
+        {
+          location: { displayName: "Belgium", languageLabel: "Dutch" },
+          locationId: "loc_be_nl",
+        },
+      ],
+      { now, range: "28d" },
+    );
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ locationId: "loc_es_es", targetCount: 0, top10Share: null });
+  });
+
+  it("keeps the sparkline endpoint aligned with the current-window headline", () => {
+    const previousOnly = target("old", "loc_us_en", "United States", "English", null, 3);
+
+    const [row] = buildOverviewMarkets([previousOnly], { now, range: "28d" });
+
+    expect(row?.top10Share).toBe(0);
+    // The old preceding-period rank is not an observation inside this window.
+    expect(row?.trend.slice(0, -1)).toEqual(Array(7).fill(null));
+    expect(row?.trend.at(-1)).toBe(row?.top10Share);
+  });
+  it.each(["foreign project", "different location"])(
+    "retains a selected target but excludes its %s observation",
+    (mismatch) => {
+      const row = target("es-es-1", "loc_es_es", "Spain", "Spanish", 3, 18);
+      for (const check of row.rankChecks) {
+        const observation = check.observationRun;
+        if (!observation) throw new Error("Captured market fixture required");
+        if (mismatch === "foreign project") observation.projectId = "project_foreign";
+        else {
+          const scope = { ...fixtureScope, targetId: row.id, location: "Belgium", language: "es" };
+          observation.configuredScope = scope;
+          observation.effectiveScope = scope;
+        }
+      }
+      const [market] = buildOverviewMarkets([row], { now, range: "28d" });
+      expect(market).toMatchObject({
+        targetCount: 1,
+        top10Count: null,
+        top10Share: null,
+        deltaPoints: null,
+      });
+      expect(market.trend).toEqual(Array(8).fill(null));
+      expect(market.qualityReport.counts.unknown).toBe(1);
+    },
+  );
+});

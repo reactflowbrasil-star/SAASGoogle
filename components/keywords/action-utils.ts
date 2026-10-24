@@ -1,0 +1,64 @@
+import type { RunCheckNowResult } from "@/lib/rank-check/manual-run-result";
+import type {
+  AddKeywordsInput,
+  BulkKeywordFrequencyInput,
+  BulkKeywordIdsInput,
+  BulkKeywordTagInput,
+  BulkKeywordTargetInput,
+  RunCheckNowInput,
+  UpdateKeywordInput,
+} from "@/lib/schemas/keyword";
+import type { SerpDevice } from "@/lib/serp/constants";
+
+export type KeywordAction<TInput> = (input: TInput) => Promise<unknown>;
+export type RunCheckNowAction = (input: RunCheckNowInput) => Promise<RunCheckNowResult>;
+export type { AddKeywordsInput };
+export type CreateKeywordAlertInput = { keywordId: string; projectId: string };
+
+export type KeywordWorkspaceActions = {
+  addKeywordsAction: KeywordAction<AddKeywordsInput>;
+  bulkClearTargetAction: KeywordAction<BulkKeywordIdsInput>;
+  bulkDeleteAction: KeywordAction<BulkKeywordIdsInput>;
+  bulkSetFrequencyAction: KeywordAction<BulkKeywordFrequencyInput>;
+  bulkSetTargetAction: KeywordAction<BulkKeywordTargetInput>;
+  bulkTagAction: KeywordAction<BulkKeywordTagInput>;
+};
+
+export type KeywordDetailActions = {
+  createKeywordAlertAction?: KeywordAction<CreateKeywordAlertInput>;
+  runCheckNowAction: RunCheckNowAction;
+  updateKeywordAction: KeywordAction<UpdateKeywordInput>;
+};
+
+/** A warning is a protocol signal, not display copy. Consumers choose their scoped message. */
+export function hasActionWarning(result: unknown) {
+  if (!result || typeof result !== "object" || !("warning" in result)) {
+    return false;
+  }
+  const warning = (result as { warning?: unknown }).warning;
+  return typeof warning === "string" && warning.trim().length > 0;
+}
+
+export function actionResultCount(result: unknown, fallback: number) {
+  if (!result || typeof result !== "object") {
+    return fallback;
+  }
+  const values = Object.values(result);
+  const count = values.find((value) => typeof value === "number" && Number.isFinite(value));
+  return typeof count === "number" ? count : fallback;
+}
+
+export function keywordCountLabel(count: number) {
+  return `${count.toLocaleString("en-US")} keyword${count === 1 ? "" : "s"}`;
+}
+
+export function splitTagInput(value: string) {
+  return value
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
+export function deviceValue(label: string): SerpDevice {
+  return label.toLowerCase() === "mobile" ? "mobile" : "desktop";
+}

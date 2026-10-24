@@ -1,0 +1,285 @@
+import "server-only";
+import { MAX_ALERT_DELIVERIES_PER_RULE_PER_DAY } from "@/lib/alerts/limits";
+import { projectedMonthlySpendCents } from "@/lib/cost-estimate/spend-pace";
+import type { DateFormatPreference } from "@/lib/dates/format";
+import { prisma } from "@/lib/db/prisma";
+import { parsePublicId } from "@/lib/db/public-id";
+import { centsToDollars } from "@/lib/format/currency";
+import { createUserDateTimeFormatter } from "@/lib/format/user-datetime";
+import { rankCheckBudgetCapCents } from "@/lib/metering/rank-check-budget-read";
+import { monthlySpendCents } from "@/lib/metering/usage-read";
+import { monthUtcRange } from "@/lib/metering/utc-window";
+import { DEFAULT_INSPECTION_DAILY_LIMIT } from "@/lib/presence/constants";
+import { presenceUrl } from "@/lib/presence/url";
+import {
+  loadProviderRateContexts,
+  providerRateContextKey,
+} from "@/lib/provider-rates/connection-context";
+import { rankCheckRateSelection, withRankCheckManualRate } from "@/lib/provider-rates/manual-rate";
+import { LIST_PROVIDER_RATE_CONTEXT } from "@/lib/provider-rates/resolver";
+import { decryptProviderCredentials } from "@/lib/providers/crypto";
+import { PROVIDER_CATALOG } from "@/lib/providers/registry";
+import { estimatedRankCheckCostCents } from "@/lib/rank-check/default-cost";
+import {
+  primaryProviderConnection,
+  providerChainOrderBy,
+} from "@/lib/rank-check/provider-chain-order";
+import { normalizeTrackingScope, trackedProjectDomain } from "@/lib/schemas/project";
+import { resolveSearchInsightsConnectionState } from "@/lib/search-insights/connection-state";
+import { resolveSerpDepth, resolveSerpStopOnMatch } from "@/lib/serp/constants";
+import { projectDefaultSerpMarket } from "@/lib/serp/default-market";
+import { resolveSearchSyncSettings } from "@/lib/settings/search-sync-config";
+import { loadSearchSyncMetrics } from "@/lib/settings/search-sync-metrics";
+import { requireReadableProject } from "./_auth";
+import { apiKeyExpiryLabel } from "./api-key-settings";
+import { monthlySpendByApiKey } from "./api-key-spend";
+import { loadProviderAvailability } from "./provider-availability";
+import { providerCostBySource } from "./provider-spend-usage";
+import { initials, memberColor, roleLabel } from "./settings-members";
+import { settingsConnectionUsage, settingsProviderSummaries } from "./settings-provider-summaries";
+import type { SettingsView } from "./settings-view-types";
+import { segmentCountByTag } from "./tag-usage";
+
+export type { SettingsView } from "./settings-view-types";
+
+function iso(date: Date | null | undefined) {
+  return date ? date.toISOString() : null;
+}
+
+function usagePeriod(now: Date, dateFormat: DateFormatPreference = "iso") {
+  const dateTime = createUserDateTimeFormatter({ dateFormat, timezone: "UTC" });
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const reset = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  const end = new Date(reset.getTime() - 1);
+  const resetDays = Math.max(0, Math.floor((reset.getTime() - now.getTime()) / 86_400_000));
+  return {
+    dateFormat,
+    endAt: reset.toISOString(),
+    endLabel: dateTime.formatDate(end),
+    label: dateTime.formatMonthYear(start),
+    now: now.toISOString(),
+    resetsLabel:
+      resetDays === 0
+        ? "resets today"
+        : resetDays === 1
+          ? "resets in 1 day"
+          : `resets in ${resetDays} days`,
+    timezone: dateTime.timezone,
+  };
+}
+
+function requiredPublicId(value: string | null, prefix: "key" | "mbr" | "usr", resource: string) {
+  if (!value || parsePublicId(value)?.prefix !== prefix) {
+    throw new Error(`${resource} public ID is not available.`);
+  }
+  return value;
+}
+
+// biome-ignore format: compact signature keeps this query under the line cap.
+function labelFromDate(prefix: string, date: Date | null | undefined, dateTime: ReturnType<typeof createUserDateTimeFormatter>) {
+  if (!date) {
+    return `${prefix} never`;
+  }
+  return `${prefix} ${dateTime.formatDate(date)}`;
+}
+
+// biome-ignore format: compact signature keeps this query under the line cap.
+export async function getSettings(projectId: string, options: { dateFormat?: DateFormatPreference; now?: Date } = {}): Promise<SettingsView> {
+  const { project } = await requireReadableProject(projectId);
+  const now = options.now ?? new Date();
+  const [fullProject, monthChecks, spentCents, apiKeySpend, sourceUsage, savedViews] =
+    await Promise.all([
+    prisma.project.findUnique({
+      include: {
+        // Every key the user may still act on: expired keys stay listed as a state of their
+        // own, so this is the unchanged pre-expiry condition. isExpired and expiresLabel are
+        // derived per row below.
+        apiKeys: { orderBy: { createdAt: "desc" }, where: { revokedAt: null } },
+        defaults: true,
+        keywords: { select: { device: true, location: true, locationRef: true, targetUrl: true } },
+        members: { include: { user: true }, orderBy: { createdAt: "asc" } },
+        providerConnections: { include: { rates: rankCheckRateSelection }, orderBy: providerChainOrderBy() },
+        tags: { include: { _count: { select: { keywords: true } } }, orderBy: { name: "asc" } },
+      },
+      where: { id: project.id },
+    }),
+    prisma.rankCheck.findMany({
+      select: { provider: true, status: true },
+      where: {
+        checkedAt: monthUtcRange(now),
+        keyword: { projectId: project.id },
+        status: { not: "deferred" },
+      },
+    }),
+    monthlySpendCents(project.id, now),
+    monthlySpendByApiKey(project.id, now),
+    providerCostBySource(project.id, now),
+    prisma.savedView.findMany({
+      select: { config: true },
+      where: { projectId: project.id, surface: "keywords", visibility: "project" },
+    }),
+  ]);
+  if (!fullProject) throw new Error("Project not found.");
+  const connections = fullProject.providerConnections.map(withRankCheckManualRate);
+  const gscConnection = connections.find((item) => item.provider === "gsc");
+  let storedGscProperty: string | undefined;
+  try {
+    storedGscProperty = gscConnection
+      ? decryptProviderCredentials(gscConnection.credentialsEncrypted).login
+      : undefined;
+  } catch {
+    storedGscProperty = undefined;
+  }
+  const { propertyKey: gscProperty, status: connectionStatus } =
+    resolveSearchInsightsConnectionState({
+      providerStatus: gscConnection?.status ?? null,
+      storedProperty: storedGscProperty,
+    });
+  const searchSyncSettings = resolveSearchSyncSettings(fullProject.defaults);
+  const [rateContexts, providerAvailability, searchSyncMetrics] = await Promise.all([
+    loadProviderRateContexts(
+      connections.map((connection) => connection.id),
+      ["rank_check"],
+      now,
+    ),
+    loadProviderAvailability(connections),
+    loadSearchSyncMetrics(fullProject.id, gscProperty, searchSyncSettings, now),
+  ]);
+
+  const primarySerp = primaryProviderConnection(connections, "serp");
+  const schedule = fullProject.defaults ?? {
+    cronExpression: null,
+    frequency: "manual" as const,
+    jitterMinutes: 0,
+    lastCheckedAt: null,
+    nextCheckAt: null,
+    timezone: "UTC",
+  };
+  const dateTime = createUserDateTimeFormatter({
+    dateFormat: options.dateFormat,
+    timezone: schedule.timezone,
+  });
+  const devices = new Set(fullProject.keywords.map((keyword) => keyword.device));
+  const locations = new Set(fullProject.keywords.map((keyword) => keyword.location));
+  const targetUrls = new Set(
+    fullProject.keywords.flatMap((keyword) => presenceUrl(keyword.targetUrl) ?? []),
+  );
+  const market = projectDefaultSerpMarket(fullProject.defaults, fullProject.keywords);
+  const serpDepth = resolveSerpDepth(fullProject.defaults?.serpDepth);
+  const providerCost =
+    estimatedRankCheckCostCents(
+      primarySerp?.provider,
+      serpDepth,
+      primarySerp?.costPerCheckCents,
+      primarySerp
+        ? (rateContexts.get(providerRateContextKey(primarySerp.id, "rank_check")) ??
+          LIST_PROVIDER_RATE_CONTEXT)
+        : LIST_PROVIDER_RATE_CONTEXT,
+    ) ?? 0;
+  const completedMonthChecks = monthChecks.filter((check) => check.status === "completed");
+  const capCents = await rankCheckBudgetCapCents(project.id);
+  const segmentCounts = segmentCountByTag(savedViews);
+  return {
+    apiKeys: fullProject.apiKeys.map((apiKey) => ({
+      createdAt: apiKey.createdAt.toISOString(),
+      createdLabel: labelFromDate("created", apiKey.createdAt, dateTime),
+      expiresAt: iso(apiKey.expiresAt),
+      expiresLabel: apiKeyExpiryLabel(apiKey.expiresAt, now, dateTime),
+      id: requiredPublicId(apiKey.publicId, "key", "API key"),
+      isExpired: Boolean(apiKey.expiresAt && apiKey.expiresAt <= now),
+      lastUsedAt: iso(apiKey.lastUsedAt),
+      lastUsedLabel: labelFromDate("last used", apiKey.lastUsedAt, dateTime),
+      maskedValue: `${apiKey.prefix}******`,
+      name: apiKey.name,
+      spendThisMonthCents: apiKeySpend.get(apiKey.id) ?? 0,
+    })),
+    defaults: {
+      city: market.city,
+      costPerCheck: centsToDollars(providerCost),
+      country: market.country,
+      device: market.device === "mobile" ? "Mobile" : "Desktop",
+      deviceCount: devices.size || 1,
+      keywordCount: fullProject.keywords.length,
+      inspectionDailyLimit:
+        fullProject.defaults?.inspectionDailyLimit ?? DEFAULT_INSPECTION_DAILY_LIMIT,
+      searchSync: {
+        ...searchSyncMetrics,
+        connectionStatus,
+        firstDataDate: iso(searchSyncMetrics.firstDataDate),
+        firstDataDateLabel: searchSyncMetrics.firstDataDate
+          ? dateTime.formatDate(searchSyncMetrics.firstDataDate)
+          : null,
+        lastQuotaPausedAt: searchSyncMetrics.lastQuotaPausedAt
+          ? dateTime.formatDate(searchSyncMetrics.lastQuotaPausedAt)
+          : null,
+        newestFinalizedDate: iso(searchSyncMetrics.newestFinalizedDate),
+        lastActivityAt: iso(searchSyncMetrics.lastActivityAt),
+        pauseStartedAt: iso(searchSyncMetrics.pauseStartedAt),
+        ...searchSyncSettings,
+      },
+      locationKey: market.locationKey,
+      locationLabel: market.displayName,
+      locationCount: locations.size || 1,
+      serpDepth,
+      serpStopOnMatch: resolveSerpStopOnMatch(fullProject.defaults?.serpStopOnMatch),
+      schedule: {
+        cron_expression: schedule.cronExpression,
+        frequency: schedule.frequency,
+        jitter_minutes: schedule.jitterMinutes,
+        last_checked_at: iso(schedule.lastCheckedAt),
+        next_check_at: iso(schedule.nextCheckAt),
+        timezone: schedule.timezone,
+      },
+      targetUrlCount: targetUrls.size,
+    },
+    notifications: {
+      channel: "Email",
+      digest: "Daily",
+      email: fullProject.members[0]?.user.email ?? "",
+      emailVerification: fullProject.members[0]?.user.emailVerified ? "verified" : "unverified",
+      maxAlertsPerDay: MAX_ALERT_DELIVERIES_PER_RULE_PER_DAY,
+    },
+    project: {
+      domain: trackedProjectDomain(fullProject.domain) ?? "",
+      name: fullProject.name,
+      projectId: fullProject.publicId,
+      trackingScope: normalizeTrackingScope(fullProject.trackingScope),
+      writeMode: fullProject.writeMode,
+    },
+    providers: settingsProviderSummaries(connections, completedMonthChecks, sourceUsage),
+    tags: fullProject.tags.map((tag) => ({
+      color: tag.color ?? "var(--blue)",
+      keywordCount: tag._count.keywords,
+      label: tag.name,
+      segmentCount: segmentCounts.get(tag.name.trim().toLocaleLowerCase()) ?? 0,
+    })),
+    team: fullProject.members.map((member, index) => ({
+      color: memberColor(index),
+      email: member.user.email,
+      id: requiredPublicId(member.publicId, "mbr", "Membership"),
+      initials: initials(member.user.name),
+      name: member.user.name,
+      role: roleLabel(member.role),
+      userId: requiredPublicId(member.user.publicId, "usr", "User"),
+    })),
+    usage: {
+      budget: { capCents: capCents, spentCents },
+      connections: settingsConnectionUsage(
+        connections,
+        monthChecks,
+        serpDepth,
+        rateContexts,
+        providerAvailability,
+        sourceUsage,
+      ),
+      hasProvider: primarySerp != null,
+      onPaceCents: projectedMonthlySpendCents(spentCents, now),
+      period: usagePeriod(now, options.dateFormat),
+      primaryProvider: primarySerp
+        ? (PROVIDER_CATALOG.find((entry) => entry.id === primarySerp.provider)?.label ??
+          primarySerp.provider)
+        : "-",
+      serpChecksMonth: completedMonthChecks.length.toLocaleString("en-US"),
+    },
+  };
+}

@@ -1,0 +1,71 @@
+import { cn } from "@/lib/ui/cn";
+import { cva } from "class-variance-authority";
+import { IdChipCopyButton } from "./IdChipCopyButton";
+
+export type IdChipProps = {
+  copyLabel?: string;
+  truncate?: "prefix" | "middle";
+  size?: "xs" | "sm" | "md" | "lg";
+  className?: string;
+  copyClassName?: string;
+  value: string;
+};
+
+const idChipVariants = cva("inline-flex items-center", {
+  variants: {
+    size: {
+      xs: "h-[22px] gap-[5px] rounded-control px-2 py-[3px]",
+      sm: "h-7 gap-1 rounded-control px-1.5",
+      md: "h-8 gap-1 rounded-control px-2",
+      lg: "h-9 gap-1.5 rounded-control px-2.5",
+    },
+  },
+  defaultVariants: {
+    size: "sm",
+  },
+});
+
+type IdChipSize = NonNullable<IdChipProps["size"]>;
+const idTextSizeByIdChipSize = {
+  xs: "text-[11px]",
+  sm: "text-[9px]",
+  md: "text-[10px]",
+  lg: "text-[11px]",
+} satisfies Record<IdChipSize, string>;
+
+export function shortId(value: string, truncate: "prefix" | "middle" = "prefix") {
+  if (truncate === "middle") {
+    return value.length > 17 ? `${value.slice(0, 10)}…${value.slice(-6)}` : value;
+  }
+  return value.slice(0, 10);
+}
+
+export function IdChip({
+  value,
+  copyLabel,
+  truncate = "prefix",
+  size = "sm",
+  className,
+  copyClassName,
+}: Readonly<IdChipProps>) {
+  return (
+    <span
+      className={cn(
+        "border border-border bg-bg-elev text-fg-muted",
+        idChipVariants({ size }),
+        className,
+      )}
+      title={value}
+    >
+      <span className={cn("font-mono leading-[1.45]", idTextSizeByIdChipSize[size])}>
+        {shortId(value, truncate)}
+      </span>
+      <IdChipCopyButton
+        className={cn("shrink-0", copyClassName)}
+        copyLabel={copyLabel}
+        size={size}
+        text={value}
+      />
+    </span>
+  );
+}

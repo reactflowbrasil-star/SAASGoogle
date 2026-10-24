@@ -1,0 +1,149 @@
+import type {
+  FirstCheckCandidate,
+  FirstCheckPreviewFailureCode,
+  RunFirstCheckPreviewResult,
+} from "@/lib/actions/rank-check-preview";
+import type { ObservationCompleteness } from "@/lib/observation/types";
+import type { ItemStatus } from "@/lib/rank-check/runs/contract";
+
+type FirstCheckTarget = Pick<FirstCheckCandidate, "device" | "market">;
+type FirstCheckTerminalStatus = Exclude<ItemStatus, "completed" | "queued" | "running">;
+
+export type FirstCheckResultRow =
+  | (FirstCheckTarget & {
+      keywordId: string;
+      publicId: string;
+      status: "pending" | "ready";
+      text: string;
+    })
+  | (FirstCheckTarget & {
+      keywordId: string;
+      publicId: string;
+      runId: string;
+      status: "queued" | "running";
+      text: string;
+    })
+  | (FirstCheckTarget & {
+      keywordId: string;
+      provider: string;
+      publicId: string;
+      observationCompleteness?: ObservationCompleteness | null;
+      position: number | null;
+      recordedCostCents: number | null;
+      requestedDepth?: number;
+      rankingUrl: string | null;
+      status: "completed";
+      text: string;
+    })
+  | (FirstCheckTarget & {
+      blockedReason: string | null;
+      keywordId: string;
+      publicId: string;
+      status: FirstCheckTerminalStatus;
+      text: string;
+    })
+  | (FirstCheckTarget & {
+      code: FirstCheckPreviewFailureCode | "client_error";
+      keywordId: string;
+      message: string;
+      publicId: string;
+      status: "failed";
+      text: string;
+    });
+
+export type FirstCheckRunState = {
+  message: string | null;
+  mode: "preview";
+  rows: FirstCheckResultRow[];
+  status: "completed" | "failed" | "idle" | "queued" | "running";
+};
+
+export const initialFirstCheckRunState: FirstCheckRunState = {
+  message: null,
+  mode: "preview",
+  rows: [],
+  status: "idle",
+};
+
+export function pendingRow(candidate: FirstCheckCandidate): FirstCheckResultRow {
+  return {
+    device: candidate.device,
+    keywordId: candidate.id,
+    market: candidate.market,
+    publicId: candidate.publicId,
+    status: "pending",
+    text: candidate.text,
+  };
+}
+
+export function previewRow(
+  candidate: FirstCheckCandidate,
+  result: RunFirstCheckPreviewResult,
+): FirstCheckResultRow {
+  if (result.status === "queued") {
+    return {
+      device: candidate.device,
+      keywordId: candidate.id,
+      market: candidate.market,
+      publicId: candidate.publicId,
+      runId: result.runId,
+      status: "queued",
+      text: candidate.text,
+    };
+  }
+  if (result.status === "completed") {
+    return {
+      device: candidate.device,
+      keywordId: candidate.id,
+      market: candidate.market,
+      observationCompleteness: result.observationCompleteness,
+      position: result.position,
+      provider: result.provider,
+      recordedCostCents: result.recordedCostCents,
+      requestedDepth: result.requestedDepth,
+      publicId: candidate.publicId,
+      rankingUrl: result.rankingUrl,
+      status: "completed",
+      text: candidate.text,
+    };
+  }
+
+  return {
+    code: result.code,
+    device: candidate.device,
+    keywordId: candidate.id,
+    market: candidate.market,
+    message: result.message,
+    publicId: candidate.publicId,
+    status: "failed",
+    text: candidate.text,
+  };
+}
+
+export function clientErrorRow(
+  candidate: FirstCheckCandidate,
+  message: string,
+): FirstCheckResultRow {
+  return {
+    code: "client_error",
+    device: candidate.device,
+    keywordId: candidate.id,
+    market: candidate.market,
+    message,
+    publicId: candidate.publicId,
+    status: "failed",
+    text: candidate.text,
+  };
+}
+
+export function candidateFromFailedRow(
+  row: Pick<FirstCheckResultRow, "device" | "keywordId" | "market" | "publicId" | "text">,
+): FirstCheckCandidate {
+  return {
+    device: row.device,
+    id: row.keywordId,
+    market: row.market,
+    publicId: row.publicId,
+    text: row.text,
+  };
+}

@@ -1,0 +1,144 @@
+---
+title: "Checks"
+description: "Run an immediate rank check for one keyword."
+---
+
+`max_cost_cents=0` is cache-only. Fresh rank checks have no result cache, so zero
+always returns `cost_limit_exceeded` before creating a run, hold, attempt or provider
+request, including when the monetary estimate is zero or unknown.
+
+
+Use checks when you need a fresh position for one keyword immediately.
+
+Each keyword already belongs to one location-language market and one device.
+The check inherits that exact target from the keyword resource. To check the same
+phrase in another language, create a separate keyword target with a qualified
+`location_key`, such as `ES/Andalusia/Malaga@en`, then run the check for that
+keyword ID. An unqualified key uses the country's default language. See
+[Markets and languages](/markets).
+
+## Run rank check
+
+```http
+POST /api/v1/keywords/{keyword_id}/checks
+Authorization: Bearer <api_key>
+Content-Type: application/json
+Idempotency-Key: run-check-001
+```
+
+Body is optional:
+
+```json
+{}
+```
+
+Use a specific connected provider:
+
+```json
+{ "provider_id": "dataforseo" }
+```
+
+If `provider_id` is omitted, the primary connected SERP provider for the project
+is used. An optional `max_cost_cents` integer refuses the launch with a
+`cost_limit_exceeded` problem when its preflight cost estimate exceeds it.
+The MCP tool is `run_rank_check`. See [Paid MCP tools](/agents/paid-tools).
+
+Response status is `201` when the check completes during the request.
+
+```json
+{
+  "id": "check_a00000000000000000000000",
+  "keyword_id": "kw_a00000000000000000000000",
+  "attempts": null,
+  "checked_at": "2026-06-28T10:00:00.000Z",
+  "observation_completeness": "truncated_by_stop_on_match",
+  "position": 4,
+  "previous_position": 7,
+  "provider": "dataforseo",
+  "ranking_url": "https://example.com/rank-tracker",
+  "run_id": "rcr_a00000000000000000000000",
+  "run": {
+    "id": "rcr_a00000000000000000000000",
+    "status": "completed",
+    "trigger": "manual",
+    "started_at": "2026-06-28T09:59:58.000Z",
+    "finished_at": "2026-06-28T10:00:00.000Z"
+  },
+  "cost_cents": 0.06,
+  "usage": { "quantity": 0.06, "status": "confirmed", "unit": "cents" },
+  "error": null,
+  "error_code": null,
+  "status": "completed"
+}
+```
+
+`attempts` is `null` when the selected provider succeeds immediately. When
+fallback providers are tried first, it is an array of `{ "provider", "message" }`
+objects for the failed attempts.
+
+## Position semantics
+
+See [SERP positions and observations](/serp-observations) for the difference
+between organic rank, local-pack results, and AI Overview data.
+
+`position` is the 1-based position of the best matching organic result within
+the requested depth. Ads, featured snippets, local packs, and other SERP
+features do not change that value. `ranking_url` preserves the URL reported by
+the provider; bisibility does not replace it after resolving redirects or
+canonicals.
+
+`status: "completed"` describes execution, not complete observation coverage.
+Read `observation_completeness` alongside `position`: a completed check with
+`position: null` supports no match within the requested scope and depth only
+when completeness is `complete`. With `unknown` or
+`truncated_by_stop_on_match`, a null position does not establish absence. A
+valid positive position within the tracked depth remains valid with incomplete
+coverage, as in the example above. `observation_completeness: null` means no
+recognized metadata is available, including legacy checks; it is not evidence
+of complete coverage and is not backfilled. A malformed
+provider payload fails the provider attempt and can use the configured fallback
+chain; it is not stored as a completed no-match.
+
+## Queued response and correlation
+
+When inline execution is unavailable, the request queues a rank-check run. The
+response status is `202`; `id` is the public run ID and `status` is `queued`:
+
+```http
+POST /api/v1/keywords/{keyword_id}/checks
+Authorization: Bearer <api_key>
+Content-Type: application/json
+Idempotency-Key: run-check-001
+```
+
+```json
+{
+  "id": "rcr_a00000000000000000000000",
+  "status": "queued"
+}
+```
+
+Poll the keyword's completed rank-check history and select the row whose
+`run_id` equals the queued response's `id`. That row contains the final
+`position` and its rank-check `id`:
+
+```http
+GET /api/v1/keywords/{keyword_id}/rank-checks?limit=10&status=completed
+Authorization: Bearer <api_key>
+```
+
+`run_id` is `null` only for legacy rank-check rows that predate runs.
+
+## Failure modes
+
+| Status | Reason |
+| - | - |
+| `404` | Keyword was not found in the API key's project. |
+| `400` | Request body failed validation. |
+| `400` | No connected SERP provider is available. |
+| `429` | Rank checks are paused because the monthly project budget is exhausted. |
+| `502` | The connected provider request failed. |
+| `503` | The queue worker is unavailable. |
+
+Budget failures are returned as `budget_exhausted` problem responses. Provider
+failures are returned as `provider_unavailable` problem responses.

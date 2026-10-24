@@ -1,0 +1,162 @@
+"use client";
+
+import { useSharedErrorMessages } from "@/components/i18n/useSharedErrorMessages";
+import { presentSafeActionError } from "@/components/keywords/safe-action-error";
+import { Tooltip } from "@/components/ui/Tooltip";
+import { removeManagedCompetitor, renameManagedCompetitor } from "@/lib/actions/competitors";
+import type { ManagedCompetitor, RenameManagedCompetitorInput } from "@/lib/competitors/types";
+import { renameManagedCompetitorSchema } from "@/lib/competitors/types";
+import { zodResolver } from "@/lib/forms/zod-resolver";
+import { CheckIcon as Check } from "@phosphor-icons/react/dist/csr/Check";
+import { PencilSimpleIcon as PencilSimple } from "@phosphor-icons/react/dist/csr/PencilSimple";
+import { TrashIcon as Trash } from "@phosphor-icons/react/dist/csr/Trash";
+import { XIcon as X } from "@phosphor-icons/react/dist/csr/X";
+import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { useState, useTransition } from "react";
+import { useForm } from "react-hook-form";
+import { presentCompetitorValidationMessage } from "./competitor-validation-presentation";
+
+type ManagedCompetitorControlsProps = {
+  canDelete: boolean;
+  canUpdate: boolean;
+  competitor: ManagedCompetitor;
+  projectId: string;
+};
+
+const iconButtonClass =
+  "grid h-7 w-7 place-items-center rounded-control border border-border-control bg-bg-elev text-fg-muted outline-none transition-colors hover:border-accent hover:text-accent-text focus-visible:border-accent focus-visible:text-accent-text disabled:opacity-50";
+
+export function ManagedCompetitorControls({
+  canDelete,
+  canUpdate,
+  competitor,
+  projectId,
+}: Readonly<ManagedCompetitorControlsProps>) {
+  const t = useTranslations("projectCompetitors.ui");
+  const sharedErrors = useSharedErrorMessages();
+  const router = useRouter();
+  const [isEditing, setIsEditing] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+  const {
+    formState: { errors },
+    handleSubmit,
+    register,
+    reset,
+  } = useForm<RenameManagedCompetitorInput>({
+    defaultValues: {
+      competitorId: competitor.id,
+      label: competitor.label,
+      projectId,
+    },
+    resolver: zodResolver(renameManagedCompetitorSchema),
+  });
+
+  function closeEdit() {
+    setMessage(null);
+    setIsEditing(false);
+    reset({ competitorId: competitor.id, label: competitor.label, projectId });
+  }
+
+  function onRename(values: RenameManagedCompetitorInput) {
+    setMessage(null);
+    startTransition(() => {
+      void renameManagedCompetitor(values)
+        .then(() => {
+          reset(values);
+          setIsEditing(false);
+          router.refresh();
+        })
+        .catch((error: unknown) =>
+          setMessage(presentSafeActionError(error, sharedErrors, t("updateError"))),
+        );
+    });
+  }
+
+  function onRemove() {
+    if (!confirm(t("removeCompetitorConfirm", { name: competitor.label }))) {
+      return;
+    }
+    setMessage(null);
+    startTransition(() => {
+      void removeManagedCompetitor({ competitorId: competitor.id, projectId })
+        .then(() => router.refresh())
+        .catch((error: unknown) =>
+          setMessage(presentSafeActionError(error, sharedErrors, t("updateError"))),
+        );
+    });
+  }
+
+  if (isEditing) {
+    return (
+      <form className="flex min-w-[220px] flex-col gap-1.5" onSubmit={handleSubmit(onRename)}>
+        <input type="hidden" {...register("projectId")} />
+        <input type="hidden" {...register("competitorId")} />
+        <span className="flex items-center gap-1.5">
+          <input
+            aria-label={t("competitorLabel")}
+            className="h-8 min-w-0 flex-1 rounded-control border border-border-control bg-transparent px-2.5 text-[12.5px] font-medium text-fg outline-none focus:border-accent"
+            {...register("label")}
+          />
+          <button
+            aria-label={t("saveCompetitorLabel")}
+            className={iconButtonClass}
+            disabled={isPending}
+            type="submit"
+          >
+            <Check aria-hidden size={13} weight="regular" />
+          </button>
+          <button
+            aria-label={t("cancelRename")}
+            className={iconButtonClass}
+            onClick={closeEdit}
+            type="button"
+          >
+            <X aria-hidden size={13} weight="regular" />
+          </button>
+        </span>
+        <span className="font-sans tabular-nums text-[10px] text-red-text">
+          {errors.label?.message
+            ? presentCompetitorValidationMessage(errors.label.message, t)
+            : message}
+        </span>
+      </form>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      {canUpdate ? (
+        <Tooltip content={t("rename")}>
+          <button
+            aria-label={t("renameCompetitor", { name: competitor.label })}
+            className={iconButtonClass}
+            onClick={() => setIsEditing(true)}
+            type="button"
+          >
+            <PencilSimple weight="regular" aria-hidden size={13} />
+          </button>
+        </Tooltip>
+      ) : null}
+      {canDelete ? (
+        <Tooltip content={t("remove")}>
+          <span>
+            <button
+              aria-label={t("removeCompetitor", { name: competitor.label })}
+              className={iconButtonClass}
+              disabled={isPending}
+              onClick={onRemove}
+              type="button"
+            >
+              <Trash weight="regular" aria-hidden size={13} />
+            </button>
+          </span>
+        </Tooltip>
+      ) : null}
+      {message ? (
+        <span className="font-sans tabular-nums text-[10px] text-red-text">{message}</span>
+      ) : null}
+    </span>
+  );
+}

@@ -1,0 +1,179 @@
+"use client";
+
+import { type RegisteredCommand, useRegisterCommands } from "@/components/shell/command-registry";
+import type { RankTrackerAction } from "@/lib/keywords/rank-tracker-command";
+import type { MarketScope } from "@/lib/markets/market-scope";
+import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { useCallback, useMemo, useRef } from "react";
+
+type UseRankTrackerCommandsInput = {
+  canCreateKeyword: boolean;
+  canUpdateKeyword: boolean;
+  initialAction: RankTrackerAction | null;
+  exportSupported?: boolean;
+  /** Names the market the run command spends in; `null` is the project level. */
+  marketScope?: MarketScope | null;
+  onAdd: () => void;
+  onExport: () => void;
+  onFilter: () => void;
+  onImport: () => void;
+  onRunChecks: () => void;
+  /** `scoped` is the server count for the entire market, or the visible project selection. */
+  rowCounts: { all: number; scoped?: number; visible: number };
+};
+
+export function useRankTrackerCommands({
+  canCreateKeyword,
+  canUpdateKeyword,
+  initialAction,
+  exportSupported = true,
+  marketScope = null,
+  onAdd,
+  onExport,
+  onFilter,
+  onImport,
+  onRunChecks,
+  rowCounts,
+}: Readonly<UseRankTrackerCommandsInput>) {
+  const t = useTranslations("projectRankTracker.keywordImport.management");
+  const router = useRouter();
+  const canExport = exportSupported && rowCounts.visible > 0;
+  const canFilter = rowCounts.all > 0;
+  const runCheckRows = rowCounts.scoped ?? rowCounts.visible;
+  const canRunChecks = canUpdateKeyword && marketScope?.status !== "paused" && runCheckRows > 0;
+  const runChecksLabel = marketScope
+    ? t("commands.runChecksInMarket", { market: marketScope.label })
+    : t("commands.runChecks");
+
+  const commands = useMemo<RegisteredCommand[]>(() => {
+    const cmds: RegisteredCommand[] = [];
+    if (canCreateKeyword) {
+      cmds.push({
+        id: "rt-add",
+        label: t("commands.add"),
+        scope: "rank-tracker",
+        hint: t("commands.addHint"),
+        run: onAdd,
+      });
+      cmds.push({
+        id: "rt-import",
+        label: t("commands.import"),
+        scope: "rank-tracker",
+        hint: t("commands.importHint"),
+        run: onImport,
+      });
+    }
+    if (canExport) {
+      cmds.push({
+        id: "rt-export",
+        label: t("export.title"),
+        scope: "rank-tracker",
+        hint: t("commands.exportHint"),
+        run: onExport,
+      });
+    }
+    if (canFilter) {
+      cmds.push({
+        id: "rt-filter",
+        label: t("commands.filter"),
+        scope: "rank-tracker",
+        hint: t("commands.filterHint"),
+        run: onFilter,
+      });
+    }
+    if (canRunChecks) {
+      cmds.push({
+        id: "rt-run-checks",
+        label: runChecksLabel,
+        scope: "rank-tracker",
+        hint: t("commands.runChecksHint"),
+        run: onRunChecks,
+      });
+    }
+    return cmds;
+  }, [
+    canCreateKeyword,
+    canExport,
+    canFilter,
+    canRunChecks,
+    onAdd,
+    onExport,
+    onFilter,
+    onImport,
+    onRunChecks,
+    runChecksLabel,
+    t,
+  ]);
+
+  const registerRef = useRegisterCommands(commands);
+  const stateRef = useRef({
+    canCreateKeyword,
+    canExport,
+    canFilter,
+    canRunChecks,
+    initialAction,
+    onAdd,
+    onExport,
+    onFilter,
+    onImport,
+    onRunChecks,
+  });
+  stateRef.current = {
+    canCreateKeyword,
+    canExport,
+    canFilter,
+    canRunChecks,
+    initialAction,
+    onAdd,
+    onExport,
+    onFilter,
+    onImport,
+    onRunChecks,
+  };
+
+  const routerRef = useRef(router);
+  routerRef.current = router;
+  const lastConsumedRef = useRef<RankTrackerAction | null>(null);
+
+  const consumeActionRef = useCallback((node: HTMLSpanElement | null) => {
+    if (node === null) return;
+    const state = stateRef.current;
+    if (state.initialAction === null) {
+      lastConsumedRef.current = null;
+      return;
+    }
+    if (lastConsumedRef.current === state.initialAction) return;
+    lastConsumedRef.current = state.initialAction;
+    switch (state.initialAction) {
+      case "add":
+        if (state.canCreateKeyword) state.onAdd();
+        break;
+      case "import":
+        if (state.canCreateKeyword) state.onImport();
+        break;
+      case "export":
+        if (state.canExport) state.onExport();
+        break;
+      case "filter":
+        if (state.canFilter) state.onFilter();
+        break;
+    }
+
+    const url = new URL(window.location.href);
+    url.searchParams.delete("action");
+    routerRef.current.replace(`${url.pathname}${url.search}${url.hash}`, { scroll: false });
+  }, []);
+
+  return { actionKey: initialAction ?? "none", consumeActionRef, registerRef };
+}
+
+export function RankTrackerCommandMarker(props: Readonly<UseRankTrackerCommandsInput>) {
+  const { actionKey, consumeActionRef, registerRef } = useRankTrackerCommands(props);
+  return (
+    <>
+      <span aria-hidden hidden ref={registerRef} />
+      <span aria-hidden hidden key={actionKey} ref={consumeActionRef} />
+    </>
+  );
+}

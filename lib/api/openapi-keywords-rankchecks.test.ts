@@ -1,0 +1,274 @@
+import { describe, expect, it } from "vitest";
+import { API_VERSION_HEADER } from "./api-versions";
+import { getCapabilities } from "./capabilities";
+import { getOpenApiDocument } from "./openapi";
+import type { Parameter } from "./openapi-test-helpers";
+
+describe("OpenAPI document", () => {
+  it("documents keyword list filters", () => {
+    const operation = getOpenApiDocument().paths["/projects/{project_id}/keywords"].get;
+    const parameters = operation.parameters as Parameter[];
+
+    expect(parameters.map((parameter) => parameter.name ?? parameter.$ref)).toEqual([
+      API_VERSION_HEADER,
+      "project_id",
+      "#/components/parameters/Limit",
+      "#/components/parameters/Cursor",
+      "search",
+      "tag",
+      "topic",
+      "intent",
+      "device",
+      "location_key",
+      "country",
+      "position_gt",
+      "position_lt",
+      "sort",
+      "filter[country]",
+      "filter[device]",
+      "filter[intent]",
+      "filter[location_key]",
+      "filter[position_gt]",
+      "filter[position_lt]",
+      "filter[tag]",
+      "filter[topic]",
+      "q",
+      "#/components/parameters/SourceHeader",
+    ]);
+    expect(parameters.find((parameter) => parameter.name === "filter[topic]")?.schema).toEqual(
+      parameters.find((parameter) => parameter.name === "topic")?.schema,
+    );
+    expect(parameters.find((parameter) => parameter.name === "topic")?.schema).toMatchObject({
+      maxLength: 80,
+      minLength: 1,
+      type: "string",
+    });
+    expect(parameters.find((parameter) => parameter.name === "intent")?.schema).toMatchObject({
+      maxLength: 80,
+      minLength: 1,
+      type: "string",
+    });
+    expect(parameters.find((parameter) => parameter.name === "sort")?.schema).toMatchObject({
+      enum: [
+        "created_at",
+        "-created_at",
+        "keyword",
+        "-keyword",
+        "text",
+        "-text",
+        "updated_at",
+        "-updated_at",
+      ],
+    });
+  });
+
+  it("documents bounded, joinable keyword matching with market and position fields", () => {
+    const doc = getOpenApiDocument();
+    const operation = doc.paths["/projects/{project_id}/keyword-matches"].post;
+    const request = doc.components.schemas.KeywordMatchRequest;
+    const match = doc.components.schemas.KeywordMatch;
+    const market = doc.components.schemas.KeywordMatchMarket;
+
+    expect(operation).toMatchObject({
+      operationId: "matchProjectKeywords",
+      requestBody: { required: true },
+    });
+    expect(request.properties.texts).toMatchObject({
+      items: { maxLength: 180, minLength: 1, type: "string" },
+      maxItems: 50,
+      minItems: 1,
+    });
+    expect(match.required).toEqual(
+      expect.arrayContaining(["matched_text", "market", "latest_position", "previous_position"]),
+    );
+    expect(match.properties.text).toMatchObject({
+      description: expect.stringContaining("Stored keyword text"),
+    });
+    expect(market.properties.location_key).toMatchObject({ example: "ES/Andalusia/Malaga@en" });
+    expect(market.required).toEqual(
+      expect.arrayContaining([
+        "location",
+        "location_key",
+        "country_code",
+        "language_code",
+        "language_label",
+        "device",
+      ]),
+    );
+  });
+
+  it("documents both project defaults verbs", () => {
+    const doc = getOpenApiDocument();
+    const path = doc.paths["/projects/{project_id}/defaults"];
+
+    expect(Object.keys(path).sort()).toEqual(["get", "patch"]);
+    expect(path.get).toMatchObject({ operationId: "getProjectDefaults" });
+    expect(path.patch).toMatchObject({ operationId: "updateProjectDefaults" });
+    expect(doc.components.schemas.ProjectDefaultsPatch.properties.jitter_minutes).toMatchObject({
+      maximum: 120,
+      minimum: 0,
+    });
+    expect(doc.components.schemas.ProjectDefaultsPatch.properties.timezone).toMatchObject({
+      deprecated: true,
+      description: expect.stringContaining("Configure named schedules instead"),
+    });
+    expect(doc.components.schemas.KeywordCreateItem.properties.language).toMatchObject({
+      example: "en",
+      type: "string",
+    });
+    expect(doc.components.schemas.KeywordCreateItem.properties.schedule).toMatchObject({
+      properties: {
+        jitter_minutes: { default: 60, maximum: 120, minimum: 0 },
+        timezone: {
+          description: expect.stringContaining("use stable keyword slots"),
+        },
+      },
+    });
+    expect(
+      getCapabilities().find((tool) => tool.name === "updateProjectDefaults")?.input_schema,
+    ).toMatchObject({
+      properties: { jitter_minutes: { maximum: 120, minimum: 0 } },
+    });
+  });
+
+  it("documents keyword check state with its exact semantics sentences", () => {
+    const doc = getOpenApiDocument();
+    const keyword = doc.components.schemas.Keyword;
+
+    expect(keyword.properties.latest_position.description).toContain(
+      '`latest_position` = `latest_check.position`; it is `null` for failed checks, unknown observation coverage, or absence within the requested depth. Agents that need "the last known ranking" must read `latest_successful_check.position`.',
+    );
+    expect(keyword.properties.previous_position.description).toContain(
+      "`previous_position` = the position recorded on `latest_check` as its predecessor.",
+    );
+    expect(doc.components.schemas.KeywordLatestCheck.description).toContain(
+      'A completed check with `position: null` can have unknown coverage; read `observation_completeness` before inferring absence within the requested depth; `latest_check.status: "failed"` means "unknown, the check did not run to completion".',
+    );
+    expect(keyword.properties).toMatchObject({
+      latest_check: { $ref: "#/components/schemas/KeywordLatestCheck" },
+      latest_successful_check: { $ref: "#/components/schemas/KeywordLatestSuccessfulCheck" },
+    });
+    expect(keyword.required).toEqual(
+      expect.arrayContaining(["latest_check", "latest_position", "latest_successful_check"]),
+    );
+    expect(keyword.properties.schedule.properties.source).toMatchObject({
+      enum: ["keyword", "project_default"],
+    });
+    expect(keyword.properties.schedule.required).toContain("source");
+    expect(doc.components.schemas.KeywordLatestSuccessfulCheck.properties).toMatchObject({
+      position: { type: ["integer", "null"] },
+      ranking_url: { type: ["string", "null"] },
+    });
+  });
+
+  it("documents rank-check error codes and the joined run", () => {
+    const rankCheck = getOpenApiDocument().components.schemas.RankCheck;
+
+    expect(rankCheck.properties.error_code).toMatchObject({ type: ["string", "null"] });
+    expect(rankCheck.properties.run).toMatchObject({
+      properties: {
+        id: { pattern: "^rcr_[a-z][a-z0-9]{23}$" },
+        status: { type: "string" },
+        trigger: { type: "string" },
+        started_at: { format: "date-time", type: ["string", "null"] },
+        finished_at: { format: "date-time", type: ["string", "null"] },
+      },
+      required: ["id", "status", "trigger", "started_at", "finished_at"],
+      type: ["object", "null"],
+    });
+    expect(rankCheck.required).toEqual(expect.arrayContaining(["error_code", "run"]));
+  });
+
+  it("documents rank-check list filters and cursor pagination", () => {
+    const operation = getOpenApiDocument().paths["/keywords/{keyword_id}/rank-checks"].get;
+    const parameters = operation.parameters as Parameter[];
+    const responseSchema = operation.responses["200"].content["application/json"].schema;
+
+    expect(parameters.map((parameter) => parameter.name ?? parameter.$ref)).toEqual([
+      API_VERSION_HEADER,
+      "keyword_id",
+      "#/components/parameters/Limit",
+      "#/components/parameters/Cursor",
+      "status",
+      "since",
+      "until",
+      "#/components/parameters/ProjectHeader",
+      "#/components/parameters/ProjectQuery",
+      "#/components/parameters/SourceHeader",
+    ]);
+    expect(parameters.find((parameter) => parameter.name === "status")?.schema).toMatchObject({
+      enum: ["completed", "failed", "running"],
+    });
+    expect(responseSchema).toMatchObject({
+      properties: {
+        data: {
+          items: {
+            $ref: "#/components/schemas/RankCheck",
+          },
+        },
+        meta: {
+          properties: {
+            next_cursor: { type: ["string", "null"] },
+          },
+        },
+      },
+    });
+    expect(
+      getOpenApiDocument().paths["/rank-checks/{check_id}"].get.responses["200"],
+    ).toMatchObject({
+      content: {
+        "application/json": {
+          schema: { $ref: "#/components/schemas/RankCheck" },
+        },
+      },
+    });
+  });
+
+  it("declares personal-token project selection on project-resolving paths only", () => {
+    const document = getOpenApiDocument();
+    expect(document.components.parameters.ProjectHeader).toMatchObject({
+      in: "header",
+      name: "X-Bisibility-Project",
+    });
+    expect(document.components.parameters.ProjectQuery).toMatchObject({
+      in: "query",
+      name: "project",
+    });
+
+    const selectionRefs = (operation: { parameters?: object[] }) =>
+      ((operation.parameters ?? []) as Parameter[])
+        .map((parameter) => parameter.$ref)
+        .filter((ref) => ref?.startsWith("#/components/parameters/Project"));
+    expect(selectionRefs(document.paths["/rank-checks/{check_id}"].get)).toEqual([
+      "#/components/parameters/ProjectHeader",
+      "#/components/parameters/ProjectQuery",
+    ]);
+    expect(selectionRefs(document.paths["/signals"].post)).toEqual([
+      "#/components/parameters/ProjectHeader",
+      "#/components/parameters/ProjectQuery",
+    ]);
+    for (const exempt of [
+      document.paths["/projects"].get,
+      document.paths["/projects/{project_id}"].get,
+      document.paths["/me"].get,
+      document.paths["/locations/search"].get,
+    ]) {
+      expect(selectionRefs(exempt)).toEqual([]);
+    }
+  });
+});
+
+it("documents persisted coverage separately from position and execution status", () => {
+  const schemas = getOpenApiDocument().components.schemas;
+  for (const schema of [
+    schemas.RankCheck,
+    schemas.KeywordLatestCheck,
+    schemas.KeywordLatestSuccessfulCheck,
+  ]) {
+    expect(schema.properties.observation_completeness).toMatchObject({
+      enum: ["complete", "truncated_by_stop_on_match", "unknown", null],
+      type: ["string", "null"],
+    });
+    expect(schema.required).toContain("observation_completeness");
+  }
+});

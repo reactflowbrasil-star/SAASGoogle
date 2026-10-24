@@ -1,0 +1,132 @@
+import {
+  CommandRegistryProvider,
+  useRegisteredCommands,
+} from "@/components/shell/command-registry";
+import { renderWithAuditMessages as render } from "@/i18n/test-support/render-with-feature-messages";
+import { fireEvent, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AuditFilters } from "./AuditFilters";
+import type { AuditExportFormat } from "./audit-export";
+import type { AuditFilterState } from "./audit-filtering";
+
+function CommandProbe() {
+  const commands = useRegisteredCommands();
+  return (
+    <ul data-testid="cmd-list">
+      {commands.map((c) => (
+        <li key={c.id} data-testid={`cmd-${c.id}`}>
+          <span data-testid={`label-${c.id}`}>{c.label}</span>
+          <span data-testid={`hint-${c.id}`}>{c.hint}</span>
+          <button data-testid={`run-${c.id}`} onClick={() => c.run()} type="button">
+            Run
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const baseFilters: AuditFilterState = {
+  actor: "all",
+  dateRange: "30d",
+  eventType: "all",
+  search: "",
+  status: "all",
+};
+
+function renderFilters(
+  overrides: { onExport?: (f: AuditExportFormat) => void; visibleCount?: number } = {},
+) {
+  const onExport = overrides.onExport ?? vi.fn();
+  render(
+    <CommandRegistryProvider>
+      <AuditFilters
+        actors={[]}
+        eventTypes={[]}
+        filters={baseFilters}
+        onChange={vi.fn()}
+        onExport={onExport}
+        totalCount={10}
+        truncated={false}
+        visibleCount={overrides.visibleCount ?? 5}
+      />
+      <CommandProbe />
+    </CommandRegistryProvider>,
+  );
+  return { onExport };
+}
+
+describe("AuditFilters command registration", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("registers Filter and Export with audit scope", () => {
+    renderFilters({ visibleCount: 3 });
+    expect(screen.getByTestId("cmd-audit-filter")).toBeTruthy();
+    expect(screen.getByTestId("cmd-audit-export")).toBeTruthy();
+    expect(screen.getByTestId("label-audit-filter").textContent).toBe("Filter");
+    expect(screen.getByTestId("hint-audit-filter").textContent).toBe("Search audit events");
+    expect(screen.getByTestId("label-audit-export").textContent).toBe("Export");
+    expect(screen.getByTestId("hint-audit-export").textContent).toBe("Download CSV");
+  });
+
+  it("Filter command focuses the search input", () => {
+    renderFilters({ visibleCount: 3 });
+    fireEvent.click(screen.getByTestId("run-audit-filter"));
+    expect(screen.getByRole("searchbox", { name: "Search audit events" })).toHaveFocus();
+  });
+
+  it("Export command calls onExport with csv format", () => {
+    const { onExport } = renderFilters({ visibleCount: 3 });
+    fireEvent.click(screen.getByTestId("run-audit-export"));
+    expect(onExport).toHaveBeenCalledWith("csv");
+  });
+
+  it("Export is absent when visibleCount is zero", () => {
+    renderFilters({ visibleCount: 0 });
+    expect(screen.queryByTestId("cmd-audit-export")).toBeNull();
+    expect(screen.getByTestId("cmd-audit-filter")).toBeTruthy();
+  });
+
+  it("keeps Export in the filter cluster so it can share a row with the controls", () => {
+    renderFilters({ visibleCount: 4 });
+
+    const cluster = screen.getByTestId("audit-filter-controls");
+    expect(cluster).toContainElement(screen.getByRole("button", { name: /Export/i }));
+    expect(
+      screen.getByText("4 of 10 events").closest("[data-testid='audit-filter-controls']"),
+    ).toBe(null);
+  });
+
+  it("uses a viewport-safe content width and preserves full accessible status labels", async () => {
+    const user = userEvent.setup();
+    renderFilters();
+
+    await user.click(screen.getByRole("button", { name: "Status" }));
+
+    const menu = screen.getByRole("menu", { name: "Status" });
+    expect(menu.closest("[data-ui-overlay]")).toHaveStyle({
+      maxWidth: "calc(100vw - 32px)",
+      minWidth: "min(160px, calc(100vw - 32px))",
+      width: "max-content",
+    });
+    for (const label of ["Status", "Success", "Failed"]) {
+      expect(screen.getByRole("menuitem", { name: label })).toHaveTextContent(label);
+      expect(screen.getByText(label, { selector: "[data-menu-item] span.block" })).toHaveAttribute(
+        "title",
+        label,
+      );
+    }
+  });
+
+  it("bleeds the export note divider across the padded menu paper", () => {
+    renderFilters({ visibleCount: 4 });
+
+    fireEvent.click(screen.getByRole("button", { name: /Export/i }));
+
+    const note = screen.getByText("Respects the current date and filter selection.");
+    expect(note).toHaveClass("-mx-1.5", "border-t", "px-[18px]");
+  });
+});

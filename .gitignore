@@ -1,0 +1,78 @@
+# Dependencies
+node_modules/
+.cache/
+__pycache__/
+*.py[cod]
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Production build
+build/
+dist/
+storybook-static/
+
+# Env files (never commit real secrets)
+.env
+.env.local
+.env.*.local
+.env.sentry-build-plugin
+
+# Generated/downloaded certificate material
+*.pem
+*.key
+*.p12
+*.crt
+*.cert
+
+# Public deployment manifests live in deploy/. Local state and credentials stay
+# untracked.
+deploy/.ssh/
+deploy/.terraform/
+deploy/*.tfstate
+deploy/*.tfstate.*
+deploy/*.tfvars
+
+# direnv local env (per-machine dev overrides, e.g. PORT)
+.envrc
+
+# Agent configs are machine-local.
+.claude/
+.codex/
+
+# Test / coverage
+.vitest/
+coverage/
+*.tsbuildinfo
+
+# Generated clients
+lib/generated/prisma/
+prisma/generated/
+.prisma/client/
+
+# Editor / OS
+.DS_Store
+*.log
+
+# Nested worktrees are machine-local.
+.wt/
+
+# Test / e2e artifacts (root-only; lib/reports is source)
+test-results/
+playwright-report/
+/reports/
+reports/examples/
+examples/ts/node_modules/
+examples/mcp/node_modules/
+examples/go/go.work
+examples/go/go.work.sum
+examples/python/.venv/
+
+# Build-time baked server-only runtime env
+lib/deployment/runtime-env.generated.ts
+
+# Generated local knowledge graph
+graphify-out/
+.graphifyignore

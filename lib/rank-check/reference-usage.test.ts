@@ -1,0 +1,66 @@
+import { describe, expect, it } from "vitest";
+import { aggregateProviderReferenceUsage } from "./reference-usage";
+
+describe("aggregateProviderReferenceUsage", () => {
+  it("preserves cached zero usage instead of estimating pages again", () => {
+    expect(
+      aggregateProviderReferenceUsage([
+        { billingUnits: 0, checks: 2, provider: "serpapi", requestedDepth: 100 },
+      ]),
+    ).toEqual([expect.objectContaining({ billableUnits: 0, referenceCostCents: 0 })]);
+  });
+  it("groups completed usage by the provider that ran each check", () => {
+    expect(
+      aggregateProviderReferenceUsage([
+        { billingUnits: null, checks: 2, provider: "dataforseo", requestedDepth: 10 },
+        { billingUnits: null, checks: 1, provider: "dataforseo", requestedDepth: 100 },
+        { billingUnits: 4, checks: 3, provider: "serpapi", requestedDepth: 100 },
+      ]),
+    ).toEqual([
+      {
+        billableUnits: 12,
+        checks: 3,
+        provider: "serpapi",
+        providerLabel: "SerpApi",
+        rateBasis: "production_plan",
+        referenceCostCents: 12,
+        referenceCostKnown: true,
+      },
+      {
+        billableUnits: 3,
+        checks: 3,
+        provider: "dataforseo",
+        providerLabel: "DataForSEO",
+        rateBasis: "live_depth",
+        referenceCostCents: 2.4,
+        referenceCostKnown: true,
+      },
+    ]);
+  });
+
+  it("derives legacy request units from depth and does not accept tenant-entered prices", () => {
+    expect(
+      aggregateProviderReferenceUsage([
+        { billingUnits: null, checks: 2, provider: "serpapi", requestedDepth: 20 },
+      ]),
+    ).toEqual([expect.objectContaining({ billableUnits: 4, referenceCostCents: 4 })]);
+  });
+
+  it("keeps unknown provider usage visible without presenting it as free", () => {
+    expect(
+      aggregateProviderReferenceUsage([
+        { billingUnits: 7, checks: 2, provider: "custom-provider", requestedDepth: null },
+      ]),
+    ).toEqual([
+      {
+        billableUnits: 14,
+        checks: 2,
+        provider: "custom-provider",
+        providerLabel: "Custom Provider",
+        rateBasis: "unavailable",
+        referenceCostCents: 0,
+        referenceCostKnown: false,
+      },
+    ]);
+  });
+});

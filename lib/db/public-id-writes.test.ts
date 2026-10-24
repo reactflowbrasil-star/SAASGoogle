@@ -1,0 +1,156 @@
+import { describe, expect, it } from "vitest";
+import { isValidPublicId, parsePublicId } from "./public-id-resources";
+import { addPublicIdsToArgs, addPublicIdsToData, withPublicIdWrites } from "./public-id-writes";
+
+function publicId(data: unknown) {
+  return (data as { publicId?: string }).publicId ?? "";
+}
+
+describe("public ID Prisma write defaults", () => {
+  it("adds a strict v3 ID for every addressable model", () => {
+    const models = [
+      "AgentReport",
+      "AlertRule",
+      "ApiKey",
+      "AuditLog",
+      "BusinessLocation",
+      "CheckSchedule",
+      "CloudImportJob",
+      "Competitor",
+      "IngestHook",
+      "Invite",
+      "Keyword",
+      "LocalMeasurementTarget",
+      "LocalMeasurementRun",
+      "Membership",
+      "MigrationToken",
+      "Notification",
+      "PersonalAccessToken",
+      "Project",
+      "ProjectMarket",
+      "ProviderConnection",
+      "RankCheck",
+      "SavedKeyword",
+      "SavedView",
+      "Session",
+      "Signal",
+      "Tag",
+      "TriggeredAlert",
+      "User",
+      "WebhookEndpoint",
+    ] as const;
+
+    for (const model of models) {
+      const value = publicId(addPublicIdsToData(model, {}));
+      expect(isValidPublicId(value)).toBe(true);
+    }
+  });
+
+  it("keeps an explicitly supplied v3 ID and fills nested creates", () => {
+    const project = addPublicIdsToData("Project", {
+      checkSchedules: { create: { frequency: "daily", name: "Daily", projectId: "project_1" } },
+      members: { create: { role: "owner", userId: "user_1" } },
+      publicId: "prj_abcdefghijklmnopqrstuvwx",
+      tags: { createMany: { data: [{ name: "urgent" }] } },
+    });
+    const checkSchedules = project.checkSchedules as { create: Record<string, unknown> };
+    const members = project.members as { create: Record<string, unknown> };
+    const tags = project.tags as { createMany: { data: Array<Record<string, unknown>> } };
+
+    expect(project.publicId).toBe("prj_abcdefghijklmnopqrstuvwx");
+    expect(parsePublicId(publicId(checkSchedules.create))?.resource).toBe("checkSchedule");
+    expect(parsePublicId(publicId(members.create))?.resource).toBe("membership");
+    expect(parsePublicId(publicId(tags.createMany.data[0]))?.resource).toBe("tag");
+  });
+
+  it("fills project report identities and rejects wrong report prefixes", () => {
+    const reportId = "agr_abcdefghijklmnopqrstuvwx";
+    const project = addPublicIdsToData("Project", {
+      agentReports: {
+        create: { title: "Nested analysis" },
+        createMany: { data: [{ title: "Batch analysis" }] },
+      },
+    });
+    const reports = project.agentReports as {
+      create: Record<string, unknown>;
+      createMany: { data: Record<string, unknown>[] };
+    };
+    expect(parsePublicId(publicId(reports.create))?.resource).toBe("agentReport");
+    expect(parsePublicId(publicId(reports.createMany.data[0]))?.resource).toBe("agentReport");
+    expect(publicId(addPublicIdsToData("AgentReport", { publicId: reportId }))).toBe(reportId);
+    for (const publicId of ["internal-report", "agr_legacy", "kw_abcdefghijklmnopqrstuvwx"]) {
+      expect(() => addPublicIdsToData("AgentReport", { publicId })).toThrow(
+        "AgentReport.publicId must be a strict agr_ v3 public ID.",
+      );
+    }
+    expect(() =>
+      addPublicIdsToData("Project", { agentReports: { create: { publicId: "agr_legacy" } } }),
+    ).toThrow("AgentReport.publicId");
+  });
+
+  it("fills create, update nested create, upsert, and createMany shapes", () => {
+    const args = addPublicIdsToArgs("User", "create", {
+      create: { email: "test@example.com" },
+      data: [{ email: "one@example.com" }, { email: "two@example.com" }],
+    }) as {
+      create: Record<string, unknown>;
+      data: Array<Record<string, unknown>>;
+    };
+    const update = addPublicIdsToArgs("User", "update", {
+      data: { sessions: { create: { token: "token" } } },
+    }) as { data: { sessions: { create: Record<string, unknown> } } };
+
+    expect(parsePublicId(publicId(args.create))?.resource).toBe("user");
+    expect(args.data.map(publicId).every(isValidPublicId)).toBe(true);
+    expect(parsePublicId(publicId(update.data.sessions.create))?.resource).toBe("session");
+  });
+
+  it("does not rotate an existing ID during updates or upsert update branches", () => {
+    const update = addPublicIdsToArgs("Project", "update", {
+      data: { name: "Renamed", publicId: "prj_legacy" },
+    }) as { data: { publicId: string } };
+    const upsert = addPublicIdsToArgs("Project", "upsert", {
+      create: { name: "New" },
+      update: { publicId: "prj_legacy" },
+    }) as { create: { publicId: string }; update: { publicId: string } };
+
+    expect(update.data.publicId).toBe("prj_legacy");
+    expect(upsert.update.publicId).toBe("prj_legacy");
+    expect(parsePublicId(upsert.create.publicId)?.resource).toBe("project");
+  });
+
+  it("rejects supplied legacy, malformed, and wrong-prefix IDs on creates", () => {
+    for (const publicId of ["prj_legacy", "kw_abcdefghijklmnopqrstuvwx", 42]) {
+      expect(() => addPublicIdsToData("Project", { publicId })).toThrow(
+        "Project.publicId must be a strict prj_ v3 public ID.",
+      );
+    }
+  });
+
+  it("wraps lowercase Prisma delegates and interactive transaction clients", async () => {
+    const received: unknown[] = [];
+    const delegate = {
+      create(args: unknown) {
+        received.push(args);
+        return args;
+      },
+    };
+    const raw = {
+      project: delegate,
+      $transaction(callback: (transaction: { project: typeof delegate }) => unknown) {
+        return callback({ project: delegate });
+      },
+    };
+    const prisma = withPublicIdWrites(raw);
+
+    await prisma.project.create({ data: { name: "direct" } });
+    await prisma.$transaction((transaction) =>
+      transaction.project.create({ data: { name: "transactional" } }),
+    );
+
+    for (const call of received) {
+      const data = (call as { data: Record<string, unknown> }).data;
+      expect(parsePublicId(publicId(data))?.resource).toBe("project");
+    }
+  });
+});

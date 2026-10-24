@@ -1,0 +1,78 @@
+import { pagesPerCheck } from "@/lib/cost-estimate/estimate";
+import type { Prisma, PrismaClient } from "@/lib/generated/prisma/client";
+import { LIST_PROVIDER_RATE_CONTEXT } from "@/lib/provider-rates/resolver";
+import { assertProviderAllocationAvailable } from "@/lib/provider-usage/enforcement";
+import type { ProviderRequestSurface } from "@/lib/provider-usage/surface";
+import { PROVIDER_CATALOG } from "@/lib/providers/registry";
+import type { SerpDepth } from "@/lib/serp/constants";
+import { estimatedRankCheckCostCents } from "./default-cost";
+import type { DataForSeoQueuePriority } from "./queued-config";
+import { dataForSeoQueuedEstimate, queuedBillingUnits } from "./queued-pricing";
+import type { RankCheckConnectionInput } from "./runner";
+
+export async function assertRankCheckConnectionAllocation(
+  input: {
+    connection: RankCheckConnectionInput;
+    depth: SerpDepth;
+    projectId: string;
+    surface: ProviderRequestSurface;
+  },
+  db: Pick<PrismaClient, "$queryRaw" | "project" | "providerConnection">,
+) {
+  if (!input.connection.id) return;
+  const estimatedCostCents = estimatedRankCheckCostCents(
+    input.connection.provider,
+    input.depth,
+    input.connection.costPerCheckCents,
+    input.connection.rateContext ?? LIST_PROVIDER_RATE_CONTEXT,
+  );
+  await assertProviderAllocationAvailable(
+    {
+      catalog: PROVIDER_CATALOG,
+      connectionId: input.connection.id,
+      estimatedCostCents: estimatedCostCents ?? 0,
+      estimatedUsageQuantity: pagesPerCheck(input.depth),
+      projectId: input.projectId,
+      provider: input.connection.provider,
+
+      surface: input.surface,
+    },
+    db,
+  );
+}
+
+export async function assertQueuedRankCheckBatchAllocation(
+  input: {
+    connection: { id: string };
+    priority: DataForSeoQueuePriority;
+    projectId: string;
+    surface: ProviderRequestSurface;
+    tasks: readonly { depth: SerpDepth; estimatedCostCents?: number; keyword?: string }[];
+  },
+  db: Pick<PrismaClient | Prisma.TransactionClient, "$queryRaw" | "project" | "providerConnection">,
+) {
+  const estimatedCostCents = input.tasks.reduce(
+    (sum, task) =>
+      sum +
+      (task.estimatedCostCents ??
+        dataForSeoQueuedEstimate(input.priority, task.depth, task.keyword)),
+    0,
+  );
+  const estimatedUsageQuantity = input.tasks.reduce(
+    (sum, task) => sum + queuedBillingUnits(task.depth),
+    0,
+  );
+  await assertProviderAllocationAvailable(
+    {
+      catalog: PROVIDER_CATALOG,
+      connectionId: input.connection.id,
+      estimatedCostCents,
+      estimatedUsageQuantity,
+      projectId: input.projectId,
+      provider: "dataforseo",
+
+      surface: input.surface,
+    },
+    db,
+  );
+}

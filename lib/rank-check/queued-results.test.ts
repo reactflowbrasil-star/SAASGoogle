@@ -1,0 +1,854 @@
+import { frozenRequest } from "@/lib/measurement-definitions/canonical";
+import {
+  definitionHeadFixture,
+  definitionSourceFixture,
+} from "@/lib/measurement-definitions/fixtures";
+import { hostDefinitionAdapters } from "@/lib/measurement-definitions/host-adapters";
+import { DataForSeoError } from "@/lib/providers/serp/dataforseo-errors";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { persistReadyQueuedRankCheckTasks } from "./queued-results";
+import { QUEUED_DEADLINE_REASON } from "./queued-timeouts";
+
+function retainedSourceFixture(projectId: string, keywordId: string) {
+  const source = definitionSourceFixture();
+  source.projectId = projectId;
+  source.keywordId = keywordId;
+  source.target.domain = "example.com";
+  source.target.targetUrl = null;
+  if (!source.policy.config) throw new Error("Synthetic policy configuration is required.");
+  source.policy.config.adapters = hostDefinitionAdapters();
+  return source;
+}
+
+const mocks = vi.hoisted(() => {
+  type Task = ReturnType<typeof makeTask>;
+  function makeTask(
+    id: string,
+    state: string,
+    error: string | null,
+    costCents = 1.2,
+  ): {
+    batch: {
+      connection: {
+        costPerCheckCents: null;
+        credentialsEncrypted: string;
+        credentialSource: string;
+        id: string;
+      };
+      connectionId: string;
+      credentialId: string | null;
+      credentialKind: string | null;
+      priority: string;
+      source: string | null;
+      trigger: string | null;
+    };
+    costCents: number | null;
+    error: string | null;
+    id: string;
+    keyword: {
+      id: string;
+      project: { defaults: { frequency: string }; domain: string };
+      projectId: string;
+      publicId: string;
+      rankChecks: Array<{ position: number; rankingUrl: string; raw: null }>;
+      schedule: null;
+      targetUrl: null;
+      text: string;
+    };
+    keywordId: string;
+    providerTaskId: string;
+    persistenceLeaseExpiresAt: Date | null;
+    persistenceLeaseOwner: string | null;
+    rankCheck: { requestedDepth: number; status: string; estimatedCostCents: number | null };
+    rankCheckId: string;
+    state: string;
+  } {
+    return {
+      batch: {
+        connection: {
+          costPerCheckCents: null,
+          credentialsEncrypted: "encrypted",
+          credentialSource: "own",
+          id: "connection_1",
+        },
+        connectionId: "connection_1",
+        credentialId: null,
+        credentialKind: null,
+        priority: "high",
+        source: null,
+        trigger: null,
+      },
+      costCents,
+      error,
+      id,
+      keyword: {
+        id: `keyword_${id}`,
+        project: { defaults: { frequency: "daily" }, domain: "example.com" },
+        projectId: "project_1",
+        publicId: `kw_a${id.padEnd(23, "0").slice(0, 23)}`,
+        rankChecks: [{ position: 8, rankingUrl: "https://example.com/old", raw: null }],
+        schedule: null,
+        targetUrl: null,
+        text: `private ${id}`,
+      },
+      keywordId: `keyword_${id}`,
+      providerTaskId: `provider_${id}`,
+      persistenceLeaseExpiresAt:
+        state === "persisting" ? new Date("2026-01-01T00:00:00.000Z") : null,
+      persistenceLeaseOwner: state === "persisting" ? `abandoned_${id}` : null,
+      rankCheck: { requestedDepth: 100, status: "running", estimatedCostCents: 0.725 },
+      rankCheckId: `rank_check_${id}`,
+      state,
+    };
+  }
+  const tasks: Task[] = [
+    makeTask("success", "persisting", null),
+    makeTask("failure", "provider_failed", "one task was rejected"),
+  ];
+  const prisma = {
+    $queryRaw: vi.fn(
+      async (
+        query: { strings?: string[]; values?: unknown[] } | TemplateStringsArray,
+        ...parameters: unknown[]
+      ) => {
+        const sql = (
+          Array.isArray(query) ? query : ((query as { strings?: string[] }).strings ?? [])
+        ).join("?");
+        const values = Array.isArray(query)
+          ? parameters
+          : ((query as { values?: unknown[] }).values ?? []);
+        if (sql.includes("FROM measurement_execution_bindings")) {
+          const task = tasks.find((candidate) => candidate.rankCheckId === values[2]);
+          if (!task) return [];
+          const source = retainedSourceFixture(task.keyword.projectId, task.keywordId);
+          const head = definitionHeadFixture(source);
+          return [
+            {
+              id: `binding-${task.id}`,
+              projectId: source.projectId,
+              keywordId: source.keywordId,
+              targetRevision: head.targetRevision,
+              policyRevision: head.policyRevision,
+              owner: {
+                rankCheckId: task.rankCheckId,
+                executionKey: `queued-definition:${task.id}`,
+                queuedTaskId: task.id,
+              },
+              source,
+              request: frozenRequest(source, "dataforseo"),
+              capturedAt: new Date("2026-06-01T00:00:00Z"),
+            },
+          ];
+        }
+        if (
+          sql.trimStart().startsWith('SELECT "id"') &&
+          sql.includes('FROM "queued_rank_check_tasks"')
+        ) {
+          const task = tasks.find((candidate) => candidate.id === String(values[0]));
+          return task &&
+            task.state === "persisting" &&
+            task.persistenceLeaseOwner === values[1] &&
+            task.persistenceLeaseExpiresAt &&
+            task.persistenceLeaseExpiresAt > new Date()
+            ? [{ id: task.id }]
+            : [];
+        }
+        if (sql.includes("\"state\" = 'persisting'")) {
+          const databaseNow = new Date();
+          const owner = String(values[1]);
+          const taskId = String(values[2]);
+          const task = tasks.find((candidate) => candidate.id === taskId);
+          if (
+            !task ||
+            !(
+              (task.persistenceLeaseExpiresAt === null &&
+                task.persistenceLeaseOwner === null &&
+                ["provider_failed", "ready"].includes(task.state)) ||
+              (task.persistenceLeaseExpiresAt !== null &&
+                task.persistenceLeaseOwner !== null &&
+                task.persistenceLeaseExpiresAt <= databaseNow &&
+                task.state === "persisting")
+            )
+          ) {
+            return [];
+          }
+          task.persistenceLeaseOwner = owner;
+          task.persistenceLeaseExpiresAt = new Date(databaseNow.getTime() + Number(values[0]));
+          task.state = "persisting";
+          return [{ expiresAt: task.persistenceLeaseExpiresAt }];
+        }
+        const hasError = sql.includes('"error" =');
+        const nextState = String(values[0]);
+        const taskId = String(values[hasError ? 2 : 1]);
+        const owner = values[hasError ? 3 : 2];
+        const from = values.slice(hasError ? 4 : 3).map(String);
+        const task = tasks.find((candidate) => candidate.id === taskId);
+        if (!task || task.persistenceLeaseOwner !== owner || !from.includes(task.state)) return [];
+        task.state = nextState;
+        task.persistenceLeaseOwner = null;
+        task.persistenceLeaseExpiresAt = null;
+        return [{ state: nextState }];
+      },
+    ),
+    $transaction: vi.fn(async (callback: (tx: unknown) => unknown) => callback(prisma)),
+    queuedRankCheckBatch: {
+      findUnique: vi.fn(async () => ({ state: "submitted" })),
+    },
+    queuedRankCheckTask: {
+      findFirst: vi.fn(async () => null),
+      findMany: vi.fn(async ({ where }: { where: { state: { in: string[] } } }) =>
+        tasks
+          .filter((task) => where.state.in.includes(task.state))
+          .map((task) => ({ id: task.id })),
+      ),
+      findUniqueOrThrow: vi.fn(async ({ where }: { where: { id: string } }) => {
+        const task = tasks.find((candidate) => candidate.id === where.id);
+        if (!task) throw new Error("missing task");
+        return task;
+      }),
+      update: vi.fn(
+        async ({ data, where }: { data: { state?: string }; where: { id: string } }) => {
+          const task = tasks.find((candidate) => candidate.id === where.id);
+          if (task && data.state) task.state = data.state;
+          return task;
+        },
+      ),
+      updateMany: vi.fn(
+        async ({
+          data,
+          where,
+        }: {
+          data: Record<string, unknown>;
+          where: {
+            id: string;
+            OR?: Array<Record<string, unknown>>;
+            persistenceLeaseOwner?: string;
+            state?: string | { in: string[] };
+          };
+        }) => {
+          const task = tasks.find((candidate) => candidate.id === where.id);
+          const stateMatches = (value: unknown) =>
+            value === undefined ||
+            (typeof value === "string"
+              ? task?.state === value
+              : (value as { in?: string[] }).in?.includes(task?.state ?? "") !== false);
+          const clauseMatches = (clause: Record<string, unknown>) =>
+            stateMatches(clause.state) &&
+            (!("persistenceLeaseOwner" in clause) ||
+              (clause.persistenceLeaseOwner !== null &&
+              typeof clause.persistenceLeaseOwner === "object"
+                ? task?.persistenceLeaseOwner !== null
+                : task?.persistenceLeaseOwner === clause.persistenceLeaseOwner)) &&
+            (!("persistenceLeaseExpiresAt" in clause) ||
+              (clause.persistenceLeaseExpiresAt === null
+                ? task?.persistenceLeaseExpiresAt === null
+                : Boolean(
+                    task?.persistenceLeaseExpiresAt &&
+                      task.persistenceLeaseExpiresAt <=
+                        (clause.persistenceLeaseExpiresAt as { lte: Date }).lte,
+                  )));
+          const matches =
+            task &&
+            stateMatches(where.state) &&
+            (where.persistenceLeaseOwner === undefined ||
+              task.persistenceLeaseOwner === where.persistenceLeaseOwner) &&
+            (!where.OR || where.OR.some(clauseMatches));
+          if (!task || !matches) return { count: 0 };
+          if ("state" in data) task.state = String(data.state);
+          if ("persistenceLeaseOwner" in data) {
+            task.persistenceLeaseOwner = data.persistenceLeaseOwner as string | null;
+          }
+          if ("persistenceLeaseExpiresAt" in data) {
+            task.persistenceLeaseExpiresAt = data.persistenceLeaseExpiresAt as Date | null;
+          }
+          return { count: 1 };
+        },
+      ),
+    },
+    rankCheck: {
+      findFirst: vi.fn(),
+    },
+  };
+  return {
+    consumeProviderLimit: vi.fn(),
+    defer: vi.fn(),
+    fetchResult: vi.fn(),
+    finalize: vi.fn(),
+    makeTask,
+    persistFailed: vi.fn(),
+    persistRankCheck: vi.fn(),
+    prisma,
+    resolveCredentials: vi.fn(),
+    tasks,
+    writeCooldown: vi.fn(),
+  };
+});
+
+vi.mock("@/lib/db/prisma", () => ({ prisma: mocks.prisma }));
+vi.mock("@/lib/providers/credentials", () => ({
+  resolveProviderCredentials: mocks.resolveCredentials,
+}));
+vi.mock("@/lib/providers/rate-limit", () => ({
+  consumeProviderLimit: mocks.consumeProviderLimit,
+  writeCooldown: mocks.writeCooldown,
+}));
+vi.mock("@/lib/providers/serp/dataforseo-queued", () => ({
+  dataForSeoQueuedTaskTag: (id: string) => `bisibility:rank:${id}`,
+  fetchDataForSeoQueuedResult: mocks.fetchResult,
+}));
+vi.mock("./queued-lifecycle", () => ({
+  deferQueuedRankCheckBatch: mocks.defer,
+  finalizeQueuedBatchState: mocks.finalize,
+}));
+vi.mock("./scheduler-mode", () => ({
+  dispatcherClaimsAllowed: (mode: string) => mode === "dispatcher",
+  rankCheckSchedulerMode: () => "dispatcher",
+}));
+vi.mock("./runner", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./runner")>();
+  return {
+    ...original,
+    persistFailedRankCheck: mocks.persistFailed,
+    persistRankCheck: mocks.persistRankCheck,
+  };
+});
+
+describe("queued result persistence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.tasks.splice(
+      0,
+      mocks.tasks.length,
+      mocks.makeTask("success", "persisting", null),
+      mocks.makeTask("failure", "provider_failed", "one task was rejected"),
+    );
+    mocks.resolveCredentials.mockReturnValue({ login: "login", password: "password" });
+    mocks.prisma.rankCheck.findFirst.mockResolvedValue({
+      position: 8,
+      rankingUrl: "https://example.com/old",
+      raw: null,
+    });
+    mocks.consumeProviderLimit.mockResolvedValue({
+      accountKey: "dataforseo:account",
+      cooling: false,
+      remaining: 100,
+      resetAt: Date.now() + 60_000,
+      success: true,
+    });
+    mocks.fetchResult.mockResolvedValue({
+      status_code: 20000,
+      tasks: [
+        {
+          cost: 0.012,
+          result: [
+            {
+              items: [
+                {
+                  domain: "example.com",
+                  rank_absolute: 4,
+                  rank_group: 3,
+                  type: "organic",
+                  url: "https://example.com/new",
+                },
+              ],
+            },
+          ],
+          status_code: 20000,
+        },
+      ],
+    });
+    mocks.persistRankCheck.mockImplementation(async (context) => {
+      const task = mocks.tasks.find(
+        (candidate) => candidate.rankCheckId === context.existingRankCheckId,
+      );
+      if (task) task.rankCheck.status = "completed";
+      await context.persistenceFinalize?.(mocks.prisma);
+      return {};
+    });
+    mocks.persistFailed.mockImplementation(async (input) => {
+      const task = mocks.tasks.find(
+        (candidate) => candidate.rankCheckId === input.existingRankCheckId,
+      );
+      if (task) task.rankCheck.status = "failed";
+      await input.persistenceFinalize?.(mocks.prisma);
+      return {};
+    });
+    mocks.finalize.mockResolvedValue({
+      completed: 1,
+      failed: 1,
+      pending: 0,
+      state: "failed",
+    });
+    mocks.defer.mockImplementation(async () => {
+      for (const task of mocks.tasks) {
+        if (["persisting", "provider_failed", "ready"].includes(task.state)) {
+          task.rankCheck.status = "deferred";
+          task.state = "deferred";
+        }
+      }
+      return { completed: 1, failed: 0, pending: 0, state: "deferred" };
+    });
+  });
+
+  it.each([0, 0.725, null])(
+    "retains estimate %s without inferring a free submission from retrieval",
+    async (estimate) => {
+      mocks.tasks.splice(1);
+      mocks.tasks[0].costCents = null;
+      mocks.tasks[0].rankCheck.estimatedCostCents = estimate;
+      mocks.fetchResult.mockResolvedValue({
+        status_code: 20000,
+        cost: 0,
+        tasks: [{ status_code: 20000, cost: 0, result: [{ items: [] }] }],
+      });
+      await persistReadyQueuedRankCheckTasks("batch_1");
+      expect(mocks.persistRankCheck.mock.calls[0]?.[1]).toMatchObject({
+        rankCheck: { costCents: null, billingUnits: 1, estimatedCostCents: estimate },
+        providerCostCents: undefined,
+      });
+    },
+  );
+
+  it("never retrieves with a retained own key when hosted recovery evidence is absent", async () => {
+    const task = mocks.makeTask("hosted-retained", "ready", null);
+    task.batch.connection.credentialSource = "hosted";
+    mocks.tasks.splice(0, mocks.tasks.length, task);
+    await persistReadyQueuedRankCheckTasks("batch_1");
+    expect(mocks.resolveCredentials).not.toHaveBeenCalled();
+    expect(mocks.fetchResult).not.toHaveBeenCalled();
+  });
+
+  it("denies movement comparison when the original result has no scope/time proof", async () => {
+    mocks.tasks.splice(1);
+    await persistReadyQueuedRankCheckTasks("batch_1");
+    expect(mocks.persistRankCheck.mock.calls[0]?.[1]).toMatchObject({ comparisonAllowed: false });
+    expect(mocks.prisma.rankCheck.findFirst).not.toHaveBeenCalled();
+  });
+  it("uses the retained request domain after the project's current domain changes", async () => {
+    mocks.tasks.splice(1);
+    mocks.tasks[0].keyword.project.domain = "changed.example.com";
+    await persistReadyQueuedRankCheckTasks("batch_1");
+    expect(mocks.persistRankCheck).toHaveBeenCalledOnce();
+    expect(mocks.persistRankCheck.mock.calls[0]?.[1]).toMatchObject({
+      comparisonAllowed: false,
+      rankCheck: { position: 3, rankingUrl: "https://example.com/new" },
+    });
+  });
+
+  it("looks up only the retained target predecessor when response scope and time are proven", async () => {
+    mocks.tasks.splice(1);
+    mocks.fetchResult.mockResolvedValue({
+      status_code: 20000,
+      tasks: [
+        {
+          status_code: 20000,
+          cost: 0.012,
+          data: {
+            location_name: "Synthetic",
+            language_code: "en",
+            device: "desktop",
+            stop_crawl_on_match: [],
+          },
+          result: [
+            {
+              datetime: new Date().toISOString(),
+              location_name: "Synthetic",
+              language_code: "en",
+              device: "desktop",
+              items: [
+                {
+                  type: "organic",
+                  domain: "example.com",
+                  rank_group: 3,
+                  rank_absolute: 4,
+                  url: "https://example.com/new",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    await persistReadyQueuedRankCheckTasks("batch_1");
+    expect(mocks.prisma.rankCheck.findFirst).toHaveBeenCalledWith({
+      include: { observationRun: true },
+      orderBy: [{ checkedAt: "desc" }, { id: "desc" }],
+      where: {
+        keywordId: "keyword_success",
+        status: "completed",
+        id: { not: "rank_check_success" },
+      },
+    });
+    // The previous row itself remains legacy unknown, despite the current response proof.
+    expect(mocks.persistRankCheck.mock.calls[0]?.[1]).toMatchObject({ comparisonAllowed: false });
+  });
+
+  it("recovers a persisting task, isolates partial failure, and records actual cost once", async () => {
+    await expect(persistReadyQueuedRankCheckTasks("batch_1")).resolves.toEqual({
+      completed: 1,
+      failed: 1,
+      pending: 0,
+      state: "failed",
+    });
+
+    expect(mocks.persistRankCheck).toHaveBeenCalledOnce();
+    expect(mocks.persistRankCheck.mock.calls[0]?.[1]).toMatchObject({
+      providerCostCents: 1.2,
+      // The retained predecessor has a rank only, without immutable scope/quality proof.
+      comparisonAllowed: false,
+      rankCheck: {
+        billingUnits: 1,
+        costCents: 1.2,
+        normalizationVersion: "v2",
+        position: 3,
+        rankingUrl: "https://example.com/new",
+        raw: {
+          normalization: {
+            anomalies: [],
+            outcome: "match",
+            version: "v2",
+          },
+        },
+      },
+    });
+    // No scope echo or observation time: a legacy rank cannot become a comparable baseline.
+    expect(mocks.prisma.rankCheck.findFirst).not.toHaveBeenCalled();
+    expect(mocks.persistFailed).toHaveBeenCalledOnce();
+    expect(mocks.persistFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: "one task was rejected",
+        providerCostCents: 1.2,
+      }),
+    );
+    expect(mocks.tasks.map((task) => task.state)).toEqual(["completed", "failed"]);
+
+    await persistReadyQueuedRankCheckTasks("batch_1");
+    expect(mocks.persistRankCheck).toHaveBeenCalledOnce();
+    expect(mocks.persistFailed).toHaveBeenCalledOnce();
+  });
+
+  it("persists results under the batch's stored source, trigger and credential", async () => {
+    mocks.tasks.splice(0, mocks.tasks.length, mocks.makeTask("success", "ready", null));
+    Object.assign(mocks.tasks[0].batch, {
+      credentialId: "key_1",
+      credentialKind: "project_key",
+      source: "api",
+      trigger: "manual",
+    });
+
+    await persistReadyQueuedRankCheckTasks("batch_1");
+
+    expect(mocks.persistRankCheck).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerUsage: expect.objectContaining({
+          context: expect.objectContaining({ source: "api", trigger: "manual" }),
+          credential: { id: "key_1", kind: "project_key" },
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("attributes a legacy batch without stored columns to app/scheduled with no credential", async () => {
+    mocks.tasks.splice(0, mocks.tasks.length, mocks.makeTask("failure", "provider_failed", "boom"));
+
+    await persistReadyQueuedRankCheckTasks("batch_1");
+
+    const usage = mocks.persistFailed.mock.calls[0]?.[0].providerUsage;
+    expect(usage.context).toEqual({
+      correlationId: "failure",
+      feature: "rank_check",
+      projectId: "project_1",
+      source: "app",
+      trigger: "scheduled",
+    });
+    expect(usage.credential).toBeUndefined();
+  });
+
+  it("persists a billable empty SERP without failing or retrying the task", async () => {
+    mocks.tasks.splice(0, mocks.tasks.length, mocks.makeTask("empty", "ready", null));
+    mocks.fetchResult.mockResolvedValue({
+      status_code: 20000,
+      tasks: [{ status_code: 40102, cost: 0.002, result: [{ items: null }] }],
+    });
+    await persistReadyQueuedRankCheckTasks("batch_1");
+    expect(mocks.persistFailed).not.toHaveBeenCalled();
+    expect(mocks.persistRankCheck).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        rankCheck: expect.objectContaining({ position: null, rankingUrl: null, costCents: 0.2 }),
+      }),
+    );
+    expect(mocks.tasks[0]?.state).toBe("completed");
+    expect(mocks.fetchResult).toHaveBeenCalledOnce();
+  });
+
+  it("selects the minimum rank_group from all matching queued results", async () => {
+    mocks.tasks.splice(0, mocks.tasks.length, mocks.makeTask("success", "ready", null));
+    mocks.fetchResult.mockResolvedValue({
+      status_code: 20000,
+      tasks: [
+        {
+          cost: 0.012,
+          result: [
+            {
+              items: [
+                {
+                  domain: "example.com",
+                  rank_absolute: 3,
+                  rank_group: 8,
+                  type: "organic",
+                  url: "https://example.com/later",
+                },
+                {
+                  domain: "www.example.com",
+                  rank_absolute: 7,
+                  rank_group: 2,
+                  type: "organic",
+                  url: "https://www.example.com/best",
+                },
+              ],
+            },
+          ],
+          status_code: 20000,
+        },
+      ],
+    });
+    mocks.finalize.mockResolvedValue({
+      completed: 1,
+      failed: 0,
+      pending: 0,
+      state: "completed",
+    });
+
+    await persistReadyQueuedRankCheckTasks("batch_1");
+
+    expect(mocks.persistRankCheck).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        rankCheck: expect.objectContaining({
+          position: 2,
+          rankingUrl: "https://www.example.com/best",
+        }),
+      }),
+    );
+    expect(mocks.persistFailed).not.toHaveBeenCalled();
+  });
+
+  it("fails a queued result when a matching organic item lacks rank_group", async () => {
+    mocks.tasks.splice(0, mocks.tasks.length, mocks.makeTask("success", "ready", null));
+    mocks.fetchResult.mockResolvedValue({
+      status_code: 20000,
+      tasks: [
+        {
+          cost: 0.012,
+          result: [
+            {
+              items: [
+                {
+                  domain: "example.com",
+                  rank_absolute: 1,
+                  type: "organic",
+                  url: "https://example.com/malformed",
+                },
+              ],
+            },
+          ],
+          status_code: 20000,
+        },
+      ],
+    });
+    mocks.finalize.mockResolvedValue({
+      completed: 0,
+      failed: 1,
+      pending: 0,
+      state: "failed",
+    });
+
+    await persistReadyQueuedRankCheckTasks("batch_1");
+
+    expect(mocks.persistRankCheck).not.toHaveBeenCalled();
+    expect(mocks.persistFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.stringContaining("organic_rank_missing"),
+      }),
+    );
+    expect(mocks.tasks[0]?.state).toBe("failed");
+  });
+
+  it("leaves retryable result failures pending for the next workflow timer", async () => {
+    mocks.tasks.splice(0, mocks.tasks.length, mocks.makeTask("success", "ready", null));
+    mocks.fetchResult.mockRejectedValue(new DataForSeoError("temporary 503", true, 503));
+    mocks.finalize.mockResolvedValue({
+      completed: 0,
+      failed: 0,
+      pending: 1,
+      state: "submitted",
+    });
+
+    await expect(persistReadyQueuedRankCheckTasks("batch_1")).resolves.toMatchObject({
+      pending: 1,
+    });
+
+    expect(mocks.fetchResult).toHaveBeenCalledOnce();
+    expect(mocks.writeCooldown).toHaveBeenCalledWith("dataforseo:account");
+    expect(mocks.persistFailed).not.toHaveBeenCalled();
+    expect(mocks.tasks[0]?.state).toBe("ready");
+
+    mocks.consumeProviderLimit.mockResolvedValueOnce({
+      accountKey: "dataforseo:account",
+      cooling: true,
+      remaining: 0,
+      resetAt: Date.now() + 60_000,
+      success: false,
+    });
+    await expect(persistReadyQueuedRankCheckTasks("batch_1")).resolves.toMatchObject({
+      pending: 1,
+    });
+    expect(mocks.fetchResult).toHaveBeenCalledOnce();
+    expect(mocks.persistFailed).not.toHaveBeenCalled();
+    expect(mocks.tasks[0]?.state).toBe("ready");
+  });
+
+  it("records terminal failed-result cost once when submission cost was zero", async () => {
+    mocks.tasks.splice(0, mocks.tasks.length, mocks.makeTask("failure", "ready", null, 0));
+    mocks.fetchResult.mockResolvedValue({
+      status_code: 20000,
+      tasks: [
+        {
+          cost: 0.024,
+          status_code: 40501,
+          status_message: "Queued task failed.",
+        },
+      ],
+    });
+    mocks.finalize.mockResolvedValue({
+      completed: 0,
+      failed: 1,
+      pending: 0,
+      state: "failed",
+    });
+
+    await Promise.all([
+      persistReadyQueuedRankCheckTasks("batch_1"),
+      persistReadyQueuedRankCheckTasks("batch_1"),
+    ]);
+    await persistReadyQueuedRankCheckTasks("batch_1");
+
+    expect(mocks.fetchResult).toHaveBeenCalledOnce();
+    expect(mocks.persistFailed).toHaveBeenCalledOnce();
+    expect(mocks.persistFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: "Queued task failed.",
+        providerCostCents: 2.4,
+      }),
+    );
+    expect(mocks.tasks[0]?.state).toBe("failed");
+  });
+
+  it("stops task GETs at the absolute deadline and runs canonical cleanup", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-29T00:14:59.000Z"));
+    mocks.tasks.splice(
+      0,
+      mocks.tasks.length,
+      mocks.makeTask("first", "ready", null),
+      mocks.makeTask("later", "ready", null),
+    );
+    mocks.fetchResult.mockImplementationOnce(async () => {
+      vi.setSystemTime(new Date("2026-07-29T00:15:00.000Z"));
+      return {
+        status_code: 20000,
+        tasks: [{ cost: 0.012, result: [{ items: [] }], status_code: 20000 }],
+      };
+    });
+    mocks.finalize.mockResolvedValue({
+      completed: 1,
+      failed: 0,
+      pending: 1,
+      state: "ready",
+    });
+
+    await persistReadyQueuedRankCheckTasks("batch_1", {
+      deadlineAt: new Date("2026-07-29T00:15:00.000Z"),
+    });
+
+    expect(mocks.fetchResult).toHaveBeenCalledOnce();
+    expect(mocks.persistRankCheck).toHaveBeenCalledOnce();
+    expect(mocks.tasks[1]?.state).toBe("deferred");
+    expect(mocks.defer).toHaveBeenCalledWith("batch_1", QUEUED_DEADLINE_REASON);
+    expect(mocks.finalize).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("does not regress a task deferred while a late result attempt was running", async () => {
+    mocks.tasks.splice(0, mocks.tasks.length, mocks.makeTask("success", "ready", null));
+    mocks.persistRankCheck.mockImplementationOnce(async () => {
+      const task = mocks.tasks[0];
+      if (task) {
+        task.rankCheck.status = "deferred";
+        task.state = "deferred";
+      }
+      throw new (await import("./persistence-errors")).RankCheckClosedBeforePersistenceError();
+    });
+    mocks.finalize.mockResolvedValue({
+      completed: 0,
+      failed: 0,
+      pending: 0,
+      state: "deferred",
+    });
+
+    await persistReadyQueuedRankCheckTasks("batch_1");
+
+    expect(mocks.tasks[0]?.state).toBe("deferred");
+    expect(mocks.persistFailed).not.toHaveBeenCalled();
+  });
+
+  it("releases a cancelled owner before a later attempt persists", async () => {
+    mocks.tasks.splice(0, mocks.tasks.length, mocks.makeTask("success", "ready", null));
+    const controller = new AbortController();
+    const cancellation = new Error("activity cancelled");
+    mocks.fetchResult.mockImplementation(
+      async (_credentials: unknown, _providerTaskId: string, options: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+            once: true,
+          });
+        }),
+    );
+
+    const first = persistReadyQueuedRankCheckTasks("batch_1", {
+      signal: controller.signal,
+    });
+    const rejection = expect(first).rejects.toBe(cancellation);
+    await vi.waitFor(() => expect(mocks.fetchResult).toHaveBeenCalledOnce());
+    controller.abort(cancellation);
+    await rejection;
+
+    expect(mocks.tasks[0]?.state).toBe("ready");
+    expect(mocks.tasks[0]?.persistenceLeaseOwner).toBeNull();
+    expect(mocks.persistRankCheck).not.toHaveBeenCalled();
+
+    mocks.fetchResult.mockResolvedValue({
+      status_code: 20000,
+      tasks: [
+        {
+          cost: 0.012,
+          result: [{ items: [] }],
+          status_code: 20000,
+        },
+      ],
+    });
+    await persistReadyQueuedRankCheckTasks("batch_1");
+
+    expect(mocks.persistRankCheck).toHaveBeenCalledOnce();
+    expect(mocks.tasks[0]?.state).toBe("completed");
+  });
+});
+
+vi.mock("@/lib/provider-usage/admission-extension", async () => ({
+  ownAdmission: {
+    ...(await import("@/lib/provider-usage/byok-test-evidence")).testOwnAdmission,
+    assertRetrieval: async () => false,
+  },
+}));

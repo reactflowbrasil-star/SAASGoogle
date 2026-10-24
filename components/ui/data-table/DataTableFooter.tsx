@@ -1,0 +1,100 @@
+"use client";
+
+import { IconButton } from "@/components/ui/IconButton";
+import { MenuSelect } from "@/components/ui/MenuSelect";
+import { cn } from "@/lib/ui/cn";
+import { CaretLeftIcon as CaretLeft } from "@phosphor-icons/react/dist/csr/CaretLeft";
+import { CaretRightIcon as CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
+import { useTranslations } from "next-intl";
+import type { ReactNode } from "react";
+import { dataTableFooterHeight } from "./data-table-density";
+import type { DataTablePagination } from "./data-table-types";
+
+type DataTableFooterProps = {
+  footerStart?: ReactNode;
+  layout: "auto" | "fill";
+  onPaginationChange?: (next: { page: number; pageSize: number }) => void;
+  page: number;
+  pagination?: DataTablePagination | null;
+  rowCount: number;
+};
+
+export function DataTableFooter({
+  footerStart,
+  layout,
+  onPaginationChange,
+  page,
+  pagination,
+  rowCount,
+}: Readonly<DataTableFooterProps>) {
+  const t = useTranslations("shared.controls.dataTable");
+  if (!pagination && !(layout === "fill" && footerStart)) return null;
+  const pageSize = pagination?.pageSize ?? 1;
+  const pageCount = Math.max(1, Math.ceil(rowCount / pageSize));
+  const start = rowCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = rowCount === 0 ? 0 : Math.min(rowCount, page * pageSize);
+  const pageSizeOptions = pagination
+    ? [...new Set([...pagination.pageSizeOptions, pagination.pageSize])]
+    : [];
+  return (
+    <div
+      className={cn(
+        "sticky left-0 z-10 flex w-full min-w-0 shrink-0 flex-wrap items-center justify-between gap-x-5 gap-y-2 border-t border-border bg-bg-elev px-4 py-2.5",
+        layout === "fill" && "bottom-0 mt-auto",
+      )}
+      data-testid="data-table-footer"
+      style={{ minHeight: dataTableFooterHeight }}
+    >
+      {footerStart !== undefined ? (
+        <div className="min-w-0 flex-1 basis-full text-[12px] text-fg-muted sm:basis-auto">
+          {footerStart}
+        </div>
+      ) : null}
+      {pagination ? (
+        <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-x-4 gap-y-2">
+          <MenuSelect
+            ariaLabel={t("rowsPerPage")}
+            compact
+            leadingLabel={t("rows")}
+            onChange={(value) =>
+              onPaginationChange?.({ page: 1, pageSize: Number.parseInt(value, 10) })
+            }
+            options={pageSizeOptions.map((value) => ({
+              label: t("number", { value }),
+              value: String(value),
+            }))}
+            triggerClassName="border-0 bg-transparent px-0 font-sans tabular-nums"
+            value={String(pagination.pageSize)}
+          />
+          <span className="whitespace-nowrap font-sans tabular-nums text-[12px] text-fg-muted">
+            {t("pageRange", { end, start, total: rowCount })}
+          </span>
+          <div className="flex gap-1">
+            <IconButton
+              variant="outline"
+              size="small"
+              aria-label={t("previousPage")}
+              className="size-7.5 min-h-7.5 p-0"
+              disabled={page <= 1 || !onPaginationChange}
+              onClick={() => onPaginationChange?.({ page: page - 1, pageSize })}
+              type="button"
+            >
+              <CaretLeft aria-hidden size={12} weight="regular" />
+            </IconButton>
+            <IconButton
+              variant="outline"
+              size="small"
+              aria-label={t("nextPage")}
+              className="size-7.5 min-h-7.5 p-0"
+              disabled={page >= pageCount || !onPaginationChange}
+              onClick={() => onPaginationChange?.({ page: page + 1, pageSize })}
+              type="button"
+            >
+              <CaretRight aria-hidden size={12} weight="regular" />
+            </IconButton>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}

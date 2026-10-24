@@ -1,0 +1,333 @@
+import { renderWithGettingStartedMessages as render } from "@/i18n/test-support/render-with-feature-messages";
+import { track } from "@/lib/analytics/client";
+import type { SetupContext, SetupCta, SetupStepState } from "@/lib/getting-started/setup-steps";
+import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { GettingStartedChecklist } from "./GettingStartedChecklist";
+
+vi.mock("@/lib/analytics/client", () => ({ track: vi.fn() }));
+
+const now = new Date("2026-08-30T17:00:00.000Z");
+const competitorActions = {
+  addManualCompetitor: vi.fn().mockResolvedValue({}),
+  confirmSuggestedCompetitor: vi.fn().mockResolvedValue({}),
+  dismissCompetitorSuggestion: vi.fn().mockResolvedValue({}),
+  skipCompetitorSetup: vi.fn().mockResolvedValue({}),
+};
+
+function context(overrides: Partial<SetupContext> = {}): SetupContext {
+  return {
+    completedCheckCount: 0,
+    competitorSetupOutcome: null,
+    competitorSuggestions: [],
+    inFlightBatch: null,
+    keywordCount: 0,
+    keywordIds: [],
+    project: { exists: false, name: null, publicRef: null },
+    providerExists: false,
+    schedule: { mode: "manual" },
+    ...overrides,
+  };
+}
+
+function contextFor(state: SetupStepState): SetupContext {
+  const ready = {
+    keywordCount: 1,
+    project: {
+      exists: true,
+      name: "Project",
+      publicRef: "prj_01h00000000000000000000000" as SetupContext["project"]["publicRef"],
+    },
+  };
+  if (state.family === "done")
+    return context({
+      ...ready,
+      completedCheckCount: 1,
+      competitorSetupOutcome: "confirmed",
+      providerExists: true,
+    });
+  if (state.family === "blocked") return context(ready);
+  if (state.family === "running")
+    return context({
+      ...ready,
+      providerExists: true,
+      inFlightBatch: {
+        completed: state.progress.completed,
+        rankCheckIds: [],
+        total: state.progress.total,
+      },
+    });
+  if (state.family === "waiting")
+    return context({
+      ...ready,
+      providerExists: true,
+      schedule: { mode: "scheduled", ...state.when },
+    });
+  return context({ ...ready, providerExists: true });
+}
+
+function setViewport(desktop: boolean) {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: query === "(min-width:1024px)" ? desktop : false,
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+}
+
+function setup(state: SetupStepState, desktop = true) {
+  setViewport(desktop);
+  const onCta = vi.fn<(cta: SetupCta) => void>();
+  render(
+    <GettingStartedChecklist
+      competitorActions={competitorActions}
+      context={contextFor(state)}
+      now={now}
+      onCta={onCta}
+    />,
+  );
+  return { onCta, user: userEvent.setup() };
+}
+
+beforeEach(() => {
+  setViewport(true);
+  vi.mocked(track).mockClear();
+});
+
+describe("GettingStartedChecklist", () => {
+  it("selects the first incomplete step by default and removes the inner progress header", () => {
+    render(
+      <GettingStartedChecklist
+        competitorActions={competitorActions}
+        context={context({
+          keywordCount: 1,
+          project: {
+            exists: true,
+            name: "Project",
+            publicRef: "prj_01h00000000000000000000000",
+          },
+        })}
+        now={now}
+        onCta={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Connect a data source" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByText(/Search Console adds free traffic data/)).toBeVisible();
+    expect(screen.queryByText("Connect the source for rank data")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Connect data source" }).querySelector("svg"),
+    ).not.toBeNull();
+    expect(screen.queryByText(/of 4 complete/)).toBeNull();
+    expect(screen.queryByText("Select a step to open its walkthrough.")).toBeNull();
+  });
+
+  it("falls back to the first step when every step is done", () => {
+    setup({ family: "done" });
+    expect(screen.getByRole("button", { name: "Create your project" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByText(/^This happened when you created the project/)).toBeVisible();
+    expect(screen.queryByText("Your project was created")).toBeNull();
+    expect(screen.getByText(/^This happened when you created the project/)).not.toHaveClass("mb-3");
+  });
+
+  it("keeps written content in the expanded left row and only video anatomy on the right", () => {
+    setup({ cta: { id: "run_first_check" }, family: "action" });
+    const row = screen.getByRole("button", { name: "Run your first rank check" });
+    const panel = document.getElementById(row.getAttribute("aria-controls") ?? "");
+    const video = screen.getByRole("region", { name: "Video walkthrough" });
+
+    expect(panel).not.toBeNull();
+    expect(
+      within(panel as HTMLElement).getByText(/Run the first check to collect positions/),
+    ).toBeVisible();
+    expect(
+      within(panel as HTMLElement).queryByText("Collect the first keyword positions"),
+    ).toBeNull();
+    const player = within(video).getByTestId("setup-video");
+    expect(player).toHaveAttribute("controls");
+    expect(player).toHaveAttribute("preload", "none");
+    expect(player).toHaveAttribute("data-video-ref", "first-check");
+    expect(within(video).queryByText("Video walkthroughs")).not.toBeInTheDocument();
+    expect(within(video).queryByText("Collect the first keyword positions")).toBeNull();
+    expect(video).toHaveClass("w-full", "overflow-hidden", "rounded-card");
+    expect(video.parentElement).toHaveClass("lg:flex", "p-5", "self-start");
+    expect(screen.getByRole("button", { name: "Run first check" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Run first check" }).querySelector("svg")).toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Run your first rank check" })
+        .parentElement?.querySelector("svg"),
+    ).toBeNull();
+  });
+
+  it("keeps every expansion panel mounted with the source transitions", () => {
+    setup({ cta: { id: "run_first_check" }, family: "action" });
+    const panels = screen.getAllByTestId(/^setup-step-panel-/);
+
+    expect(panels).toHaveLength(5);
+    expect(panels[0]).toHaveClass("grid", "grid-rows-[0fr]", "opacity-0", "overflow-hidden");
+    expect(panels[3]).toHaveClass("grid-rows-[1fr]", "opacity-100");
+    expect(panels[3]).toHaveClass(
+      "transition-none",
+      "motion-safe:[transition:grid-template-rows_.24s_cubic-bezier(.32,.72,0,1),opacity_.18s_ease]",
+    );
+    expect(panels[0]).toHaveAttribute("aria-hidden", "true");
+    expect(panels[3]).toHaveAttribute("aria-hidden", "false");
+    expect(panels[0].firstElementChild).toHaveClass("min-h-0", "overflow-hidden");
+    expect(panels[3].firstElementChild?.firstElementChild).toHaveClass("pl-[52px]", "pb-3");
+    expect(
+      screen.getByRole("button", { name: "Run your first rank check" }).parentElement,
+    ).toHaveClass("pt-3.5", "pb-1.5");
+    expect(screen.getByRole("button", { name: "Create your project" }).parentElement).toHaveClass(
+      "pt-3.5",
+      "pb-3.5",
+    );
+  });
+
+  it("switches the expanded row and selected video reference", async () => {
+    const { user } = setup({
+      cta: { id: "run_first_check" },
+      family: "action",
+    });
+    const create = screen.getByRole("button", { name: "Create your project" });
+    const firstCheck = screen.getByRole("button", { name: "Run your first rank check" });
+
+    expect(firstCheck).toHaveAttribute("aria-expanded", "true");
+    await user.click(create);
+    expect(create).toHaveAttribute("aria-expanded", "true");
+    expect(firstCheck).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("region", { name: "Video walkthrough" })).toHaveAttribute(
+      "data-video-ref",
+      "create-project",
+    );
+  });
+
+  it("uses a dashed circle for a first check blocked by a missing data source", () => {
+    setup({
+      family: "blocked",
+      reason: "needs_data_source",
+      unblockedBy: "connect_source",
+    });
+
+    const row = screen.getByRole("button", { name: "Run your first rank check" });
+    const glyph = row.parentElement?.querySelector('[data-testid="step-glyph-blocked"]');
+    expect(glyph).toHaveClass("border-dashed");
+  });
+
+  it.each([
+    ["action", { cta: { id: "run_first_check" }, family: "action" }],
+    [
+      "waiting",
+      {
+        accelerate: { id: "run_first_check" },
+        family: "waiting",
+        when: { nextRunAt: new Date("2026-08-31T04:00:00.000Z"), timezone: "Europe/Warsaw" },
+      },
+    ],
+    ["running", { family: "running", progress: { completed: 2, total: 5 } }],
+    ["blocked", { family: "blocked", reason: "needs_data_source", unblockedBy: "connect_source" }],
+    ["done", { family: "done" }],
+  ] satisfies Array<[string, SetupStepState]>)(
+    "keeps the first-check row selectable in %s state",
+    async (_name, state) => {
+      const { user } = setup(state);
+      const row = screen.getByRole("button", { name: "Run your first rank check" });
+      await user.click(row);
+      expect(row).toHaveAttribute("aria-expanded", "true");
+      expect(document.getElementById("setup-walkthrough-first_check")).toHaveAttribute(
+        "aria-hidden",
+        "false",
+      );
+    },
+  );
+
+  it("keeps the waiting accelerator exactly once and preserves typed CTA dispatch", async () => {
+    const cta = { id: "run_first_check" } as const;
+    const { onCta, user } = setup({
+      accelerate: cta,
+      family: "waiting",
+      when: { nextRunAt: new Date("2026-08-31T04:00:00.000Z"), timezone: "Europe/Warsaw" },
+    });
+
+    expect(screen.getAllByRole("button", { name: "Run it now instead" })).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Run it now instead" }));
+    expect(onCta).toHaveBeenCalledWith(cta);
+    expect(track).toHaveBeenCalledWith("getting_started_cta_clicked", {
+      cta: "accelerate",
+      step: "first_check",
+    });
+  });
+
+  it("tracks a primary checklist CTA with its setup step", async () => {
+    const cta = { id: "run_first_check" } as const;
+    const { onCta, user } = setup({ cta, family: "action" });
+
+    await user.click(screen.getByRole("button", { name: "Run first check" }));
+
+    expect(onCta).toHaveBeenCalledWith(cta);
+    expect(track).toHaveBeenCalledWith("getting_started_cta_clicked", {
+      cta: "primary",
+      step: "first_check",
+    });
+  });
+
+  it("keeps rows transparent, strikes completed titles, and omits the column divider", () => {
+    const { container } = render(
+      <GettingStartedChecklist
+        competitorActions={competitorActions}
+        context={contextFor({ family: "done" })}
+        now={now}
+        onCta={vi.fn()}
+      />,
+    );
+
+    const checklist = screen.getByRole("region", { name: "Get set up" });
+    expect(checklist).not.toHaveClass("lg:border-r", "lg:border-border");
+    const createTitle = screen.getByText("Create your project");
+    expect(createTitle).toHaveClass("line-through", "text-fg-muted");
+    expect(createTitle.closest("div.relative")).not.toHaveClass(
+      "hover:bg-bg-sunken",
+      "focus-within:bg-bg-sunken",
+    );
+    expect(container.querySelectorAll("li.border-t")).toHaveLength(4);
+  });
+
+  it("keeps done copy past tense and all copy free of banned promises", async () => {
+    const { user } = setup({ family: "done" });
+    await user.click(screen.getByRole("button", { name: "Run your first rank check" }));
+    const panel = document.getElementById("setup-walkthrough-first_check");
+    expect(
+      within(panel as HTMLElement).getByText(/^Your first completed check saved positions/),
+    ).toBeVisible();
+    expect(document.body.textContent).not.toMatch(
+      /notify|notification|in progress|tonight|workspace|\u2014/i,
+    );
+  });
+
+  it("opens the mobile Sheet only after row activation while retaining deterministic selection", async () => {
+    const { user } = setup({ cta: { id: "run_first_check" }, family: "action" }, false);
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const firstCheck = screen.getByRole("button", { name: "Run your first rank check" });
+    expect(screen.getByRole("region", { name: "Video walkthrough" })).toHaveAttribute(
+      "data-video-ref",
+      "first-check",
+    );
+    await user.click(firstCheck);
+    expect(screen.getByRole("dialog", { name: "Run your first rank check" })).toBeVisible();
+    expect(screen.getByText(/Run the first check to collect positions/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Close sheet" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});

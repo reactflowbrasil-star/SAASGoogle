@@ -1,0 +1,302 @@
+"use client";
+
+import {
+  CapacityMeter,
+  EmailCapacityPanel,
+  FullCapacityCard,
+  GoogleCapacityNote,
+} from "@/components/auth/SignInCapacity";
+import { Button } from "@/components/ui/Button";
+import { DataResidencyNote } from "@/components/ui/DataResidencyNote";
+import type { LoginFormValues } from "@/lib/auth/login-schema";
+import type { SignInCapacity, SignInCapacityMiss } from "@/lib/auth/signin-capacity-types";
+import type { LegalConsentLinks } from "@/lib/deployment/legal";
+import { UI_RADIUS_ROLES } from "@/lib/ui/design-role-tokens";
+import { CaretRightIcon as CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
+import { GithubLogoIcon as GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
+import { GoogleLogoIcon as GoogleLogo } from "@phosphor-icons/react/dist/csr/GoogleLogo";
+import { useTranslations } from "next-intl";
+import type { ReactNode, SyntheticEvent } from "react";
+import type { FieldErrors, UseFormRegister } from "react-hook-form";
+import { EmailSignInUnavailable } from "./EmailSignInUnavailable";
+
+const oauthProviders = [
+  { icon: GithubLogo, provider: "github" },
+  { icon: GoogleLogo, provider: "google" },
+] as const;
+
+export type OAuthProvider = (typeof oauthProviders)[number]["provider"];
+export type EnabledOAuthProviders = Readonly<Record<OAuthProvider, boolean>>;
+
+export const disabledOAuthProviders: EnabledOAuthProviders = {
+  github: false,
+  google: false,
+};
+
+type LoginEmailStepProps = {
+  capacity?: SignInCapacity | null;
+  capacityMiss?: SignInCapacityMiss;
+  dataResidencyMessage: string;
+  demoEmail?: string | null;
+  emailSignInUnavailable?: boolean;
+  enabledProviders: EnabledOAuthProviders;
+  errors: FieldErrors<LoginFormValues>;
+  formError: string | null;
+  humanVerificationField?: ReactNode;
+  isSubmitting: boolean;
+  legalConsentLinks: LegalConsentLinks | null;
+  onProviderSignIn: (provider: OAuthProvider) => void;
+  onSubmit: (event: SyntheticEvent<HTMLFormElement>) => void;
+  register: UseFormRegister<LoginFormValues>;
+  socialProvider: OAuthProvider | null;
+  verificationReady?: boolean;
+};
+
+function ConsentLink({ children, href }: Readonly<{ children: ReactNode; href: string }>) {
+  const external = /^https?:\/\//i.test(href);
+
+  return (
+    <a
+      className="text-fg-muted underline-offset-2 hover:underline"
+      href={href}
+      {...(external ? { rel: "noreferrer", target: "_blank" } : {})}
+    >
+      {children}
+    </a>
+  );
+}
+
+/**
+ * One consent sentence, not several. The beta-email clause is folded in here because
+ * "By continuing" and "By joining" were the same agreement stated twice, competing for
+ * attention directly under the call to action.
+ */
+function LegalConsent({
+  links,
+  includeBetaEmails = false,
+}: Readonly<{ links: LegalConsentLinks | null; includeBetaEmails?: boolean }>) {
+  const t = useTranslations("auth.login.legal");
+  if (!links || (!links.termsHref && !links.privacyHref)) {
+    return null;
+  }
+  const { privacyHref, termsHref } = links;
+
+  return (
+    <p className="mt-5.5 mb-0 text-center text-xs leading-[1.6] text-fg-muted">
+      {termsHref && privacyHref
+        ? t.rich(includeBetaEmails ? "withBetaEmails" : "withTermsAndPrivacy", {
+            privacy: (chunks) => <ConsentLink href={privacyHref}>{chunks}</ConsentLink>,
+            terms: (chunks) => <ConsentLink href={termsHref}>{chunks}</ConsentLink>,
+          })
+        : null}
+      {termsHref && !privacyHref
+        ? t.rich(includeBetaEmails ? "withTermsAndBetaEmails" : "withTerms", {
+            terms: (chunks) => <ConsentLink href={termsHref}>{chunks}</ConsentLink>,
+          })
+        : null}
+      {!termsHref && privacyHref
+        ? t.rich(includeBetaEmails ? "withPrivacyAndBetaEmails" : "withPrivacy", {
+            privacy: (chunks) => <ConsentLink href={privacyHref}>{chunks}</ConsentLink>,
+          })
+        : null}
+    </p>
+  );
+}
+
+export function getEnabledOAuthProviders(enabledProviders: EnabledOAuthProviders) {
+  return oauthProviders.filter(({ provider }) => enabledProviders[provider]);
+}
+
+export function LoginEmailStep({
+  capacity = null,
+  capacityMiss = null,
+  dataResidencyMessage,
+  demoEmail = null,
+  emailSignInUnavailable = false,
+  enabledProviders,
+  errors,
+  formError,
+  humanVerificationField = null,
+  isSubmitting,
+  legalConsentLinks,
+  onProviderSignIn,
+  onSubmit,
+  register,
+  socialProvider,
+  verificationReady = true,
+}: Readonly<LoginEmailStepProps>) {
+  const t = useTranslations("auth");
+  const enabledOAuthProviders = getEnabledOAuthProviders(enabledProviders);
+  const hasOAuthSection = enabledOAuthProviders.length > 0;
+  const googleFull =
+    enabledProviders.google &&
+    (capacityMiss === "google" || (capacity !== null && capacity.googleSpots.left === 0));
+  const emailFull =
+    capacity?.emailCodes !== null &&
+    capacity?.emailCodes !== undefined &&
+    (capacityMiss === "email" || capacity.emailCodes.left === 0);
+  const allFull = googleFull && emailFull;
+  const emailBinding = capacity?.emailCodes?.binding ?? "daily";
+
+  const consent = <LegalConsent includeBetaEmails={Boolean(capacity)} links={legalConsentLinks} />;
+  const errorMessage = formError ? (
+    <p className="mt-3 mb-0 text-[13px] text-red-text" role="alert">
+      {formError}
+    </p>
+  ) : null;
+  if (allFull) {
+    return (
+      <div className="w-full max-w-[380px]">
+        {errorMessage}
+        <FullCapacityCard emailBinding={emailBinding} />
+        {consent}
+      </div>
+    );
+  }
+  return (
+    <div className="w-full max-w-[380px]">
+      <h1 className="m-0 text-[25px] font-semibold tracking-[-0.7px] text-fg">
+        {t("login.form.heading")}
+      </h1>
+      <p className="mt-2 mb-0 text-[14px] text-fg-muted">{t("login.form.description")}</p>
+      <DataResidencyNote className="mt-4" message={dataResidencyMessage} />
+      {errorMessage}
+
+      {hasOAuthSection ? (
+        <>
+          <div className="mt-[26px] flex flex-col gap-[9px]">
+            {enabledOAuthProviders.map(({ icon: Icon, provider }) => {
+              const isDisabled = socialProvider !== null;
+              const button = (
+                <Button
+                  disabled={isDisabled}
+                  key={provider}
+                  onClick={() => onProviderSignIn(provider)}
+                  startIcon={<Icon size={18} weight="regular" />}
+                  style={{
+                    "--control-background-color": "var(--bg-elev)",
+                    "--control-border-color": "var(--border)",
+                    borderRadius: UI_RADIUS_ROLES.control,
+                    "--control-color": "var(--fg)",
+                    fontSize: "14px",
+                    fontWeight: 600,
+                    padding: "11px",
+                    "--control-hover-border-color": "var(--fg-muted)",
+                  }}
+                  type="button"
+                  variant="secondary"
+                  {...(provider === "google" && capacity ? { fullWidth: true } : {})}
+                >
+                  {t(`login.oauth.${provider}`)}
+                </Button>
+              );
+
+              if (provider !== "google" || !capacity) {
+                return button;
+              }
+
+              return (
+                <div key={provider}>
+                  {button}
+                  {googleFull ? (
+                    <GoogleCapacityNote justMissed={capacityMiss === "google"} />
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="my-5 flex items-center gap-3 text-[11px] text-fg-muted">
+            <span className="h-px flex-1 bg-border" />
+            {t("login.form.or")}
+            <span className="h-px flex-1 bg-border" />
+          </div>
+        </>
+      ) : null}
+      {/* Without the provider block above, this section would butt against the residency note. */}
+      <div className={hasOAuthSection ? undefined : "mt-[26px]"} data-testid="login-email-section">
+        {emailSignInUnavailable ? (
+          <EmailSignInUnavailable />
+        ) : emailFull ? (
+          <EmailCapacityPanel binding={emailBinding} justMissed={capacityMiss === "email"} />
+        ) : (
+          // The browser's own constraint bubble speaks the browser UI language, not the page
+          // locale, so noValidate hands every invalid address to the form's own validator.
+          <form noValidate onSubmit={onSubmit}>
+            <label
+              className="block text-[10.5px] uppercase tracking-[0.5px] text-fg-muted"
+              htmlFor="login-email"
+            >
+              {t("login.email.label")}
+            </label>
+            <input
+              aria-describedby={errors.email ? "login-email-error" : undefined}
+              aria-invalid={errors.email ? true : undefined}
+              autoComplete="email"
+              className="mt-[7px] box-border w-full rounded-control border border-border-control bg-transparent px-[13px] py-3 text-[14.5px] font-medium text-fg outline-none focus:border-accent"
+              disabled={isSubmitting}
+              id="login-email"
+              inputMode="email"
+              placeholder={t("login.email.placeholder")}
+              type="email"
+              {...register("email")}
+            />
+            {errors.email ? (
+              <p
+                className="mt-2 mb-0 text-[13px] text-red-text"
+                id="login-email-error"
+                role="alert"
+              >
+                {t("login.validation.email")}
+              </p>
+            ) : null}
+            {humanVerificationField ? <div className="mt-3">{humanVerificationField}</div> : null}
+            <Button
+              disabled={isSubmitting || !verificationReady}
+              endIcon={<CaretRight size={16} weight="regular" />}
+              fullWidth
+              style={{
+                borderRadius: UI_RADIUS_ROLES.control,
+                fontSize: "14.5px",
+                fontWeight: 600,
+                marginTop: "14px",
+                padding: "12px",
+              }}
+              type="submit"
+              variant="primary"
+            >
+              {t("login.form.sendCode")}
+            </Button>
+            {capacity?.emailCodes ? (
+              <CapacityMeter
+                label={t("capacity.loginCodesRemaining", {
+                  cap: capacity.emailCodes.cap,
+                  left: capacity.emailCodes.left,
+                  period: t(
+                    capacity.emailCodes.binding === "monthly"
+                      ? "capacity.periodMonth"
+                      : "capacity.periodToday",
+                  ),
+                })}
+                meter={capacity.emailCodes}
+                tooltip={
+                  capacity.emailCodes.binding === "monthly"
+                    ? t("capacity.loginCodesMonthlyTooltip")
+                    : t("capacity.loginCodesDailyTooltip")
+                }
+              />
+            ) : null}
+          </form>
+        )}
+      </div>
+      {demoEmail ? (
+        <p className="mt-3.5 mb-0 text-center text-[11.5px] text-fg-muted">
+          <span className="font-semibold text-accent-text">{t("login.tryDemo")}</span> &middot;{" "}
+          {demoEmail} &middot; {t("login.tryDemoCode")}
+        </p>
+      ) : null}
+
+      {consent}
+    </div>
+  );
+}
